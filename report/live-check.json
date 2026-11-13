@@ -1,0 +1,64 @@
+{
+  "url": "https://dglowinski.github.io/seria/",
+  "ranAt": "2026-11-13T14:15:35.946Z",
+  "browser": "Google Chrome (headless), Pixel 7 profile",
+  "total": 11,
+  "passed": 11,
+  "results": [
+    {
+      "name": "the address answers over HTTPS",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the app starts on the plan screen",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "install files: manifest in standalone mode, icons load",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Chrome finds nothing that blocks \"Install app\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the offline cache is stamped with the release it came from",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "only the app is published, not tests, scripts or the report",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the Claude SDK file is there for when a key is added",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the offline worker is running",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "with the network off it still starts and builds a plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a set can be logged offline and survives a reload mid-rest",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no script errors",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}

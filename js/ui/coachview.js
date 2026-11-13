@@ -2,20 +2,13 @@
 // building a plan, and takes typed or spoken answers. Speech lands in the text
 // field first so it can be fixed before sending.
 
-import { html, useState, useEffect, useRef, useStore, useSignal, Dock, Icon, go, toast } from './kit.js';
+import { html, useState, useEffect, useRef, useStore, useSignal, Dock, Icon, go } from './kit.js';
 import * as store from '../store.js';
 import { buildAssumptions, missingFields } from '../domain/planner.js';
 import { userSays, buildPlan, isBusy, onBusy, GREETING } from '../ai/coach.js';
 import { aiStatus } from '../ai/claude.js';
-import { createVoice, voiceKind, onRuntime } from '../platform.js';
+import { useVoiceInput } from './voice.js';
 import { ChangeCard } from './plan.js';
-
-const VOICE_ERRORS = {
-  not_granted: 'The microphone is blocked for this page. You can still type.',
-  'no-speech': 'I did not hear anything.',
-  unavailable: 'Dictation is not available here. You can still type.',
-  rate_limited: 'Dictation is busy. Try again in a moment.',
-};
 
 function Assumptions({ live }) {
   const state = store.getState();
@@ -33,43 +26,22 @@ function Assumptions({ live }) {
 export function CoachScreen() {
   const state = useStore();
   useSignal(onBusy);
-  useSignal(onRuntime);
   const [text, setText] = useState('');
-  const [listening, setListening] = useState(false);
-  const voice = useRef(null);
-  const base = useRef('');
   const box = useRef(null);
   const busy = isBusy();
   const status = aiStatus();
-  const canSpeak = !!voiceKind();
+  const { canSpeak, listening, toggle: toggleVoice, stop: stopVoice } = useVoiceInput(text, setText);
 
   // Scroll the page itself, so the newest message clears the composer docked at the bottom.
   useEffect(() => { window.scrollTo(0, document.documentElement.scrollHeight); }, [state.chat.length, busy]);
-  useEffect(() => () => voice.current?.dispose(), []);
   useEffect(() => { const el = box.current; if (el) { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight + 2, 160)}px`; } }, [text]);
 
-  const stopVoice = () => { if (voice.current?.isActive()) voice.current.stop(); };
   const send = (t) => {
     const msg = (t ?? text).trim();
     if (!msg || busy) return;
     stopVoice();
     setText('');
     userSays(msg);
-  };
-  const toggleVoice = () => {
-    if (listening) { stopVoice(); return; }
-    if (!voice.current) {
-      voice.current = createVoice({
-        onText: (final, live) => setText(`${base.current}${`${final}${live}`.trimStart()}`),
-        onState: (st, reason) => {
-          setListening(st !== 'idle');
-          if (st === 'idle' && VOICE_ERRORS[reason]) toast(VOICE_ERRORS[reason]);
-        },
-      });
-    }
-    if (!voice.current) { toast(VOICE_ERRORS.unavailable); return; }
-    base.current = text.trim() ? `${text.trimEnd()} ` : '';
-    voice.current.start();
   };
 
   const chat = state.chat;

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { parseProfile, mergeProfile, mergeAiProfile } from '../js/ai/coach.js';
 import { mergeStates } from '../js/cloud.js';
 import { tidy } from '../js/ai/claude.js';
-import { OUTPUT_SCHEMA, SYSTEM_PROMPT, interviewRequest, newPlanRequest, sessionRequest } from '../js/ai/prompts.js';
+import { OUTPUT_SCHEMA, SYSTEM_PROMPT, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest } from '../js/ai/prompts.js';
 import { emptyProfile, generatePlan, missingFields } from '../js/domain/planner.js';
-import { emptyEquipment } from '../js/domain/catalog.js';
+import { emptyEquipment, parseEquipmentText, applyEquipmentRead, isAvailable, isListed, EQUIPMENT, allExercises } from '../js/domain/catalog.js';
 import { emptyState, hydrate } from '../js/store.js';
 import * as S from '../js/domain/session.js';
 
@@ -58,7 +58,8 @@ test('claude profile: unknown ids and odd values are dropped', () => {
 });
 
 test('claude answer: missing or wrong fields never break the app', () => {
-  assert.deepEqual(tidy(null), { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [] });
+  assert.deepEqual(tidy(null), { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [], equipment: null });
+  assert.equal(tidy({ equipment: 'lots' }).equipment, null);
   const t = tidy({ message: ' hi ', questions: ['a', 3, ''], plan: { days: 'x' }, changes: [null, { field: 'load' }], ready_for_plan: 'yes' });
   assert.equal(t.message, 'hi'); assert.deepEqual(t.questions, ['a']); assert.equal(t.plan, null); assert.equal(t.changes.length, 1); assert.equal(t.ready_for_plan, false);
 });
@@ -85,6 +86,48 @@ test('prompt: schema is strict everywhere and requests carry the mode and rules 
   const c = JSON.parse(sessionRequest({ mode: 'in_session', profile, equipment: eq, plan, session: s, past: [] }));
   assert.equal(c.mode, 'in_session'); assert.equal(c.session.exercises[0].sets[0].reps, plan.days[0].exercises[0].reps);
   assert.equal(c.session.exercises[0].exercise_key, 'd1e1');
+});
+
+test('gym text: named machines, things the gym lacks, own machines and the rest', () => {
+  const r = parseEquipmentText('We have a lat pulldown, leg press and cables. Also a glute drive machine and a sauna. No barbell.');
+  assert.deepEqual(r.add, ['lat_pulldown', 'leg_press', 'cable']);
+  assert.deepEqual(r.off, ['barbell']);
+  assert.deepEqual(r.custom, [{ name: 'Glute drive', pattern: 'glute' }]);
+  assert.deepEqual(r.unknown, ['sauna']);
+  const list = parseEquipmentText('smith machine\nhack squat\npec deck\nhip abductor\nassisted pull-up machine\ntreadmills\nrowing machine\nseated row');
+  assert.deepEqual(list.add.sort(), ['hack_squat', 'pec_deck', 'seated_row', 'smith']);
+  assert.deepEqual(list.custom, [{ name: 'Hip abductor', pattern: 'glute' }]);
+  assert.ok(list.unknown.some((u) => /assisted/.test(u)) && list.unknown.some((u) => /treadmill/.test(u)) && list.unknown.some((u) => /rowing/.test(u)), 'cardio and assisted machines are not guessed at');
+  const neg = parseEquipmentText('squat rack, dumbbell rack up to 40kg, no pull-up bar or dip bars, there is no leg curl but there is a leg extension');
+  assert.deepEqual(neg.add.sort(), ['dumbbells', 'leg_extension', 'rack']);
+  assert.deepEqual(neg.off.sort(), ['dip_station', 'leg_curl', 'pullup_bar']);
+  assert.deepEqual(parseEquipmentText('functional trainer and free weights').add.sort(), ['barbell', 'cable', 'dumbbells']);
+  assert.deepEqual(parseEquipmentText(''), { add: [], off: [], custom: [], unknown: [] });
+});
+
+test('gym text: saving is exact about what changed and never invents equipment', () => {
+  let n = 0;
+  const id = () => `cm-${++n}`;
+  const eq = emptyEquipment(); eq.items.leg_press = true;
+  const res = applyEquipmentRead(eq, {
+    add: ['lat_pulldown', 'leg_press', 'dumbbells', 'not_real'], off: ['barbell', 'smith', 'lat_pulldown'],
+    custom: [{ name: '  Glute   drive ', pattern: 'glute' }, { name: 'Leg press', pattern: 'squat' }, { name: 'Odd thing', pattern: 'nope' }, { name: 'Belt squat', pattern: 'squat' }],
+    unknown: ['sauna', 'sauna', ''],
+  }, id);
+  assert.ok(res.changed);
+  assert.deepEqual(res.summary.added, ['Lat pulldown']);
+  assert.deepEqual(res.summary.already.sort(), ['Dumbbells', 'Leg press']);
+  assert.deepEqual(res.summary.off, ['Barbell and plates'], 'a machine that was never listed is not turned off, and add beats off');
+  assert.deepEqual(res.summary.custom, ['Glute drive (glutes)', 'Belt squat (squat)']);
+  assert.deepEqual(res.summary.unknown, ['sauna', 'Odd thing']);
+  assert.ok(isAvailable(res.equipment, 'lat_pulldown') && !isAvailable(res.equipment, 'barbell') && !isListed(res.equipment, 'smith'));
+  assert.ok(allExercises(res.equipment).some((x) => x.name === 'Belt squat' && x.pattern === 'squat'), 'own machines become exercises the planner can use');
+  assert.deepEqual(eq, { items: { leg_press: true }, custom: [] }, 'the input is not changed');
+  const again = applyEquipmentRead(res.equipment, { add: ['lat_pulldown'], custom: [{ name: 'glute drive', pattern: 'glute' }] }, id);
+  assert.ok(!again.changed); assert.equal(again.equipment.custom.length, 2);
+  const req = JSON.parse(equipmentRequest({ equipment: res.equipment, text: 'cables' }));
+  assert.equal(req.mode, 'equipment'); assert.equal(req.equipment_catalog.length, EQUIPMENT.length);
+  assert.ok(req.movements.some((m) => m.id === 'glute')); assert.deepEqual(req.own_machines, ['Glute drive', 'Belt squat']);
 });
 
 test('cloud merge: newer main record wins, sessions combine, deletions stick', () => {

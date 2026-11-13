@@ -2,7 +2,7 @@
 // Anthropic API and the fake claude.ai runtime, so both paths see one "Claude".
 // It must be self-contained: it is also injected into the page as text.
 export function canned(payload) {
-  const empty = { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [] };
+  const empty = { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [], equipment: null };
   const mode = payload.mode;
   if (mode === 'interview') {
     const msg = String(payload.user_message || '');
@@ -19,6 +19,23 @@ export function canned(payload) {
         preferences: null, limitations: null, avoid_exercise_ids: ['bb_deadlift', 'not_a_real_lift'], include_exercise_ids: ['pull_up'],
       },
       ready_for_plan: true,
+    };
+  }
+  if (mode === 'equipment') {
+    const t = String(payload.user_text).toLowerCase();
+    const named = (x) => t.includes(x.name.toLowerCase());
+    const lacking = (x) => t.includes(`no ${x.name.toLowerCase()}`);
+    const add = payload.equipment_catalog.filter((x) => named(x) && !lacking(x)).map((x) => x.id);
+    if (/cables|functional trainer/.test(t)) add.push('cable');
+    return {
+      ...empty,
+      message: 'Saved.',
+      equipment: {
+        add_ids: [...add, 'made_up_machine'],
+        unavailable_ids: payload.equipment_catalog.filter(lacking).map((x) => x.id),
+        custom: /belt squat/.test(t) ? [{ name: 'Belt squat', movement_id: 'squat' }, { name: 'Mystery box', movement_id: 'not_a_movement' }] : [],
+        unrecognized: /treadmill/.test(t) ? ['treadmills'] : [],
+      },
     };
   }
   if (mode === 'new_plan') {

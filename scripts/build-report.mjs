@@ -9,6 +9,10 @@ import { EXERCISES, EQUIPMENT } from '../js/domain/catalog.js';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const smoke = JSON.parse(readFileSync(`${root}report/smoke-results.json`, 'utf8'));
 const APP_URL = 'https://claude.ai/artifact/BGZFQ5nHaNbfV9Qvgw13Ui';
+const LIVE_URL = 'https://dglowinski.github.io/seria/';
+const REPO_URL = 'https://github.com/dglowinski/seria';
+const livePath = `${root}report/live-check.json`;
+const live = existsSync(livePath) ? JSON.parse(readFileSync(livePath, 'utf8')) : null;
 
 // Unit tests: run them here and count, rather than typing a number.
 let unit = { pass: 0, fail: 0 };
@@ -35,6 +39,7 @@ const shots = [
   ['04-plan', 'Plan', 'The week: day, body part, estimated time.'],
   ['06-day', 'Day preview', 'Order, equipment, sets, reps, rest, and how the time adds up.'],
   ['05-equipment', 'Equipment', 'Machines you add. Free weights, bench and bar are on by default.'],
+  ['05-gym-text', 'Describe your gym', 'Name the machines or paste any text. It is read and saved, and you see what was added.'],
   ['07-starting-weight', 'Starting weight', 'No history yet, so you pick the first weight.'],
   ['08-set-active', 'Set in progress', 'One button: Finish set.'],
   ['09-set-result', 'Set result', 'Starts from the plan. Correct by 1 or 2, or type the number.'],
@@ -53,7 +58,7 @@ const spec = [
   ['Say or type your goal, experience, days and time per session. Voice goes into a text field you can edit.', 'done', 'Coach chat with a microphone button. Speech lands in the text box; you fix it, then send.'],
   ['The coach asks for missing details and shows its assumptions before building the plan.', 'done', 'Works with Claude and without. No plan is created until you tap "Build my plan" under the assumptions.'],
   ['Preferences and movement limitations.', 'done', 'Reads things like "no deadlifts", "I love pull-ups", "my knee hurts". Limitations are handled on the careful side and the app says what it left out.'],
-  ['You enter machines. Free weights, benches and the pull-up bar are available by default.', 'done', `${EQUIPMENT.filter((x) => x.kind === 'machine').length} machines to pick from, plus your own machine with what it trains. Each has an Available switch.`],
+  ['You enter machines. Free weights, benches and the pull-up bar are available by default.', 'done', `${EQUIPMENT.filter((x) => x.kind === 'machine').length} machines to pick from, plus your own machine with what it trains. Or describe the gym in your own words, typed, pasted or spoken: it is read (by Claude when connected, by a built-in reader otherwise) and the list is saved in one go. Each item has an Available switch.`],
   ['The plan shows days, body parts, time, exercise order, equipment, sets, reps, weight or how to choose it, and rests. Day time includes warm-up, rests and moving between stations.', 'done', `Plan list and day preview. ${EXERCISES.length} exercises in the catalog. The day preview splits the time into warm-up, sets, rests and moving.`],
   ['"Start set" shows the active set. "Finish set" opens the result, starting from the planned value. Correct reps by 1 or 2 or type them. Change weight, add reps in reserve.', 'done', 'As described. Reps in reserve is optional.'],
   ['Saving starts the countdown. After the last set the screen shows the next exercise.', 'done', 'Saving takes effect at once and never waits for Claude.'],
@@ -78,8 +83,7 @@ const bugs = [
 const limits = [
   ['No real call to Claude was made.', 'There is no API key on this machine. The API path was run with the official SDK against a local stand-in, and the request was checked field by field. The first real call could still be turned down by the API for a reason a stand-in cannot show.'],
   ['The live claude.ai page was not opened by me.', 'It is published, and I wrote, read back and deleted a test record in its cloud storage. But I could not open it in a signed-in browser from here, so the real permission prompts for Claude and for dictation are untested. The page logic was tested against a stand-in written from the runtime\'s published type definitions.'],
-  ['No real Android phone.', 'Everything ran in desktop Chrome with a Pixel 7 screen profile. Vibration, the screen staying on, and Chrome\'s own speech recognition can only be tried on a phone.'],
-  ['The stand-alone version is not on the internet yet.', 'Putting it on a public address is your call. It runs locally and passes the install and offline checks.'],
+  ['No real Android phone.', 'Everything, the live site included, ran in desktop Chrome with a Pixel 7 screen profile. Chrome reports nothing that blocks installing, but the actual "Add to Home screen" tap, vibration, the screen staying on, and Chrome\'s own speech recognition can only be tried on a phone.'],
 ];
 
 const page = `<title>Seria build report</title>
@@ -149,10 +153,11 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
   <header style="display:flex;flex-direction:column;gap:14px">
     <p class="eyebrow">Build report · ${new Date(smoke.ranAt).toISOString().slice(0, 10)}</p>
     <h1>Seria<i>.</i> is built and tested</h1>
-    <p class="lead">The design file is now a working app in English. It builds a training week from a conversation, guides each set with a rest timer, keeps a history, and proposes changes. It runs in the phone's browser and goes on the home screen. No developer mode, no app to install by hand.</p>
+    <p class="lead">The design file is now a working app in English. It builds a training week from a conversation, guides each set with a rest timer, keeps a history, and proposes changes. It runs in the phone's browser and goes on the home screen. No developer mode, no app to install by hand. Both ways of running it are live.</p>
     <div class="nums">
       <div><strong>${smoke.passed} / ${smoke.total}</strong><span>end-to-end checks passed</span></div>
       <div><strong>${unit.pass} / ${unit.pass + unit.fail}</strong><span>unit tests passed</span></div>
+      ${live ? `<div><strong>${live.passed} / ${live.total}</strong><span>checks passed on the live site</span></div>` : ''}
       <div><strong>${spec.filter((s) => s[1] === 'done').length} / ${spec.length}</strong><span>spec items fully done</span></div>
     </div>
   </header>
@@ -172,13 +177,13 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
         </ul>
       </div>
       <div class="card">
-        <h3>2. Your own address. Needs your go-ahead.</h3>
-        <p>The project folder is a ready site with no build step. On any HTTPS host it becomes a real installable app.</p>
+        <h3>2. The stand-alone app. Live.</h3>
+        <p>Open <a href="${LIVE_URL}">${LIVE_URL.replace('https://', '')}</a> in Chrome on the phone. Then the ⋮ menu, "Add to Home screen" or "Install app".</p>
         <ul>
           <li>Opens full screen and starts with no signal.</li>
           <li>Data stays in the phone's browser. Backup file in Settings.</li>
           <li>For Claude, paste your own API key in Settings. Without one, the built-in coach and the rules do the job.</li>
-          <li>I have not published it anywhere. Say the word and I will put it on GitHub Pages.</li>
+          <li>Served by GitHub Pages from <a href="${REPO_URL}">${REPO_URL.replace('https://', '')}</a>. The repository is public, because the free plan only hosts Pages from public repositories.</li>
         </ul>
       </div>
     </div>
@@ -230,6 +235,7 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
     const [title, text] = PART_TEXT[p] || [p, ''];
     return `<details><summary>${esc(title)}: ${ok} of ${rs.length}</summary><p class="muted" style="margin-top:8px;font-size:14px">${esc(text)}</p><ul>${rs.map((r) => `<li><span class="tick">${r.ok ? '✓' : '✗'}</span> ${esc(r.name)}${r.ok ? '' : ` <b>(${esc(r.detail)})</b>`}</li>`).join('')}</ul></details>`;
   }).join('\n    ')}
+    ${live ? `<details><summary>The live site: ${live.passed} of ${live.total}</summary><p class="muted" style="margin-top:8px;font-size:14px">Run against ${esc(live.url)} with <code>npm run check:live</code>, ${new Date(live.ranAt).toISOString().replace('T', ' ').slice(0, 16)} UTC. Real network, then the network switched off.</p><ul>${live.results.map((r) => `<li><span class="tick">${r.ok ? '✓' : '✗'}</span> ${esc(r.name)}${r.ok ? '' : ` <b>(${esc(r.detail)})</b>`}</li>`).join('')}</ul></details>` : ''}
     <p class="muted">Plus ${unit.pass} unit tests (<code>npm test</code>) for the rules, the plan generator, the workout steps, the suggestions, the text reader, the request format and the cloud merge.</p>
   </section>
 
@@ -264,10 +270,10 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
     <ol class="steps">
       <li>Open the claude.ai page on your phone and add it to the home screen. Tell the coach how you want to train.</li>
       <li>Do one real workout. That is the test I could not run: a real phone, real Claude, a real gym.</li>
-      <li>If you want the stand-alone installable version, tell me where to host it. GitHub Pages is the quickest; the repository would be public unless your plan allows private Pages.</li>
-      <li>For Claude on the stand-alone version, create an API key with a spend limit and paste it in Settings.</li>
+      <li>Or use the stand-alone app at <a href="${LIVE_URL}">${LIVE_URL.replace('https://', '')}</a> if you want it to work with no signal. The two copies do not share data; a backup file moves it across.</li>
+      <li>For Claude on the stand-alone app, create an API key with a spend limit and paste it in Settings, then tap "Test the connection". That will be the first real call to the API.</li>
     </ol>
-    <p class="muted">Project folder: <code>~/seria</code>. Start with <code>README.md</code>. The rules are in <code>docs/training-rules.md</code>.</p>
+    <p class="muted">Code: <a href="${REPO_URL}">${REPO_URL.replace('https://', '')}</a>, also in <code>~/seria</code>. Start with <code>README.md</code>. The rules are in <code>docs/training-rules.md</code>. A push to <code>main</code> runs the unit tests and republishes the app.</p>
   </section>
 </div>
 `;

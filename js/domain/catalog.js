@@ -222,3 +222,138 @@ export function substitutesFor(eq, exerciseId, opts = {}) {
   const same = all.filter((x) => x.pattern === cur.pattern && ok(x)).sort((a, b) => a.rank - b.rank);
   return same;
 }
+
+// ---------------------------------------------------------------- reading a gym from free text
+// "We have a lat pulldown, leg press and cables. No barbell." -> a list to save.
+// Used when Claude is not connected, and as the fallback when it fails.
+
+const ALIASES = [
+  [['dumbbell rack', 'dumbbells', 'dumbbell'], ['dumbbells']],
+  [['free weights'], ['dumbbells', 'barbell']],
+  [['barbells', 'barbell', 'olympic bar', 'weight plates', 'bumper plates', 'plates'], ['barbell']],
+  [['bench press rack', 'bench press station', 'bench press', 'squat rack', 'power rack', 'half rack', 'squat cage', 'power cage', 'rack'], ['rack']],
+  [['benches', 'bench'], ['bench']],
+  [['pull-up bar', 'pull up bar', 'pullup bar', 'chin-up bar', 'chin up bar', 'chinup bar'], ['pullup_bar']],
+  [['seated cable row', 'seated row', 'row machine', 'low row'], ['seated_row']],
+  [['cable station', 'cable machine', 'cable crossover', 'cable tower', 'functional trainer', 'crossover', 'cables', 'cable'], ['cable']],
+  [['lat pulldown', 'lat pull-down', 'lat pull down', 'pulldown machine', 'pull-down machine', 'pulldown', 'lat machine'], ['lat_pulldown']],
+  [['leg press'], ['leg_press']],
+  [['leg extensions', 'leg extension', 'quad extension'], ['leg_extension']],
+  [['leg curls', 'leg curl', 'hamstring curl'], ['leg_curl']],
+  [['chest press machine', 'machine chest press', 'chest press'], ['chest_press']],
+  [['shoulder press machine', 'overhead press machine', 'shoulder press'], ['shoulder_press']],
+  [['pec deck', 'pec-deck', 'pec fly', 'chest fly machine', 'fly machine', 'butterfly'], ['pec_deck']],
+  [['smith machine', 'smith'], ['smith']],
+  [['hack squat'], ['hack_squat']],
+  [['dip station', 'dip bars', 'dip bar', 'dip stand', 'parallel bars'], ['dip_station']],
+  [['calf raise machine', 'calf machine', 'calf raise', 'standing calf', 'seated calf'], ['calf_machine']],
+  [['back extension bench', 'back extension', 'hyperextension', 'roman chair'], ['back_extension']],
+];
+const ALIAS_LIST = ALIASES.flatMap(([words, ids]) => words.map((w) => ({ w, ids }))).sort((a, b) => b.w.length - a.w.length);
+
+// What an unknown machine most likely trains, judged from its name. First match wins.
+const PATTERN_HINTS = [
+  [/abduct|adduct|glute|hip thrust|kickback/, 'glute'],
+  [/leg curl|hamstring|ham curl|glute.?ham|nordic/, 'knee_flex'],
+  [/leg ext|quad/, 'knee_ext'],
+  [/calf|calves/, 'calf'],
+  [/squat|leg press|sled|pendulum/, 'squat'],
+  [/deadlift|hinge|good morning|hyper|back ext/, 'hinge'],
+  [/lunge|step.?up/, 'lunge'],
+  [/pull.?down|pull.?up|chin|\blats?\b|pullover/, 'pull_v'],
+  [/\brow|t.?bar/, 'pull_h'],
+  [/rear delt|reverse fly|reverse pec|face pull/, 'delt_rear'],
+  [/lateral|side raise/, 'delt_side'],
+  [/shoulder|overhead|delt|military/, 'push_v'],
+  [/\bfly|flye|\bpec/, 'chest_fly'],
+  [/tricep|push.?down|\bdip/, 'triceps'],
+  [/bicep|curl|preacher/, 'biceps'],
+  [/chest|incline|decline|press/, 'push_h'],
+  [/\babs?\b|crunch|core|torso|rotary|oblique|leg raise/, 'core'],
+];
+const NOT_STRENGTH = /treadmill|bike|bicycle|cycle|elliptical|cross.?trainer|rower|rowing|\berg\b|stair|stepper|sauna|pool|shower|locker|\bmats?\b|ski.?erg|spin|cardio|kettlebell|band|ball|rope|box\b/;
+const NEGATIVE = /(\b(no|not|without|missing|lacks?|broken|removed|except|dont|doesnt)\b|n't)/;
+const FILLER = /\b(we|i|my|our|the|a|an|some|have|has|got|there|is|are|gym|one|two|three|four|few|couple|of|with|it|its|they|them|that|this|those|these|new|old|also|too|lots|many|several|plus|and|or|in|at|for|to|as|well|both|just|only|then|a lot)\b/g;
+
+export function guessPattern(name) {
+  const n = String(name).toLowerCase();
+  const hit = PATTERN_HINTS.find(([re]) => re.test(n));
+  return hit ? hit[1] : null;
+}
+
+/**
+ * Read a free-text description of a gym.
+ * @returns {{add: string[], off: string[], custom: {name: string, pattern: string}[], unknown: string[]}}
+ */
+export function parseEquipmentText(text) {
+  const add = new Set(); const off = new Set(); const custom = []; const unknown = [];
+  const clauses = String(text || '').toLowerCase().replace(/[’`]/g, "'").split(/[,;.\n]|\band\b|\bplus\b|\balso\b|\bbut\b|\bas well as\b/);
+  for (const clause of clauses) {
+    let rest = ` ${clause} `;
+    if (!rest.trim()) continue;
+    let matched = false;
+    for (const { w, ids } of ALIAS_LIST) {
+      let from = 0;
+      for (;;) {
+        const at = rest.indexOf(w, from);
+        if (at < 0) break;
+        from = at + w.length;
+        if (/[a-z]/.test(rest[at - 1] || ' ') || /[a-z]/.test(rest[at + w.length] || ' ')) continue;
+        const negative = NEGATIVE.test(rest.slice(0, at));
+        ids.forEach((id) => (negative ? off : add).add(id));
+        rest = `${rest.slice(0, at)}${'_'.repeat(w.length)}${rest.slice(at + w.length)}`;
+        matched = true;
+      }
+    }
+    if (matched) continue;
+    // Nothing from the catalog: maybe a machine of the gym's own.
+    if (NEGATIVE.test(rest)) continue;
+    const name = clause.replace(FILLER, ' ').replace(/[^a-z0-9' -]/g, ' ').replace(/\s+/g, ' ').trim().replace(/\s*\b(machines?|stations?)$/, '').trim();
+    if (name.replace(/[^a-z]/g, '').length < 3) continue;
+    // Assisted machines are left out: a higher setting makes them easier, which the load logic would read backwards.
+    const pattern = NOT_STRENGTH.test(name) || /assist/.test(name) ? null : guessPattern(name);
+    if (pattern) custom.push({ name: name[0].toUpperCase() + name.slice(1), pattern });
+    else unknown.push(name);
+  }
+  for (const id of add) off.delete(id); // "we have X" beats "no X" said elsewhere
+  return { add: [...add], off: [...off], custom, unknown };
+}
+
+/**
+ * Save what was read. Returns the new equipment state and a summary of what
+ * changed, in display names. `newId` makes ids for the gym's own machines.
+ */
+export function applyEquipmentRead(eq, read, newId) {
+  const items = { ...(eq?.items || {}) };
+  const custom = [...(eq?.custom || [])];
+  const byId = Object.fromEntries(EQUIPMENT.map((x) => [x.id, x]));
+  const sum = { added: [], already: [], off: [], custom: [], unknown: [...new Set((read.unknown || []).map((u) => String(u).trim()).filter(Boolean))].slice(0, 12) };
+  const addIds = [...new Set(read.add || [])].filter((id) => byId[id]);
+  for (const id of addIds) {
+    const x = byId[id];
+    const was = isAvailable({ items, custom }, id);
+    if (x.kind === 'basic') delete items[id]; else items[id] = true;
+    (was ? sum.already : sum.added).push(x.name);
+  }
+  for (const id of new Set(read.off || [])) {
+    const x = byId[id];
+    if (!x || addIds.includes(id)) continue;
+    const listed = x.kind === 'basic' || id in items;
+    if (listed && items[id] !== false) { items[id] = false; sum.off.push(x.name); }
+  }
+  for (const c of read.custom || []) {
+    const name = String(c?.name || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!name) continue;
+    const lower = name.toLowerCase();
+    const inCatalog = EQUIPMENT.find((x) => x.name.toLowerCase() === lower);
+    if (inCatalog) {
+      if (!isAvailable({ items, custom }, inCatalog.id)) { if (inCatalog.kind === 'basic') delete items[inCatalog.id]; else items[inCatalog.id] = true; sum.added.push(inCatalog.name); }
+      continue;
+    }
+    if (custom.some((k) => k.name.toLowerCase() === lower)) { sum.already.push(name); continue; }
+    if (!PATTERNS[c.pattern]) { sum.unknown.push(name); continue; }
+    custom.push({ id: newId(), name, pattern: c.pattern, zone: ZONES.machines });
+    sum.custom.push(`${name} (${PATTERNS[c.pattern].toLowerCase()})`);
+  }
+  return { equipment: { items, custom }, summary: sum, changed: sum.added.length + sum.off.length + sum.custom.length > 0 };
+}

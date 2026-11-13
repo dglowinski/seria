@@ -26,6 +26,10 @@ Open <https://dglowinski.github.io/seria/> in Chrome on the phone. Then ⋮ menu
 
 It is served by GitHub Pages from this repository. Every push to `main` runs the unit tests and then publishes the app files (`.github/workflows/pages.yml`). Tests, scripts and the report are not published. The folder has no build step, so any other static HTTPS host works too.
 
+## Telling it what your gym has
+
+On the Equipment tab, "Add to list" opens a box where you can name the machines or paste any text: a list, a sentence, notes from the gym's website. You can also dictate it. The text is read and the list is saved in one go, and you see what was added, what was marked as missing ("no barbell"), and what could not be placed. Claude does the reading when it is connected; a built-in reader does it otherwise. You can still pick machines from the list or add your own by hand.
+
 ## Run it on this computer
 
 ```

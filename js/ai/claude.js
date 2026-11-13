@@ -129,6 +129,7 @@ export function tidy(out) {
     ready_for_plan: o.ready_for_plan === true,
     plan: o.plan && typeof o.plan === 'object' && Array.isArray(o.plan.days) ? o.plan : null,
     changes: Array.isArray(o.changes) ? o.changes.filter((c) => c && typeof c === 'object') : [],
+    equipment: o.equipment && typeof o.equipment === 'object' ? o.equipment : null,
   };
 }
 

@@ -3,10 +3,10 @@
 // cached; everything that changes goes in the user message.
 
 import { rulesAsText, RULES_VERSION, GOALS, levelFor } from '../domain/rules.js';
-import { allExercises, canDo, equipmentList, isAvailable, PATTERNS } from '../domain/catalog.js';
+import { allExercises, canDo, equipmentList, isAvailable, isListed, PATTERNS, EQUIPMENT } from '../domain/catalog.js';
 import { WEEKDAYS, trainingDays, clampMinutes } from '../domain/planner.js';
 
-export const SYSTEM_PROMPT = `You are the training coach inside Seria, a gym training app. You build and update one person's weekly resistance-training plan. Each request names a mode: "interview", "new_plan", "in_session" or "after_session".
+export const SYSTEM_PROMPT = `You are the training coach inside Seria, a gym training app. You build and update one person's weekly resistance-training plan. Each request names a mode: "interview", "new_plan", "in_session", "after_session" or "equipment".
 
 Each request gives you what the app has on record: goal and experience, training days and time budget, preferences and limitations, the current equipment list, the current plan, the results of the current session, earlier sessions, and the version of the training rules library. Follow the rules library below; the app's own generator uses the same one. Use only the recorded data you are given. Never assume a result that is not there.
 
@@ -15,6 +15,8 @@ Modes
 - new_plan: build the week in "plan". Use only exercise ids from available_exercises. Respect the weekdays and the minutes per session, using the time model in the rules. Order each day as the rules say. If a plan truly cannot be built because information is missing, return questions and set plan to null.
 - in_session: the user is in the middle of a workout. Compare the sets done so far with their targets and take reps in reserve into account when given. Propose changes only for sets and exercises that are not done yet, using fields "load", "reps" or "rest".
 - after_session: compare the plan with what was done, take reps in reserve into account when given, and check the earlier sessions for the same result. Propose updates for the coming sessions, using fields "load", "reps", "sets", "rest", "exercise" or "remove".
+
+- equipment: the user describes their gym in their own words, as a list or as loose text. Fill "equipment". Put the ids of catalog items the gym has in add_ids, matching by meaning (a "functional trainer" is the cable station). Put catalog items the user says the gym does not have, or that are broken, in unavailable_ids. A strength machine that is not in equipment_catalog goes in "custom" with a short name as written on the machine and the one movement_id from "movements" it trains most. Leave out assisted machines, where a higher setting makes the lift easier. Anything else (cardio machines, things you cannot place) goes in unrecognized, in the user's words. Only list what the user mentioned. Leave profile, plan and changes empty.
 
 Changes
 For each change give the exercise_key exactly as it appears in the plan or session, the field, the new value and a short reason that points at the recorded numbers. new_value is a number: for "load" it is in the exercise's own unit (kg per dumbbell, total kg with the bar, the machine setting, or kg added to bodyweight). For field "exercise" put the replacement's id in new_exercise_id and null in new_value. The app shows the previous value itself. If the results do not justify a change, return an empty list. Do not repeat a change that is listed under already_proposed.
@@ -56,6 +58,12 @@ export const OUTPUT_SCHEMA = obj({
       })),
     })),
     notes: list(str()),
+  })),
+  equipment: nullable(obj({
+    add_ids: list(str()),
+    unavailable_ids: list(str()),
+    custom: list(obj({ name: str('Short name of the machine.'), movement_id: str('One id from "movements".') })),
+    unrecognized: list(str()),
   })),
   changes: list(obj({
     exercise_key: str(),
@@ -165,5 +173,17 @@ export function sessionRequest({ mode, profile, equipment, plan, session, past, 
     session: sessionOut(session),
     earlier_sessions: historyOut(session, past || []),
     already_proposed: alreadyProposed.map((c) => ({ exercise: c.exerciseName, field: c.field, from: c.from, to: c.to })),
+  });
+}
+
+export function equipmentRequest({ equipment, text }) {
+  return body('equipment', {
+    equipment_catalog: EQUIPMENT.map((x) => ({
+      id: x.id, name: x.name, always_there_by_default: x.kind === 'basic',
+      on_the_list: isListed(equipment, x.id), available: isAvailable(equipment, x.id),
+    })),
+    own_machines: (equipment.custom || []).map((c) => c.name),
+    movements: Object.entries(PATTERNS).map(([id, label]) => ({ id, label })),
+    user_text: String(text).slice(0, 4000),
   });
 }

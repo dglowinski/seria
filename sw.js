@@ -10,7 +10,7 @@ const SHELL = [
   'js/app.js', 'js/store.js', 'js/platform.js', 'js/cloud.js',
   'js/domain/rules.js', 'js/domain/catalog.js', 'js/domain/planner.js', 'js/domain/session.js', 'js/domain/progression.js',
   'js/ai/prompts.js', 'js/ai/claude.js', 'js/ai/coach.js',
-  'js/ui/kit.js', 'js/ui/plan.js', 'js/ui/coachview.js', 'js/ui/history.js', 'js/ui/equipment.js', 'js/ui/prefs.js', 'js/ui/workout.js',
+  'js/ui/kit.js', 'js/ui/voice.js', 'js/ui/plan.js', 'js/ui/coachview.js', 'js/ui/history.js', 'js/ui/equipment.js', 'js/ui/prefs.js', 'js/ui/workout.js',
 ];
 // The Claude SDK is big and only needed online, so it is cached when first used.
 

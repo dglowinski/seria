@@ -208,14 +208,25 @@ await guarded(async () => {
   // --- equipment
   await tab(page, 'Equipment').click();
   await page.getByTestId('add-machine').click();
-  await page.getByRole('button', { name: /Lat pulldown/ }).click();
-  await page.getByRole('button', { name: /Leg press/ }).click();
-  await page.fill('#custom-name', 'Glute drive');
-  await page.selectOption('#custom-pattern', 'glute');
-  await page.getByRole('button', { name: 'Add my machine' }).click(); // adding your own machine closes the sheet
-  check('added machines are listed as available', (await page.getByTestId('machine').count()) === 3 && (await page.getByTestId('machine').first().textContent()).includes('Available'));
+  await page.fill('#gym-text', 'We have a lat pulldown and a leg press. Also a glute drive machine and a sauna. No barbell.');
+  await page.getByTestId('read-gym').click();
+  await page.getByTestId('gym-result').waitFor();
+  const gym = await page.getByTestId('gym-result').textContent();
   st = await state(page);
-  check('free weights, bench and pull-up bar need no entry (on by default)', !('dumbbells' in st.equipment.items) && st.equipment.items.lat_pulldown === true);
+  check('free text about the gym is read and saved in one go', st.equipment.items.lat_pulldown === true && st.equipment.items.leg_press === true
+    && st.equipment.custom.some((c) => c.name === 'Glute drive' && c.pattern === 'glute') && st.equipment.items.barbell === false, JSON.stringify(st.equipment));
+  check('the result says what was added, turned off and not placed', /Added: Lat pulldown, Leg press/.test(gym) && /Glute drive \(glutes\)/.test(gym)
+    && /not available: Barbell and plates/.test(gym) && /Could not place: sauna/.test(gym) && /built-in reader/.test(gym), gym);
+  check('the text box is cleared once saved', (await page.inputValue('#gym-text')) === '');
+  await shot(page, '05-gym-text');
+  await page.getByRole('button', { name: /^Leg curl/ }).click(); // picking from the list still works
+  await page.fill('#custom-name', 'Belt squat');
+  await page.selectOption('#custom-pattern', 'squat');
+  await page.getByRole('button', { name: 'Add my machine' }).click(); // adding your own machine by hand closes the sheet
+  await page.getByRole('switch', { name: /Barbell and plates/ }).click(); // back on: the plan built above uses it
+  check('added machines are listed as available', (await page.getByTestId('machine').count()) === 5 && (await page.getByTestId('machine').first().textContent()).includes('Available'));
+  st = await state(page);
+  check('free weights, bench and pull-up bar need no entry (on by default)', !('dumbbells' in st.equipment.items) && !('barbell' in st.equipment.items) && st.equipment.items.lat_pulldown === true);
   await shot(page, '05-equipment');
   await page.getByRole('switch', { name: /Pull-up bar/ }).click();
   await tab(page, 'Plan').click();
@@ -413,6 +424,23 @@ await guarded(async () => {
   check('plan built by Claude, cleaned against the catalog', st.plan.source === 'claude' && st.plan.days.length === 3 && !JSON.stringify(st.plan).includes('ghost_lift') && st.plan.days.every((d) => d.estMinutes <= 50));
   check('plan screen says who built it', /Built by Claude/.test(await page.locator('main').textContent()));
 
+  // describing the gym: Claude reads it, the app checks it
+  await tab(page, 'Equipment').click();
+  await page.getByTestId('add-machine').click();
+  await page.fill('#gym-text', 'Cables, a hack squat, a belt squat and some treadmills. No leg press.');
+  await page.getByTestId('read-gym').click();
+  await page.getByTestId('gym-result').waitFor();
+  st = await state(page);
+  const gymReq = api.state.requests.map((x) => JSON.parse(x.body.messages[0].content)).find((x) => x.mode === 'equipment');
+  check('gym text goes to Claude with the equipment catalog', !!gymReq && gymReq.equipment_catalog.length >= 19 && /belt squat/.test(gymReq.user_text));
+  check("Claude's reading is saved; made-up ids and movements are dropped", st.equipment.items.cable === true && st.equipment.items.hack_squat === true
+    && st.equipment.custom.map((c) => `${c.name}:${c.pattern}`).join() === 'Belt squat:squat' && !('made_up_machine' in st.equipment.items) && !('leg_press' in st.equipment.items), JSON.stringify(st.equipment));
+  check('the result is marked as read by Claude and lists what it could not place', /Read by Claude/.test(await page.getByTestId('gym-result').textContent()) && /Could not place: treadmills, Mystery box/.test(await page.getByTestId('gym-result').textContent()), await page.getByTestId('gym-result').textContent());
+  await shot(page, '17b-gym-text-claude');
+  await page.getByRole('button', { name: 'Done' }).click();
+  await tab(page, 'Plan').click();
+  await page.getByRole('heading', { name: 'Your week' }).waitFor();
+
   // in-session: rules at once, Claude a moment later
   api.state.delayMs = 900;
   await page.getByRole('button', { name: /^Monday/ }).click(); // a fixed day, so the run does not depend on today's date
@@ -479,6 +507,12 @@ await guarded(async () => {
   await page.getByTestId('assumptions').last().waitFor();
   check('a failing key gives a plain message and the built-in coach answers', (await state(page)).profile.daysPerWeek === 4);
   await shot(page, '20-claude-fallback');
+  await tab(page, 'Equipment').click();
+  await page.getByTestId('add-machine').click();
+  await page.fill('#gym-text', 'smith machine');
+  await page.getByTestId('read-gym').click();
+  await page.getByTestId('gym-result').waitFor();
+  check('gym text still gets saved when Claude fails', (await state(page)).equipment.items.smith === true && /built-in reader instead/.test(await page.getByTestId('gym-result').textContent()));
   api.state.fail = null;
   check('no script errors in part B', errors.length === 0, errors.join(' | '));
   await context.close();

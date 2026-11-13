@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-13T13:59:30.534Z",
+  "ranAt": "2026-11-13T14:20:44.174Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 99,
-  "passed": 99,
+  "total": 106,
+  "passed": 106,
   "failed": 0,
   "results": [
     {
@@ -80,6 +80,24 @@
     {
       "part": "A built-in",
       "name": "plan list shows day, body part and time",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "free text about the gym is read and saved in one go",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "the result says what was added, turned off and not placed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "the text box is cleared once saved",
       "ok": true,
       "detail": ""
     },
@@ -391,6 +409,24 @@
     },
     {
       "part": "B Claude API",
+      "name": "gym text goes to Claude with the equipment catalog",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "Claude's reading is saved; made-up ids and movements are dropped",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "the result is marked as read by Claude and lists what it could not place",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
       "name": "saving does not wait for Claude",
       "ok": true,
       "detail": ""
@@ -452,6 +488,12 @@
     {
       "part": "B Claude API",
       "name": "a failing key gives a plain message and the built-in coach answers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "gym text still gets saved when Claude fails",
       "ok": true,
       "detail": ""
     },

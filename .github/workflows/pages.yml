@@ -5,6 +5,17 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+    # Only changes to the app (or its tests) trigger a release. The report and docs do not.
+    paths:
+      - index.html
+      - manifest.webmanifest
+      - sw.js
+      - css/**
+      - js/**
+      - vendor/**
+      - icons/**
+      - tests/**
+      - .github/workflows/pages.yml
   workflow_dispatch:
 
 permissions:

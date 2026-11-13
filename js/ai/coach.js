@@ -6,7 +6,7 @@
 // generator builds the plan. Either way the app keeps working.
 
 import { GOALS, MAX_DAYS, levelFor } from '../domain/rules.js';
-import { KEYWORDS, allExercises, canDo } from '../domain/catalog.js';
+import { KEYWORDS, allExercises, canDo, parseEquipmentText, applyEquipmentRead } from '../domain/catalog.js';
 import {
   WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_NAMES, missingFields, generatePlan, normalizePlan, fitToBudget, refreshPlan, fmtMonths,
   trainingDays, clampMinutes, setPlanLoad,
@@ -15,7 +15,7 @@ import { inSessionHint, postSessionChanges, equipmentChanges, applyPlanChange, f
 import { hintApplies, setHint } from '../domain/session.js';
 import * as store from '../store.js';
 import { ask, aiReady, AiError } from './claude.js';
-import { interviewRequest, newPlanRequest, sessionRequest } from './prompts.js';
+import { interviewRequest, newPlanRequest, sessionRequest, equipmentRequest } from './prompts.js';
 
 // ---------------------------------------------------------------- built-in reader
 
@@ -416,6 +416,43 @@ export function reviewEquipment() {
   const changes = equipmentChanges(st.plan, st.equipment, st.profile);
   if (!changes.length) return null;
   return store.addProposal({ mode: 'equipment', source: 'rules', sessionId: null, changes });
+}
+
+const strings = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()) : []);
+
+/**
+ * Read a free-text description of the gym and save the equipment it names.
+ * Claude reads it when connected; the built-in reader otherwise, or if Claude fails.
+ * Returns what changed, in display names, for the screen to show.
+ */
+export async function readEquipment(text) {
+  const input = String(text || '').trim();
+  if (!input) return null;
+  let read = null;
+  let via = 'rules';
+  let note = '';
+  if (aiReady()) {
+    try {
+      const out = await ask(equipmentRequest({ equipment: store.getState().equipment, text: input }));
+      if (out.equipment) {
+        const e = out.equipment;
+        read = {
+          add: strings(e.add_ids),
+          off: strings(e.unavailable_ids),
+          custom: (Array.isArray(e.custom) ? e.custom : []).filter((c) => c && typeof c.name === 'string').map((c) => ({ name: c.name, pattern: c.movement_id })),
+          unknown: strings(e.unrecognized),
+        };
+        via = 'claude';
+      }
+    } catch (e) {
+      if (e?.code === 'cancelled') return null;
+      note = `${e instanceof AiError ? e.message : 'Claude did not answer.'} I read it with the built-in reader instead.`;
+    }
+  }
+  if (!read) read = parseEquipmentText(input);
+  const res = applyEquipmentRead(store.getState().equipment, read, () => store.newId('cm'));
+  if (res.changed) store.set({ equipment: res.equipment });
+  return { ...res.summary, via, note, changed: res.changed };
 }
 
 /** Remember a weight for an exercise and write it into the plan. */
