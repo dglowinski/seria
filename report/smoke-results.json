@@ -1,0 +1,603 @@
+{
+  "ranAt": "2026-11-13T13:59:30.534Z",
+  "browser": "Google Chrome (headless), Pixel 7 profile",
+  "total": 99,
+  "passed": 99,
+  "failed": 0,
+  "results": [
+    {
+      "part": "A built-in",
+      "name": "opens on the empty plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "main navigation is Plan, Coach, History, Equipment",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "opening the coach saves nothing by itself",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "coach status says Claude is not connected",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "coach asks for what is missing (days, things to skip)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "assumptions shown before the plan is built",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "no plan exists until the user confirms",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "plan has the three chosen days",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "every day fits the 50 minute budget",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "skipped lifts are left out",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "plan records the rules version",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "plan shows weekly sets per muscle group against the target",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "plan list shows day, body part and time",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "added machines are listed as available",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "free weights, bench and pull-up bar need no entry (on by default)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "lost equipment gives a swap with old value, new value and reason",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Keep plan\" leaves the plan alone",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "day preview: order, equipment, sets, reps, rest, how to pick the weight, time parts",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "workout has its own screen without the tab bar",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "no history: asks for a starting weight first",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "starting weight is saved and shown per dumbbell",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Start set\" shows the active set",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Finish set\" opens the result with the planned value",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "reps correct by ±1 and ±2",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "reps can be typed directly",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "saving starts the rest countdown at once",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "countdown starts from the planned rest",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "rule-based suggestion: change, reason, Apply / Keep plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "reload restores the workout, the saved set and the time left",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "+15 s extends the rest",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "applying the suggestion changes only the sets still to come",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Skip rest\" goes straight to the next set",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "weight can be changed in the result",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "reps in reserve is optional and saved when given",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a wrong entry can be corrected during the workout",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "after the last set the screen shows the next exercise",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a busy station can be swapped for another exercise on available equipment",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a set can be skipped",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "summary: time, sets done of total, skipped sets, biggest differences",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "session is stored set by set with plan and result",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "weights chosen in the session are written into the plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "after the session: proposals with change, reason and a choice",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Apply\" updates the plan and bumps its version",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "the stored session keeps the plan it was done against",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "history lists the workout",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a saved set can be corrected later from history",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "day preview now shows the recorded weight",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "backup file holds plan and history and no API key",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "erase clears plan and history",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "restore brings them back",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "rules library is readable in the app, with sources",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "no script errors in part A",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "status shows Claude connected with the default model",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "\"Test the connection\" gets an answer",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "request: key, browser-access and version headers, as the official SDK sends them",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "request: model, structured output, effort, cached system prompt",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "request: refusal fallback is switched on",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "request: no thinking or sampling parameters the model would reject",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "request: system prompt carries the rules library and its version",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "the key is kept apart from the app data",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "Claude fills the profile; unknown exercise ids are dropped",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "the reply is marked as coming from Claude",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "plan built by Claude, cleaned against the catalog",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "plan screen says who built it",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "saving does not wait for Claude",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "the rule-based suggestion is there first",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "Claude's suggestion replaces it when it arrives in time",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "\"Keep plan\" drops the suggestion",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "a late suggestion about finished sets is not shown",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "an on-target set does not call Claude",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "with Claude failing, the workout carries on by the rules",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "after the session Claude's review is shown with the app's own old value",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "asking the coach for a change gives a proposal to apply or keep",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "applied from the chat",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "a failing key gives a plain message and the built-in coach answers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "no script errors in part B",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "inside claude.ai: Claude is connected with no key",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "inside claude.ai: data status says cloud",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "voice lands in the text field, after what was typed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "the transcript can be edited before sending",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "the viewer's Claude was used, uncached",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "cloud copy: one private main record plus one record per workout",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "cloud copy holds the plan and the saved set",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "a fresh browser waits for the cloud copy before showing the app",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "a fresh browser gets plan and workout back from the cloud",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "and can carry on the same workout",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "backup goes through the viewer save dialog",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "no script errors in part C",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "manifest: standalone display, name, start URL",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "manifest: 192 and 512 icons plus a maskable one",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "icons load at the declared sizes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "viewport and theme colour set for phones",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "offline: the app starts and builds a plan with no network",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "no sideways scroll at phone width",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "no script errors in part D",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "E single file",
+      "name": "single-file build exists, is small, and pulls in nothing from outside",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "E single file",
+      "name": "it follows the Artifact page rules (title first, no document tags of its own)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "E single file",
+      "name": "the single file runs the whole app with Claude and cloud save from the viewer",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "E single file",
+      "name": "no script errors in part E",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+/* Only for the stand-alone page. Inside claude.ai the viewer supplies this. */
+:root { padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px); }

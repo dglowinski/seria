@@ -1,0 +1,2 @@
+preact-htm.js   htm 3.1.1 standalone build, which bundles Preact 10 and its hooks (Apache-2.0 / MIT)
+anthropic-sdk.js   @anthropic-ai/sdk 1.8.0 (MIT)
