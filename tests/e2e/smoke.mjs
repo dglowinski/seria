@@ -662,7 +662,17 @@ await guarded(async () => {
   await tab(page, 'Coach').click();
   await say(page, 'Build muscle, beginner, 2 days a week, 40 minutes');
   await page.getByText(/movements you want to skip/).waitFor();
-  await page.getByRole('button', { name: 'No, nothing' }).click();
+  await say(page, 'My left shoulder hurts on overhead pressing, and I really do not enjoy long warm-ups before training');
+  await page.getByTestId('assumptions').waitFor();
+  // The table of assumptions: labels on the left stay narrow, values get the room, even with long rows.
+  const cols = await page.evaluate(() => {
+    const dl = document.querySelector('[data-testid=assumptions] dl');
+    const w = (el) => el.getBoundingClientRect().width;
+    const dts = [...dl.querySelectorAll('dt')]; const dds = [...dl.querySelectorAll('dd')];
+    return { total: w(dl), label: Math.max(...dts.map(w)), value: Math.min(...dds.map(w)), rows: dts.map((d) => d.textContent), overflow: dl.scrollWidth - dl.clientWidth };
+  });
+  check('assumptions table: the label column stays under 40% of the width', cols.label / cols.total < 0.4 && cols.value / cols.total > 0.55 && cols.overflow <= 0 && cols.rows.includes('Your limitations') && cols.rows.includes('Working around'), JSON.stringify(cols));
+  await shot(page, '24b-assumptions-long');
   await page.getByTestId('build-plan').click();
   await page.getByTestId('open-plan').click();
   check('offline: the app starts and builds a plan with no network', (await state(page)).plan.days.length === 2);

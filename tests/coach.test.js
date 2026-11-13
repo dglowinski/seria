@@ -42,7 +42,8 @@ test('reader: skip, keep and limitations', () => {
   assert.ok(a.patch.avoid.includes('bb_deadlift'));
   assert.ok(a.patch.include.includes('pull_up'));
   assert.deepEqual(a.patch.avoidTags, ['knee']);
-  assert.match(a.patch.limitations, /knee/i);
+  assert.equal(a.patch.limitations, 'My left knee hurts on lunges', 'kept as typed');
+  assert.equal(parseProfile('I think my Left Shoulder is sore. but I can train').patch.limitations, 'I think my Left Shoulder is sore');
   const b = parseProfile("I don't like squats and I want bench press");
   assert.ok(b.patch.avoid.includes('bb_back_squat')); assert.ok(b.patch.include.includes('bb_bench_press'));
   const c = parseProfile('bad lower back');

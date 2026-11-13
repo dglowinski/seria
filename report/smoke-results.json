@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-13T15:03:26.455Z",
+  "ranAt": "2026-11-13T15:11:34.062Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 148,
-  "passed": 148,
+  "total": 149,
+  "passed": 149,
   "failed": 0,
   "results": [
     {
@@ -674,6 +674,12 @@
     {
       "part": "D install and offline",
       "name": "viewport and theme colour set for phones",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "assumptions table: the label column stays under 40% of the width",
       "ok": true,
       "detail": ""
     },

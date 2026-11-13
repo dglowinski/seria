@@ -282,8 +282,8 @@ export function buildAssumptions(profile, equipment) {
   if ((profile.avoid || []).length) out.push(['Leaving out', uniq((profile.avoid || []).map(nameOf)).join(', ')]);
   if ((profile.avoidTags || []).length) out.push(['Working around', profile.avoidTags.map((t) => TAG_TEXT[t] || t).join('; ')]);
   if ((profile.include || []).length) out.push(['Making room for', uniq((profile.include || []).map(nameOf)).join(', ')]);
-  if (profile.limitations) out.push(['Your limitations, as you wrote them', profile.limitations]);
-  if (profile.preferences) out.push(['Your preferences, as you wrote them', profile.preferences]);
+  if (profile.limitations) out.push(['Your limitations', `“${profile.limitations}”`]);
+  if (profile.preferences) out.push(['Your preferences', `“${profile.preferences}”`]);
   return out.map(([label, value]) => ({ label, value }));
 }
 

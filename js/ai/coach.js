@@ -108,7 +108,10 @@ export function parseProfile(text, ctx = {}) {
 
   // Exercises to skip or to keep, and limitations
   const avoid = new Set(); const include = new Set(); const tags = new Set(); const limits = [];
-  for (const clause of t.split(/[.;!?\n]|\bbut\b|\bhowever\b|\bthough\b/)) {
+  // The same cuts on the text as typed, so a limitation is kept in the user's own letters.
+  const cut = /[.;!?\n]|\bbut\b|\bhowever\b|\bthough\b/i;
+  const typed = ` ${raw.replace(/[’`]/g, "'")} `.split(cut);
+  for (const [ci, clause] of t.split(cut).entries()) {
     let rest = clause;
     for (const [words, ids] of KEYWORDS) {
       for (const w of words) {
@@ -124,7 +127,7 @@ export function parseProfile(text, ctx = {}) {
     }
     const part = clause.match(PART);
     if (part && PROBLEM.test(clause) && !/\bno (pain|injur\w*|problems?|issues?)\b/.test(clause)) {
-      limits.push(clause.trim().replace(/^(and|also|i have|i've got)\s+/, ''));
+      limits.push((typed[ci] || clause).trim().replace(/^(and|also|i have|i've got)\s+/i, ''));
       if (/shoulder/.test(part[0])) tags.add('shoulder');
       if (/knee/.test(part[0])) tags.add('knee');
       if (/back|spine|disc/.test(part[0]) || /hernia|sciatica/.test(clause)) tags.add('spine');

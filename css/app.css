@@ -137,9 +137,10 @@ details.note > summary { cursor: pointer; }
 .bubble.notice { border-style: dashed; color: var(--muted); font-size: 14px; }
 .bubble .via { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
 .card { align-self: stretch; max-width: 100%; }
-.facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px; }
-.facts dt { color: var(--muted); }
-.facts dd { margin: 0; overflow-wrap: anywhere; }
+/* Labels take what they need, but never more than about a third; values get the rest. */
+.facts { display: grid; grid-template-columns: fit-content(36%) minmax(0, 1fr); gap: 6px 14px; font-size: 14px; }
+.facts dt { color: var(--muted); min-width: 0; overflow-wrap: break-word; }
+.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .composer { display: flex; gap: 8px; align-items: flex-end; }
 .composer textarea {
   flex: 1; min-width: 0; resize: none; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
