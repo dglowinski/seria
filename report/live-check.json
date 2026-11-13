@@ -1,9 +1,9 @@
 {
   "url": "https://dglowinski.github.io/seria/",
-  "ranAt": "2026-11-13T14:22:23.835Z",
+  "ranAt": "2026-11-13T14:52:06.634Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 12,
-  "passed": 12,
+  "total": 14,
+  "passed": 14,
   "results": [
     {
       "name": "the address answers over HTTPS",
@@ -41,12 +41,22 @@
       "detail": ""
     },
     {
+      "name": "the OpenAI SDK file is there too",
+      "ok": true,
+      "detail": ""
+    },
+    {
       "name": "the offline worker is running",
       "ok": true,
       "detail": ""
     },
     {
       "name": "offline, a typed description of the gym is read and saved",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "offline, a named maker is noted on its machines",
       "ok": true,
       "detail": ""
     },

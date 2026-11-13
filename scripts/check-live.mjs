@@ -48,6 +48,8 @@ try {
 
   const sdk = await page.evaluate(async () => { const r = await fetch('vendor/anthropic-sdk.js'); return r.ok && Number(r.headers.get('content-length') || 1) > 0; });
   check('the Claude SDK file is there for when a key is added', sdk);
+  // Asked for while still online: the SDK files are fetched on first use, not kept for offline.
+  check('the OpenAI SDK file is there too', await page.evaluate(async () => (await fetch('vendor/openai-sdk.js')).ok));
 
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.waitForFunction(async () => (await caches.keys()).some((k) => k.startsWith('seria-')), null, { timeout: 20000 });
@@ -67,8 +69,7 @@ try {
   const eq = await page.evaluate(() => JSON.parse(localStorage.getItem('seria.state.v1')).equipment);
   check('offline, a typed description of the gym is read and saved', eq.items.lat_pulldown === true && eq.items.leg_press === true && eq.items.barbell === false && eq.custom.length === 1 && eq.custom[0].pattern === 'glute', JSON.stringify(eq));
   check('offline, a named maker is noted on its machines', eq.details?.leg_press?.vendor === 'Technogym' && eq.details?.lat_pulldown?.basis === 'stated' && Object.keys(eq.details).length === 2, JSON.stringify(eq.details));
-  const settingsOk = await page.evaluate(async () => { const r = await fetch('vendor/openai-sdk.js'); return r.ok; });
-  check('the OpenAI SDK file is in the offline-capable app', settingsOk);
+
   await page.getByRole('button', { name: 'Close' }).click();
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Plan' }).click();
   await page.getByRole('button', { name: 'Talk to the coach' }).click();
