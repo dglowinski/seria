@@ -1,12 +1,13 @@
-// Canned Claude answers for the smoke test. The same function backs the fake
-// Anthropic API and the fake claude.ai runtime, so both paths see one "Claude".
+// Canned model answers for the smoke test. The same function backs the fake
+// Anthropic API, the fake OpenAI API and the fake claude.ai runtime, so every
+// path sees the same "model".
 // It must be self-contained: it is also injected into the page as text.
 export function canned(payload) {
   const empty = { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [], equipment: null };
   const mode = payload.mode;
   if (mode === 'interview') {
     const msg = String(payload.user_message || '');
-    if (/connection test/i.test(msg)) return { ...empty, message: 'Hello from Claude' };
+    if (/connection test/i.test(msg)) return { ...empty, message: 'Hello from the model' };
     if (payload.current_plan && /shorter|fewer sets/i.test(msg)) {
       const ex = payload.current_plan.days[0].exercises[0];
       return { ...empty, message: 'I can trim the first lift on day one.', changes: [{ exercise_key: ex.exercise_key, field: 'sets', new_value: ex.sets - 1, new_exercise_id: null, reason: `You asked for a shorter session, so ${ex.name} drops from ${ex.sets} to ${ex.sets - 1} sets.` }] };
@@ -62,11 +63,11 @@ export function canned(payload) {
       || payload.session.exercises.find((x) => x.sets.some((s) => s.status === 'done'));
     if (!ex) return empty;
     const last = [...ex.sets].reverse().find((s) => s.status === 'done');
-    return { ...empty, message: 'One tweak.', changes: [{ exercise_key: ex.exercise_key, field: 'load', new_value: Math.max(0, (last.load || 0) - 4), new_exercise_id: null, reason: `Claude double: ${last.reps} reps against a target of ${last.target_reps} at ${last.load}.` }] };
+    return { ...empty, message: 'One tweak.', changes: [{ exercise_key: ex.exercise_key, field: 'load', new_value: Math.max(0, (last.load || 0) - 4), new_exercise_id: null, reason: `Test double: ${last.reps} reps against a target of ${last.target_reps} at ${last.load}.` }] };
   }
   if (mode === 'after_session') {
     const ex = payload.current_plan.days[0].exercises[0];
-    return { ...empty, message: 'Solid session.', changes: [{ exercise_key: ex.exercise_key, field: 'load', new_value: (ex.load || 20) + 2, new_exercise_id: null, reason: `Claude double: every set of ${ex.name} was done, so add a step.` }] };
+    return { ...empty, message: 'Solid session.', changes: [{ exercise_key: ex.exercise_key, field: 'load', new_value: (ex.load || 20) + 2, new_exercise_id: null, reason: `Test double: every set of ${ex.name} was done, so add a step.` }] };
   }
   return empty;
 }

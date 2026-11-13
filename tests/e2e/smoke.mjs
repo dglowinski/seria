@@ -8,6 +8,8 @@
 //   B  Claude through the API, against a local stand-in for api.anthropic.com
 //   C  inside claude.ai, against a stand-in for the viewer runtime
 //   D  home-screen install files and offline start
+//   E  the single-file build that is published on claude.ai
+//   F  OpenAI through its API, against a local stand-in for api.openai.com
 //
 // Needs Google Chrome installed. Uses no real API key and no network.
 
@@ -18,6 +20,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startServer } from '../../scripts/serve.mjs';
 import { startMockAnthropic } from './mock-anthropic.mjs';
+import { startMockOpenAI } from './mock-openai.mjs';
 import { canned } from './canned.mjs';
 
 const SHOTS = process.argv.includes('--shots');
@@ -57,6 +60,7 @@ const secs = (t) => { const [m, s] = t.trim().split(':').map(Number); return m *
 
 const app = await startServer(4311);
 const api = await startMockAnthropic(4312);
+const oai = await startMockOpenAI(4313);
 const BASE = 'http://127.0.0.1:4311/';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const phone = { ...devices['Pixel 7'] };
@@ -69,7 +73,7 @@ async function newPage(opts = {}) {
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });
   // Failed requests are listed by address. The test doubles answer 401 and 529 on purpose; a browser asking for a favicon is not the app's doing.
-  page.on('response', (r) => { if (r.status() >= 400 && !r.url().startsWith(api.url) && !r.url().endsWith('/favicon.ico')) errors.push(`${r.status()} ${r.url()}`); });
+  page.on('response', (r) => { if (r.status() >= 400 && !r.url().startsWith(api.url) && !r.url().startsWith(oai.url) && !r.url().endsWith('/favicon.ico')) errors.push(`${r.status()} ${r.url()}`); });
   if (opts.init) await context.addInitScript(opts.init);
   return { context, page, errors };
 }
@@ -401,7 +405,7 @@ await guarded(async () => {
   check('status shows Claude connected with the default model', /Claude API · claude-opus-5-5/.test(await page.getByTestId('claude-status').textContent()));
   await page.getByTestId('test-claude').click();
   await page.getByText(/Claude answered/).waitFor();
-  check('"Test the connection" gets an answer', /Hello from Claude/.test(await page.getByTestId('test-result').textContent()));
+  check('"Test the connection" gets an answer', /Claude answered: “Hello from the model”/.test(await page.getByTestId('test-result').textContent()));
   await shot(page, '17-claude-connected');
   const r = api.state.requests[0];
   check('request: key, browser-access and version headers, as the official SDK sends them', r.headers.authorization === 'Bearer sk-ant-test-key' && r.headers['anthropic-dangerous-direct-browser-access'] === 'true' && !!r.headers['anthropic-version'] && /^1\./.test(r.headers['x-stainless-package-version']), JSON.stringify(r.headers));
@@ -489,7 +493,7 @@ await guarded(async () => {
   await page.getByTestId('see-proposal').click();
   await page.getByText('From Claude').waitFor({ timeout: 5000 });
   const card = page.getByTestId('change').first();
-  check("after the session Claude's review is shown with the app's own old value", /Weight: 20 kg → 22 kg/.test(await card.textContent()) && /Claude double/.test(await card.textContent()), await card.textContent());
+  check("after the session Claude's review is shown with the app's own old value", /Weight: 20 kg → 22 kg/.test(await card.textContent()) && /Test double/.test(await card.textContent()), await card.textContent());
   await shot(page, '19-claude-review');
 
   // chat change request -> proposal in the chat
@@ -631,9 +635,108 @@ await guarded(async () => {
   await context.close();
 });
 
+// =====================================================================  F
+part = 'F OpenAI API';
+const reqsBeforeF = api.state.requests.length;
+await guarded(async () => {
+  const { context, page, errors } = await newPage();
+  await page.goto(`${BASE}#prefs`);
+  check('Claude is the provider until you choose otherwise', (await page.getByTestId('provider-anthropic').getAttribute('aria-checked')) === 'true' && (await page.locator('#api-key').count()) === 1);
+  await page.getByTestId('provider-openai').click();
+  await page.fill('#openai-key', 'sk-test-openai-key');
+  await page.locator('details summary').click();
+  await page.fill('#openai-base-url', `${oai.url}/v1`);
+  check('status shows OpenAI connected with its default model', /OpenAI API · gpt-6\.1-sol/.test(await page.getByTestId('claude-status').textContent()));
+  await page.getByTestId('test-claude').click();
+  await page.getByText(/OpenAI answered/).waitFor();
+  check('"Test the connection" gets an answer from OpenAI', /OpenAI answered: “Hello from the model”/.test(await page.getByTestId('test-result').textContent()));
+  await shot(page, '25-openai-connected');
+  const r = oai.state.requests[0];
+  check('request: key as a bearer token, sent by the official SDK to the Responses API', r.headers.authorization === 'Bearer sk-test-openai-key' && r.path === '/v1/responses' && /^7\./.test(r.headers['x-stainless-package-version'] || ''), `${r.path} ${JSON.stringify(r.headers).slice(0, 300)}`);
+  check('request: model, strict JSON schema, low effort for a quick call, nothing stored', r.body.model === 'gpt-6.1-sol' && r.body.text.format.type === 'json_schema' && r.body.text.format.strict === true && r.body.reasoning.effort === 'low' && r.body.store === false && r.body.max_output_tokens === 16000, JSON.stringify(r.body).slice(0, 200));
+  check('request: the same rules library goes to OpenAI as to Claude', /Training rules library, version 1\.0\.0/.test(r.body.instructions) && JSON.parse(r.body.input).mode === 'interview');
+  check('no Anthropic request was made', api.state.requests.length === reqsBeforeF);
+
+  await tab(page, 'Coach').click();
+  await say(page, 'Strength, a year in, three days a week, 50 minutes. Skip deadlifts, I love pull-ups.');
+  await page.getByTestId('assumptions').waitFor();
+  check('the reply is marked as coming from OpenAI', (await page.locator('.bubble .via').first().textContent()) === 'OpenAI');
+  await page.getByTestId('build-plan').click();
+  await page.getByTestId('open-plan').click();
+  await page.getByRole('heading', { name: 'Your week' }).waitFor();
+  let st = await state(page);
+  check('plan built by OpenAI, cleaned against the catalog like any other', st.plan.source === 'openai' && st.plan.days.length === 3 && !JSON.stringify(st.plan).includes('ghost_lift') && /Built by OpenAI/.test(await page.locator('main').textContent()));
+
+  await tab(page, 'Equipment').click();
+  await page.getByTestId('add-machine').click();
+  await page.fill('#gym-text', 'Cables and a hack squat');
+  await page.getByTestId('read-gym').click();
+  await page.getByTestId('gym-result').waitFor();
+  check('gym text is read by OpenAI and saved', /Read by OpenAI/.test(await page.getByTestId('gym-result').textContent()) && (await state(page)).equipment.items.hack_squat === true);
+  await page.getByRole('button', { name: 'Done' }).click();
+
+  oai.state.delayMs = 700;
+  await tab(page, 'Plan').click();
+  await page.getByRole('button', { name: /^Monday/ }).click();
+  await page.getByTestId('start-day').click();
+  await main(page).waitFor();
+  await page.fill('#start-weight', '20'); await sleep(120); await tap(page);
+  await tap(page); await tap(page);
+  await page.getByRole('button', { name: '2 reps fewer' }).click();
+  await tap(page);
+  check('mid-workout the rule-based suggestion shows first', /From the training rules/.test(await page.getByTestId('hint').textContent()));
+  await page.getByText('From OpenAI').waitFor({ timeout: 5000 });
+  check("then OpenAI's suggestion replaces it", /Weight: 20 kg → 16 kg/.test(await page.getByTestId('hint').textContent()));
+  await shot(page, '26-openai-hint');
+  oai.state.delayMs = 0;
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Finish and save' }).click();
+  await page.getByRole('heading', { name: 'Workout saved' }).waitFor();
+  await page.getByTestId('see-proposal').click();
+  await page.getByText('From OpenAI').waitFor({ timeout: 5000 });
+  check("after the workout OpenAI's review is shown", /Weight: 20 kg → 22 kg/.test(await page.getByTestId('change').first().textContent()));
+
+  // a model that turns down the reasoning setting, and a model id typed by hand
+  await page.getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('button', { name: 'Settings' }).click();
+  oai.state.rejectReasoning = true;
+  let n = oai.state.requests.length;
+  await page.getByTestId('test-claude').click();
+  await page.getByText(/OpenAI answered/).waitFor();
+  check('if a model refuses the reasoning setting, the app asks again without it', oai.state.requests.length === n + 2 && !('reasoning' in oai.state.requests[n + 1].body));
+  oai.state.rejectReasoning = false;
+  await page.selectOption('#openai-model', 'other');
+  await page.fill('#openai-model-id', 'gpt-4.1');
+  check('any model id can be typed in', await until(async () => /OpenAI API · gpt-4\.1/.test(await page.getByTestId('claude-status').textContent())));
+  n = oai.state.requests.length;
+  await page.getByTestId('test-claude').click();
+  await until(() => oai.state.requests.length === n + 1);
+  check('older models get no reasoning setting at all', oai.state.requests[n].body.model === 'gpt-4.1' && !('reasoning' in oai.state.requests[n].body));
+
+  // wrong key: plain message, built-in coach takes over
+  oai.state.fail = 401;
+  await tab(page, 'Coach').click();
+  await say(page, 'Make it four days a week');
+  await page.getByText(/OpenAI rejected the API key/).waitFor();
+  await page.getByTestId('assumptions').last().waitFor();
+  check('a failing OpenAI key gives a plain message and the built-in coach answers', (await state(page)).profile.daysPerWeek === 4);
+  oai.state.fail = null;
+
+  // switching back: each provider keeps its own key
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByTestId('provider-anthropic').click();
+  check('switching to Claude with no Claude key falls back to the built-in coach', await until(async () => /Built-in coach/.test(await page.getByTestId('claude-status').textContent())));
+  await page.getByTestId('provider-openai').click();
+  check('the OpenAI key is still there when you switch back', (await page.inputValue('#openai-key')) === 'sk-test-openai-key');
+  check('keys are kept apart from the app data and backups', !/sk-test-openai/.test(await page.evaluate(() => localStorage.getItem('seria.state.v1') || '')));
+  check('no script errors in part F', errors.length === 0, errors.join(' | '));
+  await context.close();
+});
+
 await browser.close();
 app.close();
 api.server.close();
+oai.server.close();
 
 const failed = results.filter((r) => !r.ok);
 const summary = { ranAt: new Date().toISOString(), browser: 'Google Chrome (headless), Pixel 7 profile', total: results.length, passed: results.length - failed.length, failed: failed.length, results };

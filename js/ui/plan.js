@@ -7,6 +7,7 @@ import { startSession } from '../domain/session.js';
 import { describeChange } from '../domain/progression.js';
 import { RULES_VERSION } from '../domain/rules.js';
 import { applyChange, keepPlan, reviewEquipment } from '../ai/coach.js';
+import { sourceName } from '../ai/ai.js';
 import { primeAudio } from '../platform.js';
 
 export function startDay(dayId) {
@@ -68,7 +69,7 @@ export function PlanScreen() {
           <span>${r.sets} sets ${r.low ? html`<span class="tag warn">below target</span>` : ''}</span></div>`)}</div>
         ${volume.rows.some((r) => r.low) && html`<p class="small muted" style="margin-top:8px">To close the gap, give sessions more time or add a day. The coach can rebuild the week.</p>`}
       </details>
-      <p class="muted small">Built ${plan.source === 'claude' ? 'by Claude' : 'from the training rules'} · rules v${plan.rulesVersion || RULES_VERSION} · plan v${plan.version}.
+      <p class="muted small">Built ${plan.source === 'rules' ? 'from the training rules' : `by ${sourceName(plan.source)}`} · rules v${plan.rulesVersion || RULES_VERSION} · plan v${plan.version}.
         ${' '}<a class="link" href="#coach">Change it with the coach</a></p>
     </main>
     <${Dock} aboveTabs>
@@ -137,10 +138,10 @@ export function ReviewScreen() {
         const session = p.sessionId ? store.sessionById(p.sessionId, state) : null;
         return html`<section class="stack">
           <div class="spread"><h3>${MODE_TITLE[p.mode] || 'Proposal'}</h3>
-            <span class="tag">${p.source === 'claude' ? 'From Claude' : 'From the training rules'}</span></div>
+            <span class="tag">From ${sourceName(p.source)}</span></div>
           ${session && html`<p class="small muted">${session.title} · ${dateText(session.startedAt)}</p>`}
           ${p.message && html`<p class="small">${p.message}</p>`}
-          ${p.checking && html`<p class="small muted" data-testid="checking">Claude is taking a second look. You can decide now or wait.</p>`}
+          ${p.checking && html`<p class="small muted" data-testid="checking">${sourceName(p.checking === true ? 'claude' : p.checking)} is taking a second look. You can decide now or wait.</p>`}
           ${p.changes.length ? p.changes.map((c) => html`<${ChangeCard} p=${p} c=${c} />`)
             : html`<p class="note" data-testid="no-changes">No changes. Your results do not call for any, so the plan stays as it is.</p>`}
         </section>`;

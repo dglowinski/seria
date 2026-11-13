@@ -22,6 +22,14 @@ export const MODELS = [
   { id: 'claude-fable-5-2', label: 'Claude Fable 5.2', note: 'Most capable, costs the most.' },
 ];
 
+export const DEFAULT_OPENAI_MODEL = 'gpt-6.1-sol';
+export const OPENAI_MODELS = [
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', note: 'Default. Close to the top model, much cheaper.' },
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra', note: 'Most capable, costs the most.' },
+  { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', note: 'Faster and cheaper.' },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna', note: 'Fastest and cheapest.' },
+];
+
 export const emptyState = () => ({
   schema: SCHEMA,
   updatedAt: 0,
@@ -38,7 +46,9 @@ export const emptyState = () => ({
 });
 
 export const defaultSettings = () => ({
+  provider: 'anthropic', // or 'openai'
   apiKey: '', model: DEFAULT_MODEL, baseUrl: '', aiOn: true,
+  openaiKey: '', openaiModel: DEFAULT_OPENAI_MODEL, openaiBaseUrl: '',
   sound: true, vibrate: true, keepAwake: true,
 });
 

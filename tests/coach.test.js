@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseProfile, mergeProfile, mergeAiProfile } from '../js/ai/coach.js';
 import { mergeStates } from '../js/cloud.js';
-import { tidy } from '../js/ai/claude.js';
+import { tidy, sourceName } from '../js/ai/ai.js';
+import { openaiParams } from '../js/ai/openai.js';
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest } from '../js/ai/prompts.js';
 import { emptyProfile, generatePlan, missingFields } from '../js/domain/planner.js';
 import { emptyEquipment, parseEquipmentText, applyEquipmentRead, isAvailable, isListed, EQUIPMENT, allExercises } from '../js/domain/catalog.js';
@@ -86,6 +87,25 @@ test('prompt: schema is strict everywhere and requests carry the mode and rules 
   const c = JSON.parse(sessionRequest({ mode: 'in_session', profile, equipment: eq, plan, session: s, past: [] }));
   assert.equal(c.mode, 'in_session'); assert.equal(c.session.exercises[0].sets[0].reps, plan.days[0].exercises[0].reps);
   assert.equal(c.session.exercises[0].exercise_key, 'd1e1');
+});
+
+test('openai request: strict schema, nothing stored, reasoning only where the model takes it', () => {
+  const p = openaiParams('gpt-6.1-sol', '{"mode":"interview"}', true);
+  assert.equal(p.text.format.type, 'json_schema'); assert.equal(p.text.format.strict, true);
+  assert.match(p.text.format.name, /^[A-Za-z0-9_-]{1,64}$/);
+  assert.equal(p.text.format.schema, OUTPUT_SCHEMA, 'the same answer format as the Claude path');
+  assert.equal(p.store, false); assert.equal(p.input, '{"mode":"interview"}');
+  assert.ok(p.instructions.includes('Training rules library, version'));
+  assert.deepEqual(p.reasoning, { effort: 'low' });
+  assert.equal(openaiParams('gpt-6-astra', 'x', false).reasoning.effort, 'medium');
+  assert.ok(!('reasoning' in openaiParams('gpt-4.1', 'x', true)));
+  assert.ok(!('reasoning' in openaiParams('gpt-5.3-chat-latest', 'x', true)));
+  for (const k of ['temperature', 'top_p', 'tools']) assert.ok(!(k in p));
+  // OpenAI's strict mode: the root is a plain object and nesting stays shallow.
+  assert.equal(OUTPUT_SCHEMA.type, 'object'); assert.ok(!OUTPUT_SCHEMA.anyOf);
+  const depth = (s) => (s.anyOf ? Math.max(...s.anyOf.map(depth)) : s.type === 'object' ? 1 + Math.max(0, ...Object.values(s.properties).map(depth)) : s.type === 'array' ? depth(s.items) : 0);
+  assert.ok(depth(OUTPUT_SCHEMA) <= 5, `schema nests ${depth(OUTPUT_SCHEMA)} objects deep`);
+  assert.equal(sourceName('openai'), 'OpenAI'); assert.equal(sourceName('claude'), 'Claude'); assert.equal(sourceName('rules'), 'the training rules');
 });
 
 test('gym text: named machines, things the gym lacks, own machines and the rest', () => {

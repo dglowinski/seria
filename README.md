@@ -22,13 +22,13 @@ Open <https://dglowinski.github.io/seria/> in Chrome on the phone. Then ⋮ menu
 
 - opens full screen like an app and starts with no signal,
 - keeps data in the phone's browser. Use Settings, "Save a backup file" now and then,
-- reaches Claude with your own Anthropic API key, pasted in Settings. Without a key the built-in coach and the training rules do the job.
+- uses Claude or OpenAI with your own API key, pasted in Settings. Without a key the built-in coach and the training rules do the job.
 
 It is served by GitHub Pages from this repository. Every push to `main` runs the unit tests and then publishes the app files (`.github/workflows/pages.yml`). Tests, scripts and the report are not published. The folder has no build step, so any other static HTTPS host works too.
 
 ## Telling it what your gym has
 
-On the Equipment tab, "Add to list" opens a box where you can name the machines or paste any text: a list, a sentence, notes from the gym's website. You can also dictate it. The text is read and the list is saved in one go, and you see what was added, what was marked as missing ("no barbell"), and what could not be placed. Claude does the reading when it is connected; a built-in reader does it otherwise. You can still pick machines from the list or add your own by hand.
+On the Equipment tab, "Add to list" opens a box where you can name the machines or paste any text: a list, a sentence, notes from the gym's website. You can also dictate it. The text is read and the list is saved in one go, and you see what was added, what was marked as missing ("no barbell"), and what could not be placed. The connected model (Claude or OpenAI) does the reading; a built-in reader does it otherwise. You can still pick machines from the list or add your own by hand.
 
 ## Run it on this computer
 
@@ -37,33 +37,47 @@ npm install          # only needed for tests and rebuilding vendor files
 npm run serve        # http://127.0.0.1:4173
 ```
 
-## Connecting Claude
+## Connecting an AI model
 
-| Where it runs | How Claude is reached | What you do |
-|---|---|---|
-| claude.ai page | the viewer's own Claude | nothing, allow it when asked |
-| your own address | Anthropic API, official SDK, called from the browser | Settings, paste an API key, "Test the connection" |
+The coach can run on Claude or on OpenAI. Both get the same prompt, the same rules library and the same answer format, and the app checks their answers the same way.
 
-Details for the API path (`js/ai/claude.js`):
+| Where it runs | Model | How it is reached | What you do |
+|---|---|---|---|
+| claude.ai page | Claude | the viewer's own Claude | nothing, allow it when asked |
+| stand-alone app | Claude | Anthropic API, official SDK, called from the browser | Settings, choose Claude, paste an Anthropic key, "Test the connection" |
+| stand-alone app | OpenAI | OpenAI Responses API, official SDK, called from the browser | Settings, choose OpenAI, paste an OpenAI key, "Test the connection" |
+
+Inside claude.ai the page can only reach Claude, so OpenAI is offered in the stand-alone app only.
+
+Claude (`js/ai/claude.js`):
 
 - Model: `claude-opus-5-5` by default. Sonnet 5.5, Haiku 5.5 and Fable 5.2 can be picked in Settings.
-- One request shape for every job: the same system prompt (it contains the whole rules library and is marked for caching), a JSON request, and a JSON answer forced by a schema.
 - Refusal fallback is on for the models that support it (`fallbacks: "default"`). If Claude's safety filters decline a request, the API retries it on another model by itself.
-- The key lives only in this browser's storage, is sent only to Anthropic, and is never part of a backup. Set a spend limit on it.
-- Settings, Advanced lets you point the app at your own relay instead of `api.anthropic.com`.
 
-Claude is never on the critical path. Saving a set and the rest timer work at once. If Claude is off, slow or failing, the app carries on with the last approved plan and the rule-based suggestions.
+OpenAI (`js/ai/openai.js`):
+
+- Model: `gpt-6.1-sol` by default. GPT-6 Astra, GPT-6.1 Terra and GPT-6 Luna are in the list, and any other model id can be typed in.
+- Requests ask for low reasoning effort on quick mid-workout checks and medium otherwise. Older models that take no reasoning setting are sent none, and a model that turns the setting down is asked once more without it.
+- `store: false`, so the conversation is not kept on OpenAI's side.
+
+Both:
+
+- One request shape for every job: the same system prompt (it contains the whole rules library), a JSON request, and a JSON answer forced by a strict schema.
+- Each key lives only in this browser's storage, is sent only to its own provider, and is never part of a backup. Set a spend limit on it.
+- Settings, Advanced lets you point the app at your own relay instead of the provider's address.
+
+The model is never on the critical path. Saving a set and the rest timer work at once. If the model is off, slow or failing, the app carries on with the last approved plan and the rule-based suggestions.
 
 ## Tests
 
 ```
-npm test             # 26 unit tests for the rules, planner, session logic, text reader, cloud merge
-npm run smoke        # 99 end-to-end checks in a phone-sized headless Chrome
+npm test             # unit tests for the rules, planner, session logic, text readers, request formats, cloud merge
+npm run smoke        # end-to-end checks in a phone-sized headless Chrome
 npm run smoke:shots  # same, and saves screenshots to report/shots
 npm run check:live   # checks the published app at its real address, including an offline start
 ```
 
-The smoke test needs Google Chrome installed. It uses no real API key and no network: Claude is played by a local stand-in for the API (`tests/e2e/mock-anthropic.mjs`) and by a stand-in for the claude.ai runtime.
+The smoke test needs Google Chrome installed. It uses no real API key and no network: the models are played by local stand-ins for the Anthropic API (`tests/e2e/mock-anthropic.mjs`), the OpenAI API (`tests/e2e/mock-openai.mjs`) and the claude.ai runtime.
 
 ## How the code is laid out
 
@@ -80,10 +94,12 @@ js/domain/planner.js                      builds the week, estimates time
 js/domain/session.js                      the workout: ready, set, result, rest, next, summary
 js/domain/progression.js                  reads results, proposes changes, applies them
 js/ai/prompts.js                          the prompt, the answer schema, the request data
+js/ai/ai.js                               picks the provider, checks the answer
 js/ai/claude.js                           the two ways to reach Claude
-js/ai/coach.js                            the conversation, with and without Claude
+js/ai/openai.js                           OpenAI through its Responses API
+js/ai/coach.js                            the conversation, with and without a model
 js/ui/*.js                                the screens
-vendor/                                   Preact + htm, and the Anthropic SDK, built by npm run vendor
+vendor/                                   Preact + htm, the Anthropic SDK and the OpenAI SDK, built by npm run vendor
 docs/training-rules.md                    the rules as a document, generated from rules.js
 scripts/                                  local server, icon, vendor, rules-doc and single-file builders
 tests/                                    unit tests and the end-to-end smoke test

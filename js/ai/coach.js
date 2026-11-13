@@ -1,7 +1,8 @@
 // The coach: reads what the user says, keeps the profile, asks for what is
 // missing, shows its assumptions and builds or updates the plan.
 //
-// With Claude connected, Claude does the reading and planning. Without it, a
+// With an AI model connected (Claude or OpenAI), the model does the reading
+// and planning. Without one, a
 // small built-in reader handles the common answers and the rule-based
 // generator builds the plan. Either way the app keeps working.
 
@@ -14,7 +15,7 @@ import {
 import { inSessionHint, postSessionChanges, equipmentChanges, applyPlanChange, fromAiChanges } from '../domain/progression.js';
 import { hintApplies, setHint } from '../domain/session.js';
 import * as store from '../store.js';
-import { ask, aiReady, AiError } from './claude.js';
+import { ask, aiReady, aiSource, aiName, AiError } from './ai.js';
 import { interviewRequest, newPlanRequest, sessionRequest, equipmentRequest } from './prompts.js';
 
 // ---------------------------------------------------------------- built-in reader
@@ -153,7 +154,7 @@ export function mergeProfile(profile, patch) {
   return p;
 }
 
-/** Fold Claude's reading of the profile into ours, checking ids against the catalog. */
+/** Fold the model's reading of the profile into ours, checking ids against the catalog. */
 export function mergeAiProfile(profile, ai, equipment) {
   if (!ai) return profile;
   const ids = new Set(allExercises(equipment).map((x) => x.id));
@@ -232,7 +233,7 @@ function localTurn(text) {
     store.say('coach', [ack, st.plan ? 'Here is what I would rebuild the plan on.' : 'Here is what I will build the plan on. Tell me if anything is off.'].filter(Boolean).join(' '), { kind: 'assumptions' });
     return;
   }
-  store.say('coach', 'With the built-in coach I can change your goal, days, session length, and which exercises to skip or include. For anything else, connect Claude in Settings, or swap an exercise during a workout.', { chips: ['Rebuild my plan'] });
+  store.say('coach', 'With the built-in coach I can change your goal, days, session length, and which exercises to skip or include. For anything else, connect Claude or OpenAI in Settings, or swap an exercise during a workout.', { chips: ['Rebuild my plan'] });
 }
 
 /** Handle one message from the user. */
@@ -245,6 +246,8 @@ export async function userSays(text) {
     return;
   }
   if (!aiReady()) { localTurn(message); return; }
+  const src = aiSource();
+  const name = aiName();
   setBusy(true);
   try {
     const st = store.getState();
@@ -256,16 +259,16 @@ export async function userSays(text) {
     const changes = now.plan ? fromAiChanges(out.changes, { plan: now.plan, equipment: now.equipment, mode: 'after_session' }) : [];
     const textOut = [out.message, ...out.questions].filter(Boolean).join('\n') || 'Okay.';
     if (changes.length) {
-      const p = store.addProposal({ mode: 'coach', source: 'claude', changes });
-      store.say('coach', textOut, { via: 'claude', kind: 'proposal', proposalId: p.id });
+      const p = store.addProposal({ mode: 'coach', source: src, changes });
+      store.say('coach', textOut, { via: src, kind: 'proposal', proposalId: p.id });
     } else if (out.ready_for_plan && !missingFields(profile).length && (!now.plan || JSON.stringify(profile) !== before)) {
-      store.say('coach', textOut, { via: 'claude', kind: 'assumptions' });
+      store.say('coach', textOut, { via: src, kind: 'assumptions' });
     } else {
-      store.say('coach', textOut, { via: 'claude' });
+      store.say('coach', textOut, { via: src });
     }
   } catch (e) {
     if (e?.code !== 'cancelled') {
-      store.say('coach', `${e instanceof AiError ? e.message : 'Claude did not answer.'} I carried on with the built-in coach.`, { kind: 'notice' });
+      store.say('coach', `${e instanceof AiError ? e.message : `${name} did not answer.`} I carried on with the built-in coach.`, { kind: 'notice' });
       localTurn(message);
     }
   } finally {
@@ -286,21 +289,23 @@ export async function buildPlan() {
   let plan = null;
   let via;
   if (aiReady()) {
+    const src = aiSource();
+    const name = aiName();
     setBusy(true);
     try {
       const out = await ask(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights: st.weights }));
       if (out.plan) {
         const res = normalizePlan(out.plan, st.profile, st.equipment, st.weights);
         for (const d of res.plan.days) fitToBudget(d.exercises, res.plan.minutes);
-        plan = refreshPlan(res.plan);
-        via = 'claude';
+        plan = refreshPlan({ ...res.plan, source: src });
+        via = src;
       } else if (out.questions.length) {
-        store.say('coach', [out.message, ...out.questions].filter(Boolean).join('\n'), { via: 'claude' });
+        store.say('coach', [out.message, ...out.questions].filter(Boolean).join('\n'), { via: src });
         return;
       }
     } catch (e) {
       if (e?.code === 'cancelled') return;
-      store.say('coach', `${e instanceof AiError ? e.message : 'Claude could not build the plan.'} I built it with the training rules instead.`, { kind: 'notice' });
+      store.say('coach', `${e instanceof AiError ? e.message : `${name} could not build the plan.`} I built it with the training rules instead.`, { kind: 'notice' });
     } finally {
       setBusy(false);
     }
@@ -340,7 +345,8 @@ export function reviewSession(sessionId) {
   if (existing) return existing;
   const rules = postSessionChanges(session, st.plan, st.sessions);
   const wantAi = aiReady();
-  const proposal = store.addProposal({ mode: 'post_session', source: 'rules', sessionId, changes: rules, checking: wantAi });
+  const src = aiSource();
+  const proposal = store.addProposal({ mode: 'post_session', source: 'rules', sessionId, changes: rules, checking: wantAi ? src : false });
   if (wantAi) {
     const ctl = new AbortController();
     reviews.set(proposal.id, ctl);
@@ -349,12 +355,12 @@ export function reviewSession(sessionId) {
         const now = store.getState();
         const cur = now.proposals.find((p) => p.id === proposal.id);
         if (!cur) return;
-        // Claude's review replaces the rule-based one only while the user has not acted on it.
+        // The model's review replaces the rule-based one only while the user has not acted on it.
         const untouched = cur.changes.every((c) => c.status === 'open');
         const ai = fromAiChanges(out.changes, { plan: now.plan, equipment: now.equipment, mode: 'after_session' }).map((c) => ({ status: 'open', ...c }));
         store.set({
           proposals: now.proposals.map((p) => (p.id !== proposal.id ? p : untouched
-            ? { ...p, source: 'claude', changes: ai, message: out.message, checking: false }
+            ? { ...p, source: src, changes: ai, message: out.message, checking: false }
             : { ...p, checking: false })),
         });
       })
@@ -372,7 +378,7 @@ export function reviewSession(sessionId) {
 let hintCtl = null;
 
 /**
- * After a set is saved: the rule-based hint shows at once; Claude's, if it
+ * After a set is saved: the rule-based hint shows at once; the model's, if it
  * arrives while the sets it talks about are still to come, replaces it.
  * Saving the set never waits for either.
  */
@@ -387,7 +393,8 @@ export function afterSetSaved(sessionBefore, exIdx, setIdx) {
   const st = session.exercises[exIdx]?.sets[setIdx];
   if (!st?.actual) return;
   const off = st.actual.reps !== st.target.reps || st.actual.load !== st.target.load || (st.actual.rir != null && (st.actual.rir <= 0 || st.actual.rir >= 3));
-  if (!off) return; // on target: nothing for Claude to judge
+  if (!off) return; // on target: nothing for the model to judge
+  const src = aiSource();
   const ctl = new AbortController();
   hintCtl = ctl;
   const s0 = store.getState();
@@ -400,7 +407,7 @@ export function afterSetSaved(sessionBefore, exIdx, setIdx) {
       if (!live || live.id !== session.id) return;
       const changes = fromAiChanges(out.changes, { session: live, mode: 'in_session' });
       if (!changes.length) return;
-      const aiHint = { id: store.newId('hint'), source: 'claude', mode: 'in_session', sessionId: live.id, createdAt: Date.now(), changes };
+      const aiHint = { id: store.newId('hint'), source: src, mode: 'in_session', sessionId: live.id, createdAt: Date.now(), changes };
       // A late answer only shows if it is about sets that are still to come.
       if (hintApplies(live, aiHint)) store.putSession(setHint(live, aiHint));
     })
@@ -422,7 +429,7 @@ const strings = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string'
 
 /**
  * Read a free-text description of the gym and save the equipment it names.
- * Claude reads it when connected; the built-in reader otherwise, or if Claude fails.
+ * The connected model reads it; the built-in reader otherwise, or if the model fails.
  * Returns what changed, in display names, for the screen to show.
  */
 export async function readEquipment(text) {
@@ -432,6 +439,8 @@ export async function readEquipment(text) {
   let via = 'rules';
   let note = '';
   if (aiReady()) {
+    const src = aiSource();
+    const name = aiName();
     try {
       const out = await ask(equipmentRequest({ equipment: store.getState().equipment, text: input }));
       if (out.equipment) {
@@ -442,11 +451,11 @@ export async function readEquipment(text) {
           custom: (Array.isArray(e.custom) ? e.custom : []).filter((c) => c && typeof c.name === 'string').map((c) => ({ name: c.name, pattern: c.movement_id })),
           unknown: strings(e.unrecognized),
         };
-        via = 'claude';
+        via = src;
       }
     } catch (e) {
       if (e?.code === 'cancelled') return null;
-      note = `${e instanceof AiError ? e.message : 'Claude did not answer.'} I read it with the built-in reader instead.`;
+      note = `${e instanceof AiError ? e.message : `${name} did not answer.`} I read it with the built-in reader instead.`;
     }
   }
   if (!read) read = parseEquipmentText(input);

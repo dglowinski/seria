@@ -5,7 +5,7 @@ import { html, useState, useRef, useEffect, useStore, Sheet, Icon, toast } from 
 import * as store from '../store.js';
 import { EQUIPMENT, PATTERNS, ZONES, isAvailable, isListed } from '../domain/catalog.js';
 import { readEquipment } from '../ai/coach.js';
-import { aiReady } from '../ai/claude.js';
+import { aiReady, aiName, sourceName } from '../ai/ai.js';
 import { useVoiceInput } from './voice.js';
 
 function setItem(id, value) {
@@ -45,7 +45,7 @@ function DescribeGym({ hasPlan }) {
 
   return html`<div class="stack" data-testid="describe-gym">
     <h4>Tell me what your gym has</h4>
-    <p class="small muted">Name the machines or paste any text: a list, a sentence, notes from the gym's website. ${aiReady() ? 'Claude reads it' : 'It is read'} and the list is saved. Say "no barbell" for things your gym lacks.</p>
+    <p class="small muted">Name the machines or paste any text: a list, a sentence, notes from the gym's website. ${aiReady() ? `${aiName()} reads it` : 'It is read'} and the list is saved. Say "no barbell" for things your gym lacks.</p>
     <div class="composer">
       <textarea id="gym-text" ref=${box} rows="3" value=${text} onInput=${(e) => setText(e.target.value)}
         placeholder=${listening ? 'Listening… speak, then fix the text if needed' : 'For example: lat pulldown, leg press, cables, a glute drive. No barbell.'}></textarea>
@@ -54,7 +54,7 @@ function DescribeGym({ hasPlan }) {
     </div>
     <button class="cta" data-testid="read-gym" disabled=${busy || !text.trim()} onClick=${run}>${busy ? 'Reading…' : 'Read and save'}</button>
     ${result && html`<div class="note stack tight" data-testid="gym-result" role="status">
-      <div class="spread"><b>${result.changed ? 'Saved' : 'Nothing new to save'}</b><span class="tag">${result.via === 'claude' ? 'Read by Claude' : 'Read by the built-in reader'}</span></div>
+      <div class="spread"><b>${result.changed ? 'Saved' : 'Nothing new to save'}</b><span class="tag">Read by ${result.via === 'rules' ? 'the built-in reader' : sourceName(result.via)}</span></div>
       ${result.note && html`<p class="small muted">${result.note}</p>`}
       ${result.added.length > 0 && html`<p class="small"><span class="muted">Added:</span> ${list(result.added)}</p>`}
       ${result.custom.length > 0 && html`<p class="small"><span class="muted">Added as your own machines:</span> ${list(result.custom)}</p>`}

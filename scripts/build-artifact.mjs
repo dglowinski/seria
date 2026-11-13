@@ -1,8 +1,8 @@
 // Packs the whole app into one HTML file for hosting as a claude.ai Artifact:
 // styles and script inline, no outside files. Run: npm run build:artifact
 //
-// The Anthropic SDK is left out on purpose. Inside claude.ai the page cannot
-// call the API directly; it uses the viewer's own Claude instead.
+// The Anthropic and OpenAI SDKs are left out on purpose. Inside claude.ai the
+// page cannot call an API directly; it uses the viewer's own Claude instead.
 import { build } from 'esbuild';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ const out = await build({
   plugins: [{
     name: 'no-sdk',
     setup(b) {
-      b.onResolve({ filter: /anthropic-sdk\.js$/ }, () => ({ path: 'sdk-stub', namespace: 'stub' }));
+      b.onResolve({ filter: /(anthropic|openai)-sdk\.js$/ }, () => ({ path: 'sdk-stub', namespace: 'stub' }));
       b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'export default null;', loader: 'js' }));
     },
   }],

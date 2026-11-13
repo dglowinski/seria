@@ -1,8 +1,8 @@
-// Settings: connect Claude, workout signals, backup, and the training rules.
+// Settings: connect an AI model (Claude or OpenAI), workout signals, backup, and the training rules.
 
 import { html, useState, useRef, useStore, useSignal, go, toast } from './kit.js';
 import * as store from '../store.js';
-import { aiStatus, testConnection } from '../ai/claude.js';
+import { aiStatus, aiName, testConnection } from '../ai/ai.js';
 import { inViewer, runtime, onRuntime, saveFile, isStandalone } from '../platform.js';
 import { cloud, onCloud, syncNow, CLOUD_TEXT } from '../cloud.js';
 import { RULES, SOURCES, RULES_VERSION, RULES_UPDATED, PRESCRIPTION, GOALS } from '../domain/rules.js';
@@ -28,9 +28,13 @@ export function PrefsScreen() {
   const [confirmReset, setConfirmReset] = useState(false);
   const file = useRef(null);
 
+  const openai = s.provider === 'openai';
+  const knownOpenai = store.OPENAI_MODELS.some((m) => m.id === s.openaiModel);
+  const pickProvider = (provider) => { store.setSettings({ provider }); setTest({ state: 'idle', text: '' }); };
   const runTest = async () => {
-    setTest({ state: 'busy', text: 'Asking Claude…' });
-    try { setTest({ state: 'ok', text: `Claude answered: “${await testConnection()}”` }); } catch (e) { setTest({ state: 'bad', text: e.message || 'No answer.' }); }
+    const name = aiName();
+    setTest({ state: 'busy', text: `Asking ${name}…` });
+    try { setTest({ state: 'ok', text: `${name} answered: “${await testConnection()}”` }); } catch (e) { setTest({ state: 'bad', text: e.message || 'No answer.' }); }
   };
   const doExport = async () => {
     const ok = await saveFile(`seria-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportData());
@@ -53,14 +57,22 @@ export function PrefsScreen() {
     <div class="stack tight"><p class="eyebrow">Settings</p><h2>Set up Seria</h2></div>
 
     <section class="stack">
-      <h3>Claude</h3>
-      <p class="small muted">Claude reads what you tell the coach, builds the week and reviews your results. Without it the app still works: a built-in coach asks the same questions and the plan comes from the training rules.</p>
+      <h3>AI coach</h3>
+      <p class="small muted">An AI model reads what you tell the coach, builds the week and reviews your results. You can use Claude or OpenAI. Without one the app still works: a built-in coach asks the same questions and the plan comes from the training rules.</p>
       <div class="note" data-testid="claude-status"><b>${status.label}</b>
         ${inViewer && runtime.sample && html`<span class="small muted">No key needed. Requests use your own Claude plan, and Claude asks your permission the first time.</span>`}
         ${inViewer && !runtime.sample && runtime.settled && html`<span class="small muted">This view does not offer Claude. Open the page from claude.ai while signed in.</span>`}
+        ${inViewer && html`<span class="small muted">Inside claude.ai the page can only reach Claude. To use OpenAI, open the stand-alone app.</span>`}
       </div>
-      <${Switch} id="ai-on" label="Use Claude" hint="Turn off to stay fully offline" on=${s.aiOn} onChange=${(v) => store.setSettings({ aiOn: v })} />
+      <${Switch} id="ai-on" label="Use an AI coach" hint="Turn off to stay fully offline" on=${s.aiOn} onChange=${(v) => store.setSettings({ aiOn: v })} />
       ${!inViewer && html`
+        <div class="field"><span>Which one</span>
+          <div class="chips" role="radiogroup" aria-label="AI provider">
+            <button class=${`chip ${!openai ? 'on' : ''}`} role="radio" aria-checked=${!openai} data-testid="provider-anthropic" onClick=${() => pickProvider('anthropic')}>Claude</button>
+            <button class=${`chip ${openai ? 'on' : ''}`} role="radio" aria-checked=${openai} data-testid="provider-openai" onClick=${() => pickProvider('openai')}>OpenAI</button>
+          </div>
+        </div>`}
+      ${!inViewer && !openai && html`
         <label class="field"><span>Anthropic API key</span>
           <input id="api-key" class="input" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" value=${s.apiKey}
             onInput=${(e) => { store.setSettings({ apiKey: e.target.value.trim() }); setTest({ state: 'idle', text: '' }); }} /></label>
@@ -73,7 +85,24 @@ export function PrefsScreen() {
           <label class="field" style="margin-top:8px"><span>API address (leave empty for Anthropic). Use this to send requests through your own relay.</span>
             <input id="base-url" class="input" type="url" placeholder="https://api.anthropic.com" value=${s.baseUrl} onInput=${(e) => store.setSettings({ baseUrl: e.target.value.trim() })} /></label>
         </details>`}
-      ${(status.kind === 'api' || status.kind === 'viewer') && html`
+      ${!inViewer && openai && html`
+        <label class="field"><span>OpenAI API key</span>
+          <input id="openai-key" class="input" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…" value=${s.openaiKey}
+            onInput=${(e) => { store.setSettings({ openaiKey: e.target.value.trim() }); setTest({ state: 'idle', text: '' }); }} /></label>
+        <p class="small muted">Create a key at platform.openai.com. It is stored only in this browser and sent only to OpenAI. It is never part of a backup. Anyone who can unlock this phone and open this page could use it, so set a spend limit for the key's project.</p>
+        <label class="field"><span>Model</span>
+          <select id="openai-model" class="input" value=${knownOpenai ? s.openaiModel : 'other'} onChange=${(e) => store.setSettings({ openaiModel: e.target.value === 'other' ? '' : e.target.value })}>
+            ${store.OPENAI_MODELS.map((m) => html`<option value=${m.id}>${m.label} · ${m.note}</option>`)}
+            <option value="other">Another model…</option>
+          </select></label>
+        ${!knownOpenai && html`<label class="field"><span>Model id, as OpenAI writes it</span>
+          <input id="openai-model-id" class="input" autocomplete="off" spellcheck="false" placeholder="for example gpt-6.1-sol" value=${s.openaiModel}
+            onInput=${(e) => store.setSettings({ openaiModel: e.target.value.trim() })} /></label>`}
+        <details class="note"><summary>Advanced</summary>
+          <label class="field" style="margin-top:8px"><span>API address (leave empty for OpenAI). Use this for your own relay or another service that speaks OpenAI's Responses API.</span>
+            <input id="openai-base-url" class="input" type="url" placeholder="https://api.openai.com/v1" value=${s.openaiBaseUrl} onInput=${(e) => store.setSettings({ openaiBaseUrl: e.target.value.trim() })} /></label>
+        </details>`}
+      ${status.source && html`
         <button class="cta ghost" data-testid="test-claude" disabled=${test.state === 'busy'} onClick=${runTest}>Test the connection</button>
         ${test.text && html`<p class=${`small ${test.state === 'bad' ? '' : 'muted'}`} data-testid="test-result" style=${test.state === 'bad' ? 'color:var(--bad)' : ''}>${test.text}</p>`}`}
     </section>
@@ -91,7 +120,7 @@ export function PrefsScreen() {
         <b>${inViewer ? CLOUD_TEXT[cloud.status] : 'Saved in this browser on this device'}</b>
         <span class="small muted">${inViewer
           ? 'Inside claude.ai your plan and history are kept in your private space for this page, so they follow you to another device.'
-          : 'Nothing leaves the phone except what you send to Claude. Clearing site data in the browser removes it, so keep a backup.'}</span>
+          : 'Nothing leaves the phone except what you send to the AI model you connect. Clearing site data in the browser removes it, so keep a backup.'}</span>
         ${!store.storageWorks() && html`<span class="small" style="color:var(--bad)">This browser is not letting the page save. Changes may be lost on reload.</span>`}
       </div>
       ${inViewer && cloud.status !== 'off' && html`<button class="cta ghost" onClick=${() => { syncNow(); toast('Syncing…'); }}>Sync now</button>`}
@@ -100,7 +129,7 @@ export function PrefsScreen() {
       <button class="cta ghost" onClick=${() => file.current.click()}>Restore from a backup file</button>
       <input ref=${file} id="import-file" type="file" accept="application/json,.json" hidden onChange=${doImport} />
       ${!confirmReset && html`<button class="cta danger" onClick=${() => setConfirmReset(true)}>Erase everything</button>`}
-      ${confirmReset && html`<div class="note warn"><b>Erase the plan, history and chat?</b><span class="small muted">This cannot be undone. Your API key stays.</span>
+      ${confirmReset && html`<div class="note warn"><b>Erase the plan, history and chat?</b><span class="small muted">This cannot be undone. Your API keys stay.</span>
         <div class="chips" style="margin-top:8px">
           <button class="chip danger" data-testid="confirm-reset" onClick=${() => { store.resetAll(); setConfirmReset(false); toast('Everything erased'); go('plan'); }}>Yes, erase</button>
           <button class="chip" onClick=${() => setConfirmReset(false)}>Cancel</button></div></div>`}
@@ -125,7 +154,7 @@ export function RulesScreen() {
   const areas = [...new Set(RULES.map((r) => r.area))];
   return html`<main class="main with-tabs">
     <div class="stack tight"><p class="eyebrow">Training rules · v${RULES_VERSION} · ${RULES_UPDATED}</p><h2>What the plan is based on</h2>
-      <p class="muted">The plan generator, the suggestions during and after a workout, and Claude all work from this one set of rules.</p></div>
+      <p class="muted">The plan generator, the suggestions during and after a workout, and the AI model you connect all work from this one set of rules.</p></div>
     ${areas.map((a) => html`<section class="stack">
       <h3>${a}</h3>
       ${RULES.filter((r) => r.area === a).map((r) => html`<div class="rule stack tight">

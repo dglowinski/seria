@@ -1,4 +1,4 @@
-// Builds the two third-party files the app loads at runtime, so the app itself
+// Builds the third-party files the app loads at runtime, so the app itself
 // needs no build step. Re-run after bumping versions: npm run vendor
 import { build } from 'esbuild';
 import { copyFileSync, writeFileSync, statSync, readFileSync } from 'node:fs';
@@ -23,14 +23,27 @@ await build({
   outfile: new URL('../vendor/anthropic-sdk.js', import.meta.url).pathname,
 });
 
+// 3. The official OpenAI SDK, bundled for the browser.
+await build({
+  stdin: { contents: `export { default } from 'openai';`, resolveDir: new URL('..', import.meta.url).pathname },
+  bundle: true,
+  format: 'esm',
+  platform: 'browser',
+  target: 'es2022',
+  minify: true,
+  legalComments: 'none',
+  outfile: new URL('../vendor/openai-sdk.js', import.meta.url).pathname,
+});
+
 writeFileSync(
   new URL('../vendor/VERSIONS.txt', import.meta.url),
   [
     `preact-htm.js   htm ${pkg('htm').version} standalone build, which bundles Preact 10 and its hooks (Apache-2.0 / MIT)`,
     `anthropic-sdk.js   @anthropic-ai/sdk ${pkg('@anthropic-ai/sdk').version} (MIT)`,
+    `openai-sdk.js   openai ${pkg('openai').version} (Apache-2.0)`,
     '',
   ].join('\n'),
 );
-for (const f of ['preact-htm.js', 'anthropic-sdk.js']) {
+for (const f of ['preact-htm.js', 'anthropic-sdk.js', 'openai-sdk.js']) {
   console.log(f, Math.round(statSync(new URL(`../vendor/${f}`, import.meta.url)).size / 1024) + ' KB');
 }

@@ -6,7 +6,7 @@ import { html, useState, useEffect, useRef, useStore, useSignal, Dock, Icon, go 
 import * as store from '../store.js';
 import { buildAssumptions, missingFields } from '../domain/planner.js';
 import { userSays, buildPlan, isBusy, onBusy, GREETING } from '../ai/coach.js';
-import { aiStatus } from '../ai/claude.js';
+import { aiStatus, sourceName } from '../ai/ai.js';
 import { useVoiceInput } from './voice.js';
 import { ChangeCard } from './plan.js';
 
@@ -57,12 +57,12 @@ export function CoachScreen() {
       </div>
       <button class="row" style="padding:8px 12px" onClick=${() => go('prefs')}>
         <span class="small muted" data-testid="ai-status">${status.label}</span>
-        <span class="small accent">${status.kind === 'none' ? 'Connect Claude' : 'Change'}</span>
+        <span class="small accent">${status.kind === 'none' ? 'Connect an AI' : 'Change'}</span>
       </button>
       <div class="chat" aria-live="polite">
         <p class="bubble" data-role="coach">${GREETING}</p>
         ${chat.map((m) => html`
-          ${m.text && html`<p class=${`bubble ${m.role === 'user' ? 'reply' : ''} ${m.kind === 'notice' ? 'notice' : ''}`} data-role=${m.role}>${m.text}${m.via === 'claude' ? html`<span class="via">Claude</span>` : ''}</p>`}
+          ${m.text && html`<p class=${`bubble ${m.role === 'user' ? 'reply' : ''} ${m.kind === 'notice' ? 'notice' : ''}`} data-role=${m.role}>${m.text}${m.via && m.via !== 'rules' ? html`<span class="via">${sourceName(m.via)}</span>` : ''}</p>`}
           ${m.kind === 'assumptions' && html`<${Assumptions} live=${m.id === lastAssumptions} />`}
           ${m.kind === 'plan' && html`<button class="cta card" data-testid="open-plan" onClick=${() => go('plan')}>Open my plan</button>`}
           ${m.kind === 'proposal' && (state.proposals.find((p) => p.id === m.proposalId)?.changes || []).map((c) => html`<${ChangeCard} p=${{ id: m.proposalId }} c=${c} />`)}

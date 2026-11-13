@@ -10,6 +10,7 @@ import { LOAD_TYPES, PROGRESSION } from '../domain/rules.js';
 import { substitutesFor, exerciseById, equipmentNames, zoneOf } from '../domain/catalog.js';
 import { describeChange } from '../domain/progression.js';
 import { afterSetSaved, reviewSession, rememberWeight } from '../ai/coach.js';
+import { sourceName } from '../ai/ai.js';
 import { primeAudio, beep, buzz, keepAwake } from '../platform.js';
 
 const RIR = [[0, '0'], [1, '1'], [2, '2'], [3, '3'], [4, '4+']];
@@ -39,7 +40,7 @@ function HintCard({ hint, onApply, onKeep }) {
   const c = hint.changes[0];
   const d = describeChange(c);
   return html`<div class="change" data-testid="hint">
-    <div class="spread"><b>Check the change</b><span class="tag">${hint.source === 'claude' ? 'From Claude' : 'From the training rules'}</span></div>
+    <div class="spread"><b>Check the change</b><span class="tag">From ${sourceName(hint.source)}</span></div>
     <div class="delta">${d.what}: ${d.text}</div>
     <p class="small muted">${c.reason}</p>
     <div class="pair">

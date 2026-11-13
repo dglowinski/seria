@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-13T14:20:44.174Z",
+  "ranAt": "2026-11-13T14:41:01.600Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 106,
-  "passed": 106,
+  "total": 127,
+  "passed": 127,
   "failed": 0,
   "results": [
     {
@@ -638,6 +638,132 @@
     {
       "part": "E single file",
       "name": "no script errors in part E",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "Claude is the provider until you choose otherwise",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "status shows OpenAI connected with its default model",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "\"Test the connection\" gets an answer from OpenAI",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "request: key as a bearer token, sent by the official SDK to the Responses API",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "request: model, strict JSON schema, low effort for a quick call, nothing stored",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "request: the same rules library goes to OpenAI as to Claude",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "no Anthropic request was made",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "the reply is marked as coming from OpenAI",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "plan built by OpenAI, cleaned against the catalog like any other",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "gym text is read by OpenAI and saved",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "mid-workout the rule-based suggestion shows first",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "then OpenAI's suggestion replaces it",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "after the workout OpenAI's review is shown",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "if a model refuses the reasoning setting, the app asks again without it",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "any model id can be typed in",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "older models get no reasoning setting at all",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "a failing OpenAI key gives a plain message and the built-in coach answers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "switching to Claude with no Claude key falls back to the built-in coach",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "the OpenAI key is still there when you switch back",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "keys are kept apart from the app data and backups",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "no script errors in part F",
       "ok": true,
       "detail": ""
     }
