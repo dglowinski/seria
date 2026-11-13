@@ -58,6 +58,16 @@ try {
   await context.setOffline(true);
   await page.reload();
   await page.getByRole('heading', { name: /No plan yet/ }).waitFor({ timeout: 15000 });
+  // Still offline: describe the gym in free text; the built-in reader saves it.
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Equipment' }).click();
+  await page.getByTestId('add-machine').click();
+  await page.fill('#gym-text', 'lat pulldown, leg press, and a hip abductor. no barbell');
+  await page.getByTestId('read-gym').click();
+  await page.getByTestId('gym-result').waitFor({ timeout: 8000 });
+  const eq = await page.evaluate(() => JSON.parse(localStorage.getItem('seria.state.v1')).equipment);
+  check('offline, a typed description of the gym is read and saved', eq.items.lat_pulldown === true && eq.items.leg_press === true && eq.items.barbell === false && eq.custom.length === 1 && eq.custom[0].pattern === 'glute', JSON.stringify(eq));
+  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Plan' }).click();
   await page.getByRole('button', { name: 'Talk to the coach' }).click();
   await page.fill('#coach-input', "I want to build strength. I've trained for a year. Mondays, Wednesdays and Fridays, 50 minutes.");
   await page.getByRole('button', { name: 'Send' }).click();
