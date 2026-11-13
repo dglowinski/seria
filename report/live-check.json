@@ -1,9 +1,9 @@
 {
   "url": "https://dglowinski.github.io/seria/",
-  "ranAt": "2026-11-13T15:12:09.578Z",
+  "ranAt": "2026-11-13T15:40:24.089Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 14,
-  "passed": 14,
+  "total": 15,
+  "passed": 15,
   "results": [
     {
       "name": "the address answers over HTTPS",
@@ -61,7 +61,12 @@
       "detail": ""
     },
     {
-      "name": "with the network off it still starts and builds a plan",
+      "name": "with the network off it still starts and builds a plan: sessions with rest days, no fixed weekdays",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the plan reads as a list with one \"Train now\" button",
       "ok": true,
       "detail": ""
     },
