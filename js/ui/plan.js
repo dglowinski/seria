@@ -5,6 +5,7 @@ import * as store from '../store.js';
 import { WEEKDAY_NAMES, fmtLoad, loadMethod, timeBreakdown, nextDay, brokenExercises, weeklySets } from '../domain/planner.js';
 import { startSession } from '../domain/session.js';
 import { describeChange } from '../domain/progression.js';
+import { exerciseById, machineForExercise, machineLabel } from '../domain/catalog.js';
 import { RULES_VERSION } from '../domain/rules.js';
 import { applyChange, keepPlan, reviewEquipment } from '../ai/coach.js';
 import { sourceName } from '../ai/ai.js';
@@ -93,13 +94,17 @@ export function DayScreen({ dayId }) {
         <p class="muted">About ${day.estMinutes} min: warm-up ${t.warmup}, sets ${t.sets}, rests ${t.rests}, moving between stations ${t.moving}.</p>
       </div>
       <ol class="stack">
-        ${day.exercises.map((ex, i) => html`
+        ${day.exercises.map((ex, i) => {
+          const m = machineForExercise(state.equipment, exerciseById(state.equipment, ex.exerciseId));
+          return html`
           <li class="panel" style="border-radius:16px;padding:14px;gap:6px">
             <div class="spread"><h4>${i + 1}. ${ex.name}</h4><span class="tag">${ex.tier}</span></div>
             <p class="small muted">${ex.equipment} · ${ex.zone}</p>
+            ${m && html`<p class="small muted" data-testid="day-machine">${machineLabel(m) || m.name}${m.isolates ? ` · isolates ${m.isolates.replace(/\.$/, '').toLowerCase()}` : ''}</p>`}
             <p><b>${ex.sets} × ${ex.reps} reps</b> <span class="muted small">(range ${ex.repLo}-${ex.repHi}) · rest ${restText(ex.restSec)}</span></p>
             <p class="small">${ex.load ? html`<b>${fmtLoad(ex.loadType, ex.load.value)}</b>` : html`<span class="muted">Weight: ${loadMethod(ex)}</span>`}</p>
-          </li>`)}
+          </li>`;
+        })}
       </ol>
     </main>
     <${Dock} aboveTabs>

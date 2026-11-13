@@ -3,7 +3,7 @@
 // Claude path; only the transport differs.
 
 import { getSettings, DEFAULT_OPENAI_MODEL } from '../store.js';
-import { SYSTEM_PROMPT, OUTPUT_SCHEMA } from './prompts.js';
+import { SYSTEM_PROMPT, OUTPUT_SCHEMA, LOOKUP_SYSTEM } from './prompts.js';
 import { AiError } from './errors.js';
 
 let sdkPromise = null;
@@ -71,4 +71,28 @@ export async function askOpenAI(userText, { quick, signal, timeoutMs }) {
   if (res.status === 'incomplete') throw new AiError('format', 'OpenAI ran out of room before finishing its answer.');
   if (res.status === 'failed' || res.error) throw new AiError('server', 'OpenAI had a problem. Try again later.');
   try { return JSON.parse(res.output_text); } catch { throw new AiError('format', 'OpenAI answered in a form the app could not read.'); }
+}
+
+/**
+ * Look machines up on the web with OpenAI's own search tool. Returns the text
+ * of the answer and every address it cited, so the caller can check that a
+ * quoted source is real.
+ */
+export async function lookupOpenAI(userText, { signal }) {
+  const s = getSettings();
+  const OpenAI = await loadSdk();
+  const model = s.openaiModel || DEFAULT_OPENAI_MODEL;
+  const client = new OpenAI({ apiKey: s.openaiKey, baseURL: s.openaiBaseUrl || undefined, dangerouslyAllowBrowser: true, maxRetries: 1, timeout: 120000 });
+  let res;
+  try {
+    res = await client.responses.create({ model, instructions: LOOKUP_SYSTEM, input: userText, tools: [{ type: 'web_search' }], max_output_tokens: 16000, store: false }, { signal });
+  } catch (e) {
+    throw fromSdkError(OpenAI, e);
+  }
+  const urls = new Set();
+  for (const item of res.output || []) {
+    if (item.type !== 'message') continue;
+    for (const part of item.content || []) for (const a of part.annotations || []) if (a?.type === 'url_citation' && a.url) urls.add(a.url);
+  }
+  return { text: res.output_text || '', urls: [...urls] };
 }

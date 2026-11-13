@@ -81,6 +81,8 @@ button.row:active, .row.tap:active { background: var(--panel-2); }
 .note { border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; font-size: 15px; }
 .note.warn { border-color: var(--warn); }
 .note b { display: block; }
+.note summary b { display: inline; }
+details.note > summary { cursor: pointer; }
 
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip {

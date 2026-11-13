@@ -9,8 +9,9 @@
 
 import { runtime, inViewer } from '../platform.js';
 import { getSettings, DEFAULT_MODEL, DEFAULT_OPENAI_MODEL } from '../store.js';
-import { askClaudeApi, askViewer } from './claude.js';
-import { askOpenAI } from './openai.js';
+import { askClaudeApi, askViewer, lookupClaude } from './claude.js';
+import { askOpenAI, lookupOpenAI } from './openai.js';
+import { lookupRequest, parseLookup } from './prompts.js';
 import { AiError } from './errors.js';
 
 export { AiError };
@@ -73,4 +74,22 @@ export async function testConnection() {
     user_message: 'Connection test from the settings screen. Reply with a three-word greeting in "message" and leave everything else empty.',
   }), { quick: true });
   return out.message || 'Connected.';
+}
+
+/** Web search is only there when the app talks to an API itself. Inside claude.ai the model cannot browse. */
+export const canLookUp = () => ['api', 'openai'].includes(aiStatus().kind);
+
+/**
+ * Find the named machines on the web.
+ * @param {{ref: string, name: string, vendor?: string, model?: string}[]} machines
+ * @returns {Promise<{found: object[], urls: string[]}>}
+ */
+export async function lookUpMachines(machines, opts = {}) {
+  const kind = aiStatus().kind;
+  const request = lookupRequest(machines);
+  let out;
+  if (kind === 'api') out = await lookupClaude(request, opts);
+  else if (kind === 'openai') out = await lookupOpenAI(request, opts);
+  else throw new AiError('off', 'This connection cannot search the web.');
+  return { found: parseLookup(out.text), urls: out.urls };
 }

@@ -3,7 +3,7 @@
 // cached; everything that changes goes in the user message.
 
 import { rulesAsText, RULES_VERSION, GOALS, levelFor } from '../domain/rules.js';
-import { allExercises, canDo, equipmentList, isAvailable, isListed, PATTERNS, EQUIPMENT } from '../domain/catalog.js';
+import { allExercises, canDo, equipmentList, isAvailable, isListed, PATTERNS, EQUIPMENT, LOADING, machineDetail, machineForExercise } from '../domain/catalog.js';
 import { WEEKDAYS, trainingDays, clampMinutes } from '../domain/planner.js';
 
 export const SYSTEM_PROMPT = `You are the training coach inside Seria, a gym training app. You build and update one person's weekly resistance-training plan. Each request names a mode: "interview", "new_plan", "in_session", "after_session" or "equipment".
@@ -17,9 +17,13 @@ Modes
 - after_session: compare the plan with what was done, take reps in reserve into account when given, and check the earlier sessions for the same result. Propose updates for the coming sessions, using fields "load", "reps", "sets", "rest", "exercise" or "remove".
 
 - equipment: the user describes their gym in their own words, as a list or as loose text. Fill "equipment". Put the ids of catalog items the gym has in add_ids, matching by meaning (a "functional trainer" is the cable station). Put catalog items the user says the gym does not have, or that are broken, in unavailable_ids. A strength machine that is not in equipment_catalog goes in "custom" with a short name as written on the machine and the one movement_id from "movements" it trains most. Leave out assisted machines, where a higher setting makes the lift easier. Anything else (cardio machines, things you cannot place) goes in unrecognized, in the user's words. Only list what the user mentioned. Leave profile, plan and changes empty.
+  When the user names a maker or a model, as in "these are from Technogym: leg press, chest press", add one entry per such machine to "machines". Its ref is the catalog id you put in add_ids, or the exact name you gave it in custom. Use at most one entry per catalog id; a second branded machine of the same kind goes in custom under its own name. Give the maker and the model as the maker writes them, then say what you know of that exact product: how it works (path of the movement, seat and pad set-up, one arm or two, how it is loaded) and which muscles it isolates. Set sure to true only when you know this exact product. If you are describing the general kind of machine, say so plainly in how_it_works and set sure to false. Never invent a model name or number.
 
 Changes
 For each change give the exercise_key exactly as it appears in the plan or session, the field, the new value and a short reason that points at the recorded numbers. new_value is a number: for "load" it is in the exercise's own unit (kg per dumbbell, total kg with the bar, the machine setting, or kg added to bodyweight). For field "exercise" put the replacement's id in new_exercise_id and null in new_value. The app shows the previous value itself. If the results do not justify a change, return an empty list. Do not repeat a change that is listed under already_proposed.
+
+Machines
+Equipment and exercises can come with the exact machine behind them: maker, model, how it works, what it isolates and how it is loaded. When that is given, use it: pick and order exercises by what the machine really trains, mention the machine by name when it matters, and read loads the way the machine is loaded (plates the user adds, or a weight stack).
 
 Output
 Always fill every field of the output format: use null or an empty list for parts that do not apply to the mode. "message" is for the user: plain English, at most three short sentences, no lists. You are not a doctor: for pain or injury, say to stop and see a professional, and plan around what the user tells you.
@@ -64,6 +68,16 @@ export const OUTPUT_SCHEMA = obj({
     unavailable_ids: list(str()),
     custom: list(obj({ name: str('Short name of the machine.'), movement_id: str('One id from "movements".') })),
     unrecognized: list(str()),
+    machines: list(obj({
+      ref: str('The catalog id from add_ids, or the exact name of an entry in custom.'),
+      vendor: nullable(str('The maker, as the maker writes it.')),
+      model: nullable(str('The product line or model name. Null when the user gave none and you do not know it.')),
+      how_it_works: str('Two or three plain sentences.'),
+      isolates: str('The muscles it trains, main ones first.'),
+      loading: { type: 'string', enum: Object.keys(LOADING) },
+      notes: nullable(str('Set-up or use notes worth knowing, or null.')),
+      sure: { type: 'boolean' },
+    })),
   })),
   changes: list(obj({
     exercise_key: str(),
@@ -83,11 +97,24 @@ const profileOut = (p) => ({
   avoid_exercise_ids: p.avoid || [], include_exercise_ids: p.include || [], work_around: p.avoidTags || [],
 });
 
-const equipmentOut = (eq) => equipmentList(eq).filter((x) => isAvailable(eq, x.id)).map((x) => x.name);
+const detailOut = (d) => (!d ? {} : {
+  maker: d.vendor || undefined, model: d.model || undefined, how_it_works: d.how || undefined, isolates: d.isolates || undefined,
+  loading: d.loading ? LOADING[d.loading] : undefined, notes: d.notes || undefined,
+  checked: d.basis === 'web' ? 'found on the web' : d.basis === 'memory' ? 'from the model\'s memory, not checked' : 'maker named by the user only',
+});
 
-const exercisesOut = (eq) => allExercises(eq).filter((x) => canDo(eq, x)).map((x) => ({
-  id: x.id, name: x.name, movement: PATTERNS[x.pattern] || x.pattern, load_unit: x.load, loads: x.tags,
-}));
+const equipmentOut = (eq) => equipmentList(eq).filter((x) => isAvailable(eq, x.id)).map((x) => {
+  const d = machineDetail(eq, x.id);
+  return d ? { name: x.name, ...detailOut(d) } : x.name;
+});
+
+const exercisesOut = (eq) => allExercises(eq).filter((x) => canDo(eq, x)).map((x) => {
+  const m = machineForExercise(eq, x);
+  return {
+    id: x.id, name: x.name, movement: PATTERNS[x.pattern] || x.pattern, load_unit: x.load, loads: x.tags,
+    ...(m ? { machine: { equipment: m.name, ...detailOut(m) } } : {}),
+  };
+});
 
 const planOut = (plan) => (!plan ? null : {
   version: plan.version, minutes_per_session: plan.minutes,
@@ -186,4 +213,34 @@ export function equipmentRequest({ equipment, text }) {
     movements: Object.entries(PATTERNS).map(([id, label]) => ({ id, label })),
     user_text: String(text).slice(0, 4000),
   });
+}
+
+// ---------------------------------------------------------------- machine lookup
+// A separate, small request that may search the web. Its answer is plain text
+// holding a JSON list, read leniently and then checked field by field.
+
+export const LOOKUP_SYSTEM = `You look up gym machines for a training app. You get a list of machines a user's gym has, each with a maker and, when known, a model. For each one, search the web for the maker's own product page, or failing that a retailer or manual for that exact product, and read how the machine works and which muscles it trains.
+
+Reply with only a JSON array, one object per machine you could find, no other text:
+[{"ref": "<ref exactly as given>", "vendor": "<maker>", "model": "<model or product line as the maker writes it>", "how_it_works": "<two or three plain sentences: path of the movement, seat and pad set-up, one arm or two, how it is loaded>", "isolates": "<muscles it trains, main ones first>", "loading": "selectorized" | "plate_loaded" | "cable" | "bodyweight" | "other", "notes": "<set-up or use notes worth knowing, or empty>", "source_url": "<the page you took this from, copied exactly from your search results>"}]
+
+Rules: use only what the pages say. Leave a machine out if you cannot find that exact product; do not describe a different one. Never invent a model name or a web address. If you find nothing, reply [].`;
+
+export function lookupRequest(machines) {
+  return JSON.stringify({
+    task: 'machine_lookup',
+    machines: machines.map((m) => ({ ref: m.ref, kind: m.name, vendor: m.vendor || null, model: m.model || null })),
+  });
+}
+
+/** Pull the JSON list out of a lookup answer. Returns [] when there is none. */
+export function parseLookup(text) {
+  const t = String(text || '');
+  const from = t.indexOf('[');
+  const to = t.lastIndexOf(']');
+  if (from < 0 || to <= from) return [];
+  try {
+    const list = JSON.parse(t.slice(from, to + 1));
+    return Array.isArray(list) ? list.filter((x) => x && typeof x === 'object' && typeof x.ref === 'string') : [];
+  } catch { return []; }
 }

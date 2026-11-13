@@ -65,7 +65,7 @@ export function hydrate(raw) {
   if (!raw || typeof raw !== 'object') return base;
   const s = { ...base, ...raw };
   s.profile = { ...base.profile, ...(raw.profile || {}) };
-  s.equipment = { items: { ...(raw.equipment?.items || {}) }, custom: [...(raw.equipment?.custom || [])] };
+  s.equipment = { items: { ...(raw.equipment?.items || {}) }, custom: [...(raw.equipment?.custom || [])], details: { ...(raw.equipment?.details || {}) } };
   for (const k of ['sessions', 'deletedSessions', 'chat', 'proposals']) if (!Array.isArray(s[k])) s[k] = [];
   if (!s.weights || typeof s.weights !== 'object') s.weights = {};
   s.schema = SCHEMA;

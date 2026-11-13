@@ -5,7 +5,7 @@
 
 import { runtime } from '../platform.js';
 import { getSettings, DEFAULT_MODEL } from '../store.js';
-import { SYSTEM_PROMPT, OUTPUT_SCHEMA } from './prompts.js';
+import { SYSTEM_PROMPT, OUTPUT_SCHEMA, LOOKUP_SYSTEM } from './prompts.js';
 import { AiError } from './errors.js';
 
 // Models that can hand a declined request to another model on the server.
@@ -84,4 +84,41 @@ export async function askViewer(userText, { tier, signal }) {
     const [code, message] = VIEWER_TEXT[e?.code] || ['server', 'Claude had a problem. Try again later.'];
     throw new AiError(code, message);
   }
+}
+
+/**
+ * Look machines up on the web with Claude's own search tool. Returns the text
+ * of the answer and every address the search really returned, so the caller
+ * can check that a quoted source is real.
+ */
+export async function lookupClaude(userText, { signal }) {
+  const s = getSettings();
+  const Anthropic = await loadSdk();
+  const model = s.model || DEFAULT_MODEL;
+  const client = new Anthropic({ apiKey: s.apiKey, baseURL: s.baseUrl || undefined, dangerouslyAllowBrowser: true, maxRetries: 1, timeout: 120000 });
+  // Haiku takes the basic search tool; the other models take the newer one.
+  const tool = { type: /haiku/.test(model) ? 'web_search_20250305' : 'web_search_20260209', name: 'web_search', max_uses: 8 };
+  const first = { role: 'user', content: userText };
+  let messages = [first];
+  const urls = new Set();
+  let text = '';
+  try {
+    for (let turn = 0; turn < 4; turn++) {
+      const res = await client.messages.create({ model, max_tokens: 16000, system: LOOKUP_SYSTEM, messages, tools: [tool], output_config: { effort: 'low' } }, { signal });
+      if (res.stop_reason === 'refusal') throw new AiError('refused', 'Claude declined that request.');
+      for (const block of res.content) {
+        if (block.type === 'web_search_tool_result' && Array.isArray(block.content)) for (const r of block.content) if (r?.url) urls.add(r.url);
+        if (block.type === 'text') {
+          text += block.text;
+          for (const c of block.citations || []) if (c?.url) urls.add(c.url);
+        }
+      }
+      // A long search can pause; send the turn back as it is and the server carries on.
+      if (res.stop_reason !== 'pause_turn') break;
+      messages = [first, { role: 'assistant', content: res.content }];
+    }
+  } catch (e) {
+    throw fromSdkError(Anthropic, e);
+  }
+  return { text, urls: [...urls] };
 }

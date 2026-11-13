@@ -24,18 +24,29 @@ export function canned(payload) {
   }
   if (mode === 'equipment') {
     const t = String(payload.user_text).toLowerCase();
-    const named = (x) => t.includes(x.name.toLowerCase());
-    const lacking = (x) => t.includes(`no ${x.name.toLowerCase()}`);
+    const plain = (x) => x.name.toLowerCase().replace(/ machine$/, '');
+    const named = (x) => t.includes(plain(x));
+    const lacking = (x) => t.includes(`no ${plain(x)}`);
     const add = payload.equipment_catalog.filter((x) => named(x) && !lacking(x)).map((x) => x.id);
     if (/cables|functional trainer/.test(t)) add.push('cable');
+    const branded = /technogym/.test(t);
+    const custom = /belt squat/.test(t) ? [{ name: 'Belt squat', movement_id: 'squat' }, { name: 'Mystery box', movement_id: 'not_a_movement' }] : [];
+    const facts = {
+      leg_press: ['Selection 900 Leg Press', 'From memory: you sit upright and push a footplate away along a fixed track.', 'Quadriceps and glutes; hamstrings help.'],
+      chest_press: ['Selection 900 Chest Press', 'From memory: seated press with two handles that move together.', 'Chest, front shoulders and triceps.'],
+    };
     return {
       ...empty,
       message: 'Saved.',
       equipment: {
         add_ids: [...add, 'made_up_machine'],
         unavailable_ids: payload.equipment_catalog.filter(lacking).map((x) => x.id),
-        custom: /belt squat/.test(t) ? [{ name: 'Belt squat', movement_id: 'squat' }, { name: 'Mystery box', movement_id: 'not_a_movement' }] : [],
+        custom,
         unrecognized: /treadmill/.test(t) ? ['treadmills'] : [],
+        machines: !branded ? [] : [
+          ...add.filter((id) => facts[id]).map((id) => ({ ref: id, vendor: 'Technogym', model: facts[id][0], how_it_works: facts[id][1], isolates: facts[id][2], loading: 'selectorized', notes: null, sure: true })),
+          { ref: 'nothing_like_this', vendor: 'Technogym', model: 'Ghost 3000', how_it_works: 'x', isolates: 'y', loading: 'laser', notes: null, sure: false },
+        ],
       },
     };
   }
@@ -51,7 +62,7 @@ export function canned(payload) {
       plan: {
         days: [
           day('mon', 'Upper body', ['db_bench_press', 'db_row', 'ghost_lift', 'db_shoulder_press', 'pull_up']),
-          day('wed', 'Lower body', ['goblet_squat', 'bb_rdl', 'db_split_squat', 'db_calf_raise']),
+          day('wed', 'Lower body', ['leg_press', 'goblet_squat', 'bb_rdl', 'db_split_squat', 'db_calf_raise']),
           day('fri', 'Full body', ['incline_db_press', 'chin_up', 'db_reverse_lunge', 'db_curl']),
         ],
         notes: ['Built by the test double.'],
@@ -70,4 +81,22 @@ export function canned(payload) {
     return { ...empty, message: 'Solid session.', changes: [{ exercise_key: ex.exercise_key, field: 'load', new_value: (ex.load || 20) + 2, new_exercise_id: null, reason: `Test double: every set of ${ex.name} was done, so add a step.` }] };
   }
   return empty;
+}
+
+/**
+ * The web-lookup double. Finds a page for the leg press only: the chest press
+ * comes back with an address the search never returned, which the app must not
+ * accept, and one entry points at a machine nobody asked about.
+ */
+export function cannedLookup(payload) {
+  const page = (ref) => `https://maker.example/products/${ref}`;
+  const urls = payload.machines.filter((m) => m.ref === 'leg_press').map((m) => page(m.ref));
+  const found = payload.machines.map((m) => ({
+    ref: m.ref, vendor: m.vendor, model: m.ref === 'leg_press' ? 'Selection 900 Leg Press' : `${m.model || m.kind}`,
+    how_it_works: `From the maker's page: ${m.kind} with a weight stack. You sit, set the backrest, and push the platform away.`,
+    isolates: 'Quadriceps first, then glutes.', loading: 'selectorized', notes: 'Backrest has five positions.',
+    source_url: m.ref === 'leg_press' ? page(m.ref) : 'https://made-up.example/not-searched',
+  }));
+  found.push({ ref: 'smith', vendor: 'Nobody', model: 'Unasked', how_it_works: 'x', isolates: 'y', loading: 'other', notes: '', source_url: urls[0] || '' });
+  return { urls, text: `Here is what I found.\n${JSON.stringify(found)}\nDone.` };
 }

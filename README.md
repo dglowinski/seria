@@ -30,6 +30,21 @@ It is served by GitHub Pages from this repository. Every push to `main` runs the
 
 On the Equipment tab, "Add to list" opens a box where you can name the machines or paste any text: a list, a sentence, notes from the gym's website. You can also dictate it. The text is read and the list is saved in one go, and you see what was added, what was marked as missing ("no barbell"), and what could not be placed. The connected model (Claude or OpenAI) does the reading; a built-in reader does it otherwise. You can still pick machines from the list or add your own by hand.
 
+### Naming the maker
+
+Say who makes the machines, as in "these are from Technogym: leg press, chest press", and the exact machines are identified. For each one the app saves the maker, the model, how the machine works, what it isolates and how it is loaded. The coach gets this with every request, on the equipment list and on each exercise done on that machine, and you see it on the Equipment tab, in the day preview and on the workout screen.
+
+How sure the details are depends on the connection, and every machine is labelled:
+
+| Connection | What happens | Label |
+|---|---|---|
+| Claude or OpenAI with your API key | The model names the product, then looks each one up with the provider's own web search. A result counts only if its source address is one the search really returned. | "Found on <site>", with a link |
+| the same, when the search finds nothing or is not allowed for the key | The model's own description is kept. | "From the model's memory, not checked" |
+| inside claude.ai | The model cannot search the web there, so it describes the machine from what it remembers. | "From the model's memory, not checked" |
+| no model connected | The built-in reader notes the maker on each machine. Read the text again once a model is connected. | "Maker noted" |
+
+Web search on the Claude API has to be switched on for your organisation in the Claude Console. If it is off, the lookup fails quietly and you get the "from memory" result.
+
 ## Run it on this computer
 
 ```

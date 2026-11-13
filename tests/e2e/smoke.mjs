@@ -223,12 +223,18 @@ await guarded(async () => {
     && /not available: Barbell and plates/.test(gym) && /Could not place: sauna/.test(gym) && /built-in reader/.test(gym), gym);
   check('the text box is cleared once saved', (await page.inputValue('#gym-text')) === '');
   await shot(page, '05-gym-text');
+  await page.fill('#gym-text', "It's these machines from Technogym: chest press and the glute machine.");
+  await page.getByTestId('read-gym').click();
+  await page.getByTestId('gym-machines').waitFor();
+  st = await state(page);
+  check('with no model connected, a named maker is noted on its machines', st.equipment.details.chest_press.vendor === 'Technogym' && st.equipment.details.chest_press.basis === 'stated'
+    && /Technogym · Chest press machine · maker noted/.test(await page.getByTestId('gym-machines').textContent()) && /Connect Claude or OpenAI/.test(await page.getByTestId('gym-machines').textContent()), await page.getByTestId('gym-machines').textContent());
   await page.getByRole('button', { name: /^Leg curl/ }).click(); // picking from the list still works
   await page.fill('#custom-name', 'Belt squat');
   await page.selectOption('#custom-pattern', 'squat');
   await page.getByRole('button', { name: 'Add my machine' }).click(); // adding your own machine by hand closes the sheet
   await page.getByRole('switch', { name: /Barbell and plates/ }).click(); // back on: the plan built above uses it
-  check('added machines are listed as available', (await page.getByTestId('machine').count()) === 5 && (await page.getByTestId('machine').first().textContent()).includes('Available'));
+  check('added machines are listed as available', (await page.getByTestId('machine').count()) === 7 && (await page.getByTestId('machine').first().textContent()).includes('Available'));
   st = await state(page);
   check('free weights, bench and pull-up bar need no entry (on by default)', !('dumbbells' in st.equipment.items) && !('barbell' in st.equipment.items) && st.equipment.items.lat_pulldown === true);
   await shot(page, '05-equipment');
@@ -441,6 +447,35 @@ await guarded(async () => {
     && st.equipment.custom.map((c) => `${c.name}:${c.pattern}`).join() === 'Belt squat:squat' && !('made_up_machine' in st.equipment.items) && !('leg_press' in st.equipment.items), JSON.stringify(st.equipment));
   check('the result is marked as read by Claude and lists what it could not place', /Read by Claude/.test(await page.getByTestId('gym-result').textContent()) && /Could not place: treadmills, Mystery box/.test(await page.getByTestId('gym-result').textContent()), await page.getByTestId('gym-result').textContent());
   await shot(page, '17b-gym-text-claude');
+
+  // naming the maker: the exact machines are identified, then looked up on the web
+  await page.fill('#gym-text', 'These are from Technogym: leg press and chest press.');
+  await page.getByTestId('read-gym').click();
+  await page.getByText(/Looking up 2 machines on the web/).waitFor({ timeout: 5000 }).catch(() => {});
+  await page.getByTestId('gym-machines').waitFor();
+  st = await state(page);
+  const lookups = api.state.requests.filter((x) => (x.body.tools || []).length);
+  check('named machines are looked up with Claude\'s web search, and a paused search is carried on', lookups.length === 2 && lookups[0].body.tools[0].type === 'web_search_20260209' && lookups[1].body.messages.length === 2
+    && /look up gym machines/.test(lookups[0].body.system) && JSON.parse(lookups[0].body.messages[0].content).machines.map((m) => `${m.ref}:${m.vendor}`).join() === 'leg_press:Technogym,chest_press:Technogym', JSON.stringify(lookups.map((x) => x.body.tools)));
+  check('a machine found on the web is saved with how it works, what it isolates and its source', st.equipment.details.leg_press.basis === 'web' && st.equipment.details.leg_press.source === 'https://maker.example/products/leg_press'
+    && /push the platform away/.test(st.equipment.details.leg_press.how) && /Quadriceps first/.test(st.equipment.details.leg_press.isolates) && st.equipment.details.leg_press.model === 'Selection 900 Leg Press', JSON.stringify(st.equipment.details.leg_press));
+  check('a source address the search never returned is not accepted; that machine stays "from memory"', st.equipment.details.chest_press.basis === 'memory' && !st.equipment.details.chest_press.source && /From memory/.test(st.equipment.details.chest_press.how));
+  check('nothing is saved for machines nobody named', Object.keys(st.equipment.details).sort().join() === 'chest_press,leg_press' && !('smith' in st.equipment.items));
+  const idd = await page.getByTestId('gym-machines').textContent();
+  check('the result says which machines were identified and how sure that is', /Technogym Selection 900 Leg Press · Leg press · found on maker\.example/.test(idd) && /Technogym Selection 900 Chest Press · Chest press machine · from the model's memory, not checked/.test(idd), idd);
+  await shot(page, '17c-machines-identified');
+  await page.getByRole('button', { name: 'Done' }).click();
+  const info = page.getByTestId('machine-info').first();
+  await info.locator('summary').click();
+  check('the equipment list shows the exact machine and links to its page', /Technogym Selection 900 Leg Press/.test(await info.textContent()) && /Isolates: Quadriceps first/.test(await info.textContent()) && /Found on maker\.example/.test(await info.textContent()) && (await info.locator('a').getAttribute('href')) === 'https://maker.example/products/leg_press');
+  await shot(page, '17d-machine-info');
+  api.state.failLookup = true;
+  await page.getByTestId('add-machine').click();
+  await page.fill('#gym-text', 'From Technogym: chest press');
+  await page.getByTestId('read-gym').click();
+  await page.getByTestId('gym-result').waitFor();
+  check('if the web search fails the machines are still saved, marked as not checked', /web lookup did not work/.test(await page.getByTestId('gym-result').textContent()) && (await state(page)).equipment.details.chest_press.basis === 'memory');
+  api.state.failLookup = false;
   await page.getByRole('button', { name: 'Done' }).click();
   await tab(page, 'Plan').click();
   await page.getByRole('heading', { name: 'Your week' }).waitFor();
@@ -477,6 +512,9 @@ await guarded(async () => {
   st = await state(page);
   check('a late suggestion about finished sets is not shown', st.sessions[0].cursor.ex === 1 && st.sessions[0].hint === null && (await page.getByTestId('hint').count()) === 0);
   check('an on-target set does not call Claude', inSession() === asked && asked === 2, `${asked} -> ${inSession()}`);
+  const seen = api.state.requests.map((x) => { try { return JSON.parse(x.body.messages[0].content); } catch { return {}; } }).filter((x) => x.mode === 'in_session').pop();
+  const lpSeen = (seen.equipment || []).find((x) => x && x.name === 'Leg press');
+  check('the coach is told how each identified machine works and what it isolates', !!lpSeen && lpSeen.maker === 'Technogym' && /push the platform away/.test(lpSeen.how_it_works) && /Quadriceps first/.test(lpSeen.isolates) && lpSeen.checked === 'found on the web', JSON.stringify(lpSeen));
 
   // Claude down mid-workout: carry on with the last approved plan
   api.state.delayMs = 0; api.state.fail = 529;
@@ -546,6 +584,15 @@ await guarded(async () => {
   await page.getByTestId('build-plan').click();
   await page.getByTestId('open-plan').click();
   check("the viewer's Claude was used, uncached", await page.evaluate(() => window.__sample.length === 2 && window.__sample.every((c) => c.cache === false && c.tier === 'default')));
+  await tab(page, 'Equipment').click();
+  await page.getByTestId('add-machine').click();
+  await page.fill('#gym-text', 'These are from Technogym: leg press.');
+  await page.getByTestId('read-gym').click();
+  await page.getByTestId('gym-machines').waitFor();
+  check('inside claude.ai machines are identified from memory and marked as not checked', (await state(page)).equipment.details.leg_press.basis === 'memory'
+    && /from the model's memory, not checked/.test(await page.getByTestId('gym-machines').textContent()) && /cannot search the web/.test(await page.getByTestId('gym-machines').textContent()));
+  await page.getByRole('button', { name: 'Done' }).click();
+  await tab(page, 'Plan').click();
   await page.getByTestId('start-next').click();
   await page.fill('#start-weight', '22'); await sleep(120); await tap(page);
   await tap(page); await tap(page); await tap(page);
@@ -554,6 +601,7 @@ await guarded(async () => {
   const db = await page.evaluate(() => JSON.parse(localStorage.getItem('__mockdb')));
   const keys = Object.keys(db);
   check('cloud copy: one private main record plus one record per workout', keys.includes('data/users/viewer-1/main') && keys.filter((k) => k.startsWith('data/users/viewer-1/main/sessions/')).length === 1, keys.join(', '));
+  check('machine details are part of the cloud copy', db['data/users/viewer-1/main'].equipment.details.leg_press.vendor === 'Technogym');
   check('cloud copy holds the plan and the saved set', db['data/users/viewer-1/main'].plan.source === 'claude' && Object.values(db).some((d) => d.exercises && d.exercises[0].sets[0].actual && d.exercises[0].sets[0].actual.load === 22));
   // a new device: nothing in the browser, everything in the cloud
   await page.evaluate(() => { localStorage.removeItem('seria.state.v1'); });
@@ -657,6 +705,18 @@ await guarded(async () => {
   check('request: the same rules library goes to OpenAI as to Claude', /Training rules library, version 1\.0\.0/.test(r.body.instructions) && JSON.parse(r.body.input).mode === 'interview');
   check('no Anthropic request was made', api.state.requests.length === reqsBeforeF);
 
+  // name the maker first, so the plan and the workout can use the machine
+  await tab(page, 'Equipment').click();
+  await page.getByTestId('add-machine').click();
+  await page.fill('#gym-text', 'These are from Technogym: leg press and chest press.');
+  await page.getByTestId('read-gym').click();
+  await page.getByTestId('gym-machines').waitFor();
+  const oaiLook = oai.state.requests.find((x) => (x.body.tools || []).length);
+  let stF = await state(page);
+  check('OpenAI looks the machines up with its web search tool', !!oaiLook && oaiLook.body.tools[0].type === 'web_search' && /look up gym machines/.test(oaiLook.body.instructions) && oaiLook.body.store === false);
+  check('and the result is saved the same way: found with a real source, or from memory', stF.equipment.details.leg_press.basis === 'web' && stF.equipment.details.leg_press.source === 'https://maker.example/products/leg_press' && stF.equipment.details.chest_press.basis === 'memory');
+  await page.getByRole('button', { name: 'Done' }).click();
+
   await tab(page, 'Coach').click();
   await say(page, 'Strength, a year in, three days a week, 50 minutes. Skip deadlifts, I love pull-ups.');
   await page.getByTestId('assumptions').waitFor();
@@ -665,6 +725,20 @@ await guarded(async () => {
   await page.getByTestId('open-plan').click();
   await page.getByRole('heading', { name: 'Your week' }).waitFor();
   let st = await state(page);
+  const planReq = oai.state.requests.map((x) => { try { return JSON.parse(x.body.input); } catch { return {}; } }).find((x) => x.mode === 'new_plan');
+  check('the plan request tells the model about the exact machine on the exercise', planReq.available_exercises.find((x) => x.id === 'leg_press').machine.model === 'Selection 900 Leg Press');
+  await page.getByRole('button', { name: /^Wednesday/ }).click();
+  await page.getByRole('heading', { name: 'Lower body' }).waitFor();
+  check('the day preview names the machine and what it isolates', /Technogym Selection 900 Leg Press · isolates quadriceps first, then glutes/.test(await page.getByTestId('day-machine').first().textContent()), await page.getByTestId('day-machine').first().textContent());
+  await page.getByTestId('start-day').click();
+  await main(page).waitFor();
+  const about = page.getByTestId('machine-info');
+  await about.locator('summary').click();
+  check('the workout screen explains the machine you are on', (await page.getByTestId('exercise-name').textContent()) === 'Leg press' && /How it works: From the maker's page/.test(await about.textContent()) && /Loaded with: weight stack with a pin/.test(await about.textContent()));
+  await shot(page, '27-workout-machine');
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Discard workout' }).click();
+  await page.getByRole('heading', { name: 'Your week' }).waitFor();
   check('plan built by OpenAI, cleaned against the catalog like any other', st.plan.source === 'openai' && st.plan.days.length === 3 && !JSON.stringify(st.plan).includes('ghost_lift') && /Built by OpenAI/.test(await page.locator('main').textContent()));
 
   await tab(page, 'Equipment').click();

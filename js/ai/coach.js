@@ -7,7 +7,7 @@
 // generator builds the plan. Either way the app keeps working.
 
 import { GOALS, MAX_DAYS, levelFor } from '../domain/rules.js';
-import { KEYWORDS, allExercises, canDo, parseEquipmentText, applyEquipmentRead } from '../domain/catalog.js';
+import { KEYWORDS, allExercises, canDo, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail } from '../domain/catalog.js';
 import {
   WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_NAMES, missingFields, generatePlan, normalizePlan, fitToBudget, refreshPlan, fmtMonths,
   trainingDays, clampMinutes, setPlanLoad,
@@ -15,7 +15,7 @@ import {
 import { inSessionHint, postSessionChanges, equipmentChanges, applyPlanChange, fromAiChanges } from '../domain/progression.js';
 import { hintApplies, setHint } from '../domain/session.js';
 import * as store from '../store.js';
-import { ask, aiReady, aiSource, aiName, AiError } from './ai.js';
+import { ask, aiReady, aiSource, aiName, AiError, canLookUp, lookUpMachines } from './ai.js';
 import { interviewRequest, newPlanRequest, sessionRequest, equipmentRequest } from './prompts.js';
 
 // ---------------------------------------------------------------- built-in reader
@@ -430,9 +430,18 @@ const strings = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string'
 /**
  * Read a free-text description of the gym and save the equipment it names.
  * The connected model reads it; the built-in reader otherwise, or if the model fails.
+ *
+ * When the text names a maker or a model ("these are from Technogym: ..."), the
+ * exact machines are identified and what is known about them is saved with the
+ * equipment: how each works and what it isolates. Where the connection can
+ * search the web, each one is then looked up, and only details with a source
+ * address the search really returned are marked as found on the web.
+ *
  * Returns what changed, in display names, for the screen to show.
+ * @param {string} text
+ * @param {(stage: string, count?: number) => void} [onStage] progress for the screen
  */
-export async function readEquipment(text) {
+export async function readEquipment(text, onStage = () => {}) {
   const input = String(text || '').trim();
   if (!input) return null;
   let read = null;
@@ -450,6 +459,8 @@ export async function readEquipment(text) {
           off: strings(e.unavailable_ids),
           custom: (Array.isArray(e.custom) ? e.custom : []).filter((c) => c && typeof c.name === 'string').map((c) => ({ name: c.name, pattern: c.movement_id })),
           unknown: strings(e.unrecognized),
+          machines: (Array.isArray(e.machines) ? e.machines : []).filter((m) => m && typeof m.ref === 'string')
+            .map((m) => ({ ref: m.ref, vendor: m.vendor, model: m.model, how: m.how_it_works, isolates: m.isolates, loading: m.loading, notes: m.notes, basis: 'memory' })),
         };
         via = src;
       }
@@ -461,7 +472,33 @@ export async function readEquipment(text) {
   if (!read) read = parseEquipmentText(input);
   const res = applyEquipmentRead(store.getState().equipment, read, () => store.newId('cm'));
   if (res.changed) store.set({ equipment: res.equipment });
-  return { ...res.summary, via, note, changed: res.changed };
+  let { described } = res.summary;
+  let changed = res.changed;
+  let lookedUp = false;
+
+  // Named machines: find each on the web when this connection can search.
+  const named = described.filter((d) => d.label && d.basis !== 'web');
+  if (named.length && canLookUp()) {
+    onStage('lookup', named.length);
+    try {
+      const now = store.getState().equipment;
+      const { found, urls } = await lookUpMachines(named.map((d) => {
+        const det = machineDetail(now, d.id) || {};
+        return { ref: d.id, name: d.name, vendor: det.vendor, model: det.model };
+      }));
+      const merged = applyMachineLookup(store.getState().equipment, found, urls);
+      if (merged.described.length) {
+        store.set({ equipment: merged.equipment });
+        described = described.map((d) => merged.described.find((x) => x.id === d.id) || d);
+        changed = true;
+      }
+      lookedUp = true;
+    } catch (e) {
+      if (e?.code === 'cancelled') return null;
+      note = `${note ? `${note} ` : ''}The web lookup did not work (${e instanceof AiError ? e.message : 'no answer'}), so the machine details are not checked.`;
+    }
+  }
+  return { ...res.summary, described, via, note, changed, lookedUp, couldLookUp: canLookUp() };
 }
 
 /** Remember a weight for an exercise and write it into the plan. */

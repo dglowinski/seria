@@ -32,6 +32,7 @@ const PART_TEXT = {
   'C in claude.ai': ['Inside claude.ai', 'A stand-in for the runtime claude.ai gives the page: cloud records, Claude, dictation. Includes moving to a fresh browser and getting everything back.'],
   'D install and offline': ['Home screen and offline', 'The install files, the icons, and starting the app with the network switched off.'],
   'E single file': ['The published file', 'The one-file build that is published on claude.ai, run end to end.'],
+  'F OpenAI API': ['OpenAI through the API', 'The real OpenAI SDK in the browser, talking to a local stand-in for api.openai.com. The request the app sends, plans, mid-workout and after-workout reviews, model choice, the machine lookup, and a wrong key.'],
 };
 const shots = [
   ['02-coach', 'Coach', 'You type or speak. The coach asks only for what is missing.'],
@@ -40,6 +41,8 @@ const shots = [
   ['06-day', 'Day preview', 'Order, equipment, sets, reps, rest, and how the time adds up.'],
   ['05-equipment', 'Equipment', 'Machines you add. Free weights, bench and bar are on by default.'],
   ['05-gym-text', 'Describe your gym', 'Name the machines or paste any text. It is read and saved, and you see what was added.'],
+  ['17c-machines-identified', 'Machines by maker', 'Name the maker and the exact machines are identified. Each says whether it was found on the web or comes from memory.'],
+  ['27-workout-machine', 'The machine, mid-workout', 'How the machine you are on works and what it isolates.'],
   ['07-starting-weight', 'Starting weight', 'No history yet, so you pick the first weight.'],
   ['08-set-active', 'Set in progress', 'One button: Finish set.'],
   ['09-set-result', 'Set result', 'Starts from the plan. Correct by 1 or 2, or type the number.'],
@@ -49,6 +52,7 @@ const shots = [
   ['13-proposals', 'Proposals', 'Old value, new value, reason. Nothing changes until you tap Apply.'],
   ['15-session-detail', 'History, one workout', 'Every set: plan and result. Tap a set to correct it.'],
   ['18-claude-hint', 'Claude mid-workout', 'Claude\'s suggestion replaces the rule-based one if it arrives in time.'],
+  ['25-openai-connected', 'OpenAI', 'Choose Claude or OpenAI in Settings and paste that provider\'s key.'],
   ['21-viewer-settings', 'Inside claude.ai', 'Claude connected with no key.'],
   ['16-rules', 'Training rules', 'The rules and their sources, readable in the app.'],
 ].filter(([f]) => existsSync(`${root}report/shots/${f}.png`));
@@ -58,7 +62,7 @@ const spec = [
   ['Say or type your goal, experience, days and time per session. Voice goes into a text field you can edit.', 'done', 'Coach chat with a microphone button. Speech lands in the text box; you fix it, then send.'],
   ['The coach asks for missing details and shows its assumptions before building the plan.', 'done', 'Works with Claude and without. No plan is created until you tap "Build my plan" under the assumptions.'],
   ['Preferences and movement limitations.', 'done', 'Reads things like "no deadlifts", "I love pull-ups", "my knee hurts". Limitations are handled on the careful side and the app says what it left out.'],
-  ['You enter machines. Free weights, benches and the pull-up bar are available by default.', 'done', `${EQUIPMENT.filter((x) => x.kind === 'machine').length} machines to pick from, plus your own machine with what it trains. Or describe the gym in your own words, typed, pasted or spoken: it is read (by Claude when connected, by a built-in reader otherwise) and the list is saved in one go. Each item has an Available switch.`],
+  ['You enter machines. Free weights, benches and the pull-up bar are available by default.', 'done', `${EQUIPMENT.filter((x) => x.kind === 'machine').length} machines to pick from, plus your own machine with what it trains. Or describe the gym in your own words, typed, pasted or spoken: it is read (by the connected model, or by a built-in reader) and the list is saved in one go. Name the maker ("these are from Technogym: ...") and the exact machines are identified, with how each works and what it isolates saved for the coach. Each item has an Available switch.`],
   ['The plan shows days, body parts, time, exercise order, equipment, sets, reps, weight or how to choose it, and rests. Day time includes warm-up, rests and moving between stations.', 'done', `Plan list and day preview. ${EXERCISES.length} exercises in the catalog. The day preview splits the time into warm-up, sets, rests and moving.`],
   ['"Start set" shows the active set. "Finish set" opens the result, starting from the planned value. Correct reps by 1 or 2 or type them. Change weight, add reps in reserve.', 'done', 'As described. Reps in reserve is optional.'],
   ['Saving starts the countdown. After the last set the screen shows the next exercise.', 'done', 'Saving takes effect at once and never waits for Claude.'],
@@ -81,7 +85,8 @@ const bugs = [
 ];
 
 const limits = [
-  ['No real call to Claude was made.', 'There is no API key on this machine. The API path was run with the official SDK against a local stand-in, and the request was checked field by field. The first real call could still be turned down by the API for a reason a stand-in cannot show.'],
+  ['No real call to Claude or OpenAI was made.', 'There is no API key for either on this machine. Both paths were run with the official SDKs against local stand-ins, and each request was checked field by field. The first real call could still be turned down by an API for a reason a stand-in cannot show.'],
+  ['The web lookup of machines has only met stand-ins.', 'The search tools, the paused-search case and the source check all ran against fake search results. With a real key the lookup also depends on web search being allowed for that key, and on what the search finds. How good the descriptions of real machines are is untested.'],
   ['The live claude.ai page was not opened by me.', 'It is published, and I wrote, read back and deleted a test record in its cloud storage. But I could not open it in a signed-in browser from here, so the real permission prompts for Claude and for dictation are untested. The page logic was tested against a stand-in written from the runtime\'s published type definitions.'],
   ['No real Android phone.', 'Everything, the live site included, ran in desktop Chrome with a Pixel 7 screen profile. Chrome reports nothing that blocks installing, but the actual "Add to Home screen" tap, vibration, the screen staying on, and Chrome\'s own speech recognition can only be tried on a phone.'],
 ];
@@ -182,7 +187,7 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
         <ul>
           <li>Opens full screen and starts with no signal.</li>
           <li>Data stays in the phone's browser. Backup file in Settings.</li>
-          <li>For Claude, paste your own API key in Settings. Without one, the built-in coach and the rules do the job.</li>
+          <li>Use Claude or OpenAI with your own API key, pasted in Settings. Without one, the built-in coach and the rules do the job.</li>
           <li>Served by GitHub Pages from <a href="${REPO_URL}">${REPO_URL.replace('https://', '')}</a>. The repository is public, because the free plan only hosts Pages from public repositories.</li>
         </ul>
       </div>
@@ -208,19 +213,22 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
   </section>
 
   <section>
-    <p class="eyebrow">Claude</p>
-    <h2>How Claude is hooked up</h2>
-    <p>Claude reads what you tell the coach, builds the week, and reviews results during and after a workout. It is connected in whichever way works where the page runs.</p>
+    <p class="eyebrow">AI coach</p>
+    <h2>How Claude and OpenAI are hooked up</h2>
+    <p>A model reads what you tell the coach, builds the week, and reviews results during and after a workout. Claude and OpenAI get the same prompt, the same rules and the same answer format, and their answers go through the same checks.</p>
     <div class="two">
-      <div class="card"><h3>Inside claude.ai</h3><p class="muted">The page asks the viewer's own Claude. Nothing to set up. A quick model tier is used for mid-workout checks and the default tier for plans.</p></div>
-      <div class="card"><h3>On your own address</h3><p class="muted">The official Anthropic SDK, called straight from the browser with your key. Default model <code>claude-opus-5-5</code>; Sonnet 5.5, Haiku 5.5 and Fable 5.2 can be picked in Settings.</p></div>
+      <div class="card"><h3>Inside claude.ai</h3><p class="muted">The page asks the viewer's own Claude. Nothing to set up. OpenAI cannot be reached from there.</p></div>
+      <div class="card"><h3>Stand-alone app, Claude</h3><p class="muted">The official Anthropic SDK, called from the browser with your key. Default <code>claude-opus-5-5</code>; Sonnet 5.5, Haiku 5.5 and Fable 5.2 can be picked.</p></div>
+      <div class="card"><h3>Stand-alone app, OpenAI</h3><p class="muted">The official OpenAI SDK and its Responses API, with your key. Default <code>gpt-6.1-sol</code>; Astra, Terra and Luna are listed and any model id can be typed in.</p></div>
+      <div class="card"><h3>No model at all</h3><p class="muted">A built-in coach asks the same questions, the plan comes from the training rules, and a built-in reader handles gym descriptions.</p></div>
     </div>
     <ul style="padding-left:18px;display:flex;flex-direction:column;gap:6px">
-      <li>One prompt for every job. It carries the whole rules library, so Claude and the built-in generator work from the same rules.</li>
+      <li>One prompt for every job. It carries the whole rules library, so the model and the built-in generator work from the same rules.</li>
       <li>Answers come back in a fixed JSON shape. The app then checks them against its own records: unknown exercises are dropped, numbers are clamped, and the "previous value" shown to you always comes from the app.</li>
-      <li>Refusal fallback is switched on. If Claude's safety filters decline a request, the API retries it on another model by itself. This is the recommended default; tell me if you want it off.</li>
-      <li>Claude is never in the way. Saving a set does not wait for it. If it is off, slow or failing, you carry on with the last approved plan and the rule-based suggestions.</li>
-      <li>Your key stays in that browser, goes only to Anthropic, and is left out of backups. Set a spend limit on it.</li>
+      <li>Naming a maker makes the model identify the exact machines. With an API key it then looks each one up with the provider's own web search, and a result is only marked "found" when its source address is one the search really returned. Otherwise it is marked "from the model's memory, not checked".</li>
+      <li>On Claude, refusal fallback is switched on: if its safety filters decline a request, the API retries on another model by itself. On OpenAI, conversations are not stored on their side.</li>
+      <li>The model is never in the way. Saving a set does not wait for it. If it is off, slow or failing, you carry on with the last approved plan and the rule-based suggestions.</li>
+      <li>Each key stays in that browser, goes only to its own provider, and is left out of backups. Set a spend limit on it.</li>
     </ul>
   </section>
 
@@ -255,7 +263,9 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
     <p class="eyebrow">Choices</p>
     <h2>Decisions I made where the design was silent</h2>
     <ul style="padding-left:18px;display:flex;flex-direction:column;gap:6px">
-      <li><b>It works without Claude.</b> A built-in coach asks the same questions and the plan comes from the rules. Claude makes it better; it is not required.</li>
+      <li><b>It works without a model.</b> A built-in coach asks the same questions and the plan comes from the rules. Claude or OpenAI makes it better; neither is required.</li>
+      <li><b>Machine facts must show where they come from.</b> Every identified machine is labelled: found on a named site, from the model's memory, or maker noted only. A web address the search did not return is thrown away.</li>
+      <li><b>OpenAI default is <code>gpt-6.1-sol</code>,</b> the near-top model at about a fifth of the top price. OpenAI's own "start here" pick is GPT-6 Astra; it is one tap away in Settings.</li>
       <li><b>The phone's copy is the working copy.</b> The cloud copy inside claude.ai is a mirror that is written a moment later, so the gym's bad signal never blocks a tap.</li>
       <li><b>Kilograms only.</b></li>
       <li><b>Limitations are handled carefully.</b> "My knee hurts" leaves out squats, lunges, leg press and leg extensions, and the app tells you so you can add things back. It is not medical advice and says so.</li>
@@ -271,7 +281,8 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
       <li>Open the claude.ai page on your phone and add it to the home screen. Tell the coach how you want to train.</li>
       <li>Do one real workout. That is the test I could not run: a real phone, real Claude, a real gym.</li>
       <li>Or use the stand-alone app at <a href="${LIVE_URL}">${LIVE_URL.replace('https://', '')}</a> if you want it to work with no signal. The two copies do not share data; a backup file moves it across.</li>
-      <li>For Claude on the stand-alone app, create an API key with a spend limit and paste it in Settings, then tap "Test the connection". That will be the first real call to the API.</li>
+      <li>For a model on the stand-alone app, create an Anthropic or OpenAI API key with a spend limit, choose the provider in Settings, paste the key and tap "Test the connection". That will be the first real call.</li>
+      <li>Then describe your gym with the maker named and check a few "found on the web" machines against the real ones. That is the first real test of the lookup.</li>
     </ol>
     <p class="muted">Code: <a href="${REPO_URL}">${REPO_URL.replace('https://', '')}</a>, also in <code>~/seria</code>. Start with <code>README.md</code>. The rules are in <code>docs/training-rules.md</code>. A push to <code>main</code> runs the unit tests and republishes the app.</p>
   </section>

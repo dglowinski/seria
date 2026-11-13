@@ -7,7 +7,8 @@ import * as store from '../store.js';
 import * as S from '../domain/session.js';
 import { fmtLoad, fmtLoadShort, num } from '../domain/planner.js';
 import { LOAD_TYPES, PROGRESSION } from '../domain/rules.js';
-import { substitutesFor, exerciseById, equipmentNames, zoneOf } from '../domain/catalog.js';
+import { substitutesFor, exerciseById, equipmentNames, zoneOf, machineForExercise } from '../domain/catalog.js';
+import { MachineInfo } from './equipment.js';
 import { describeChange } from '../domain/progression.js';
 import { afterSetSaved, reviewSession, rememberWeight } from '../ai/coach.js';
 import { sourceName } from '../ai/ai.js';
@@ -50,15 +51,16 @@ function HintCard({ hint, onApply, onKeep }) {
   </div>`;
 }
 
-function WeightPicker({ ex, reps, value, step, onValue, onStep }) {
-  const type = LOAD_TYPES[ex.loadType];
+function WeightPicker({ ex, reps, value, step, onValue, onStep, machine }) {
+  const plates = ex.loadType === 'machine' && machine?.loading === 'plate_loaded';
+  const type = plates ? { pick: 'Weight of the plates you load', unit: 'kg' } : LOAD_TYPES[ex.loadType];
   return html`<div class="note stack">
     <b>Choose your starting weight</b>
     <p class="small muted">There is no history for this exercise yet. Pick a weight you could lift for about ${reps + 2} reps with good form.</p>
     <label class="field"><span>${type.pick}${type.unit ? ` (${type.unit})` : ''}</span>
       <${NumberInput} id="start-weight" wide value=${value} onChange=${onValue} label="Starting weight" placeholder=${ex.loadType === 'machine' ? 'setting' : 'kg'} />
     </label>
-    <div class="field"><span>Smallest step you can add${ex.loadType === 'machine' ? ' (one pin hole)' : ' (kg)'}</span>
+    <div class="field"><span>Smallest step you can add${ex.loadType === 'machine' && !plates ? ' (one pin hole)' : ' (kg)'}</span>
       <div class="chips">${STEPS.map((v) => html`<button class=${`chip ${step === v ? 'on' : ''}`} onClick=${() => onStep(v)}>${num(v)}</button>`)}</div>
     </div>
   </div>`;
@@ -166,6 +168,7 @@ export function Workout() {
     exclude: session.exercises.map((x) => x.exerciseId), avoid: state.profile.avoid, avoidTags: state.profile.avoidTags,
   }) : [];
   const editing = sheet?.edit != null ? ex.sets[sheet.edit] : null;
+  const machine = machineForExercise(state.equipment, exerciseById(state.equipment, ex.exerciseId));
   const setElapsed = phase === 'active' && session.setStartedAt ? Math.max(now, Date.now()) - session.setStartedAt : 0;
 
   return html`
@@ -205,7 +208,9 @@ export function Workout() {
             <small>${ex.loadType === 'bodyweight' ? (set.target.load ? 'added to bodyweight' : 'bodyweight') : LOAD_TYPES[ex.loadType].label}</small></div>
         </div>`}
 
-      ${waiting && needW && html`<${WeightPicker} ex=${ex} reps=${set.target.reps} value=${picked.value} step=${picked.step}
+      ${(waiting || phase === 'active') && machine && (machine.how || machine.isolates) && html`<${MachineInfo} d=${machine} />`}
+
+      ${waiting && needW && html`<${WeightPicker} ex=${ex} reps=${set.target.reps} machine=${machine} value=${picked.value} step=${picked.step}
         onValue=${(v) => setPick({ ...picked, value: v })} onStep=${(v) => setPick({ ...picked, step: v })} />`}
 
       ${waiting && hint && html`<${HintCard} hint=${hint}

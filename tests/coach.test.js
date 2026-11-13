@@ -4,9 +4,9 @@ import { parseProfile, mergeProfile, mergeAiProfile } from '../js/ai/coach.js';
 import { mergeStates } from '../js/cloud.js';
 import { tidy, sourceName } from '../js/ai/ai.js';
 import { openaiParams } from '../js/ai/openai.js';
-import { OUTPUT_SCHEMA, SYSTEM_PROMPT, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest } from '../js/ai/prompts.js';
+import { OUTPUT_SCHEMA, SYSTEM_PROMPT, LOOKUP_SYSTEM, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, lookupRequest, parseLookup } from '../js/ai/prompts.js';
 import { emptyProfile, generatePlan, missingFields } from '../js/domain/planner.js';
-import { emptyEquipment, parseEquipmentText, applyEquipmentRead, isAvailable, isListed, EQUIPMENT, allExercises } from '../js/domain/catalog.js';
+import { emptyEquipment, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail, machineForExercise, machineLabel, isAvailable, isListed, EQUIPMENT, allExercises } from '../js/domain/catalog.js';
 import { emptyState, hydrate } from '../js/store.js';
 import * as S from '../js/domain/session.js';
 
@@ -114,6 +114,7 @@ test('gym text: named machines, things the gym lacks, own machines and the rest'
   assert.deepEqual(r.off, ['barbell']);
   assert.deepEqual(r.custom, [{ name: 'Glute drive', pattern: 'glute' }]);
   assert.deepEqual(r.unknown, ['sauna']);
+  assert.deepEqual(r.machines, [], 'no maker named, nothing to identify');
   const list = parseEquipmentText('smith machine\nhack squat\npec deck\nhip abductor\nassisted pull-up machine\ntreadmills\nrowing machine\nseated row');
   assert.deepEqual(list.add.sort(), ['hack_squat', 'pec_deck', 'seated_row', 'smith']);
   assert.deepEqual(list.custom, [{ name: 'Hip abductor', pattern: 'glute' }]);
@@ -122,7 +123,7 @@ test('gym text: named machines, things the gym lacks, own machines and the rest'
   assert.deepEqual(neg.add.sort(), ['dumbbells', 'leg_extension', 'rack']);
   assert.deepEqual(neg.off.sort(), ['dip_station', 'leg_curl', 'pullup_bar']);
   assert.deepEqual(parseEquipmentText('functional trainer and free weights').add.sort(), ['barbell', 'cable', 'dumbbells']);
-  assert.deepEqual(parseEquipmentText(''), { add: [], off: [], custom: [], unknown: [] });
+  assert.deepEqual(parseEquipmentText(''), { add: [], off: [], custom: [], unknown: [], machines: [] });
 });
 
 test('gym text: saving is exact about what changed and never invents equipment', () => {
@@ -142,12 +143,92 @@ test('gym text: saving is exact about what changed and never invents equipment',
   assert.deepEqual(res.summary.unknown, ['sauna', 'Odd thing']);
   assert.ok(isAvailable(res.equipment, 'lat_pulldown') && !isAvailable(res.equipment, 'barbell') && !isListed(res.equipment, 'smith'));
   assert.ok(allExercises(res.equipment).some((x) => x.name === 'Belt squat' && x.pattern === 'squat'), 'own machines become exercises the planner can use');
-  assert.deepEqual(eq, { items: { leg_press: true }, custom: [] }, 'the input is not changed');
+  assert.deepEqual(eq, { items: { leg_press: true }, custom: [], details: {} }, 'the input is not changed');
+  assert.deepEqual(res.summary.described, []);
   const again = applyEquipmentRead(res.equipment, { add: ['lat_pulldown'], custom: [{ name: 'glute drive', pattern: 'glute' }] }, id);
   assert.ok(!again.changed); assert.equal(again.equipment.custom.length, 2);
   const req = JSON.parse(equipmentRequest({ equipment: res.equipment, text: 'cables' }));
   assert.equal(req.mode, 'equipment'); assert.equal(req.equipment_catalog.length, EQUIPMENT.length);
   assert.ok(req.movements.some((m) => m.id === 'glute')); assert.deepEqual(req.own_machines, ['Glute drive', 'Belt squat']);
+});
+
+test('machines by maker: the built-in reader notes the maker for the group it was named for', () => {
+  const r = parseEquipmentText("It's these machines from Technogym: leg press, chest press and the glute machine. Also a smith machine.");
+  assert.deepEqual(r.add, ['leg_press', 'chest_press', 'smith']);
+  assert.deepEqual(r.custom, [{ name: 'Glute machine', pattern: 'glute' }]);
+  assert.deepEqual(r.machines, [{ ref: 'leg_press', vendor: 'Technogym' }, { ref: 'chest_press', vendor: 'Technogym' }, { ref: 'Glute machine', vendor: 'Technogym' }], 'the maker stops at the end of the sentence');
+  const h = parseEquipmentText('by hammer strength: iso-lateral row, incline press\nlat pulldown');
+  assert.deepEqual(h.machines.map((m) => m.vendor), ['Hammer Strength', 'Hammer Strength']);
+  assert.equal(parseEquipmentText('I get there by the bus: leg press').machines.length, 0, '"by the ..." is not a maker');
+  let n = 0;
+  const res = applyEquipmentRead(emptyEquipment(), r, () => `cm-${++n}`);
+  assert.deepEqual(machineDetail(res.equipment, 'leg_press'), { vendor: 'Technogym', basis: 'stated' });
+  assert.equal(machineDetail(res.equipment, 'smith'), null);
+  assert.equal(machineDetail(res.equipment, 'cm-1').vendor, 'Technogym');
+  assert.deepEqual(res.summary.described.map((d) => `${d.name}:${d.label}:${d.basis}`), ['Leg press:Technogym:stated', 'Chest press machine:Technogym:stated', 'Glute machine:Technogym:stated']);
+});
+
+test('machines by maker: what the model knows is saved, and a web result needs a real source', () => {
+  let n = 0;
+  const read = {
+    add: ['leg_press', 'chest_press'], custom: [{ name: 'Belt squat', pattern: 'squat' }],
+    machines: [
+      { ref: 'leg_press', vendor: ' Technogym ', model: 'Selection 900 Leg Press', how: 'Seated; you push a footplate away.', isolates: 'Quadriceps and glutes', loading: 'selectorized', notes: null, basis: 'memory' },
+      { ref: 'Belt squat', vendor: 'Pit Shark', model: null, how: 'Belt around the hips, weight hangs between the legs.', isolates: 'Quadriceps', loading: 'laser', basis: 'memory' },
+      { ref: 'not_on_the_list', vendor: 'X', model: 'Y', how: 'z', isolates: 'w', basis: 'memory' },
+      { ref: 'chest_press', vendor: '', model: '', how: '', isolates: '', basis: 'memory' },
+    ],
+  };
+  const res = applyEquipmentRead(emptyEquipment(), read, () => `cm-${++n}`);
+  const lp = machineDetail(res.equipment, 'leg_press');
+  assert.deepEqual(lp, { vendor: 'Technogym', model: 'Selection 900 Leg Press', how: 'Seated; you push a footplate away.', isolates: 'Quadriceps and glutes', loading: 'selectorized', basis: 'memory' });
+  assert.equal(machineLabel(lp), 'Technogym Selection 900 Leg Press');
+  assert.ok(!('loading' in machineDetail(res.equipment, 'cm-1')), 'an unknown way of loading is dropped');
+  assert.equal(machineDetail(res.equipment, 'chest_press'), null, 'an empty description saves nothing');
+  assert.equal(Object.keys(res.equipment.details).length, 2, 'a machine that is not on the list gets no details');
+  assert.equal(res.summary.described.length, 2);
+
+  // Web lookup: only an https address the search really returned counts.
+  const found = [
+    { ref: 'leg_press', vendor: 'Technogym', model: 'Selection 900 Leg Press', how_it_works: 'From the page: five backrest positions.', isolates: 'Quadriceps, then glutes', loading: 'selectorized', notes: '', source_url: 'https://maker.example/leg-press/' },
+    { ref: 'cm-1', vendor: 'Pit Shark', model: 'Belt Squat', how_it_works: 'Made up.', isolates: 'Everything', loading: 'plate_loaded', source_url: 'https://invented.example/belt' },
+    { ref: 'chest_press', vendor: 'T', model: 'M', how_it_works: 'h', isolates: 'i', loading: 'other', source_url: 'http://maker.example/plain-http' },
+    { ref: 'smith', vendor: 'T', model: 'M', how_it_works: 'h', isolates: 'i', loading: 'other', source_url: 'https://maker.example/leg-press' },
+  ];
+  const merged = applyMachineLookup(res.equipment, found, ['https://maker.example/leg-press', 'http://maker.example/plain-http']);
+  assert.deepEqual(merged.described.map((d) => `${d.id}:${d.basis}:${d.host}`), ['leg_press:web:maker.example']);
+  const web = machineDetail(merged.equipment, 'leg_press');
+  assert.equal(web.basis, 'web'); assert.equal(web.source, 'https://maker.example/leg-press/'); assert.match(web.how, /five backrest positions/);
+  assert.equal(machineDetail(merged.equipment, 'cm-1').basis, 'memory', 'an invented address changes nothing');
+  assert.equal(machineDetail(merged.equipment, 'smith'), null, 'a machine nobody asked about is ignored');
+  assert.deepEqual(applyMachineLookup(res.equipment, 'garbage', null).described, []);
+  // Reading the same text again changes nothing, still lists the machines, and keeps a checked result.
+  const again = applyEquipmentRead(merged.equipment, read, () => 'cm-x');
+  assert.ok(!again.changed); assert.equal(again.summary.described.length, 2);
+  assert.equal(again.summary.described.find((d) => d.id === 'leg_press').basis, 'web');
+  assert.match(machineDetail(again.equipment, 'leg_press').how, /five backrest positions/, 'memory does not overwrite what was found on the web');
+
+  // The coach sees it: in the equipment list and on the exercises done on that machine.
+  const profile = { ...emptyProfile(), goal: 'muscle', months: 12, daysPerWeek: 3, minutes: 50 };
+  const req = JSON.parse(newPlanRequest({ profile, equipment: merged.equipment, weights: {} }));
+  const eqOut = req.equipment.find((x) => x.name === 'Leg press');
+  assert.equal(eqOut.maker, 'Technogym'); assert.equal(eqOut.model, 'Selection 900 Leg Press'); assert.match(eqOut.how_it_works, /backrest/);
+  assert.equal(eqOut.isolates, 'Quadriceps, then glutes'); assert.equal(eqOut.checked, 'found on the web'); assert.equal(eqOut.loading, 'weight stack with a pin');
+  assert.ok(req.equipment.includes('Dumbbells'), 'entries with nothing known stay plain names');
+  assert.equal(req.available_exercises.find((x) => x.id === 'leg_press').machine.maker, 'Technogym');
+  assert.match(req.available_exercises.find((x) => x.name === 'Belt squat').machine.checked, /not checked/);
+  assert.equal(machineForExercise(merged.equipment, allExercises(merged.equipment).find((x) => x.id === 'leg_press')).name, 'Leg press');
+  assert.equal(machineForExercise(merged.equipment, allExercises(merged.equipment).find((x) => x.id === 'db_curl')), null);
+  assert.ok(SYSTEM_PROMPT.includes('what it isolates'));
+});
+
+test('machine lookup: the request names each machine and the answer is read leniently', () => {
+  const req = JSON.parse(lookupRequest([{ ref: 'leg_press', name: 'Leg press', vendor: 'Technogym', model: 'Selection 900' }, { ref: 'cm-1', name: 'Belt squat', vendor: 'Pit Shark' }]));
+  assert.equal(req.task, 'machine_lookup');
+  assert.deepEqual(req.machines[1], { ref: 'cm-1', kind: 'Belt squat', vendor: 'Pit Shark', model: null });
+  assert.ok(/Never invent a model name or a web address/.test(LOOKUP_SYSTEM));
+  assert.deepEqual(parseLookup('Sure. [{"ref":"a","x":1}, 5, {"no_ref":true}] Thanks.'), [{ ref: 'a', x: 1 }]);
+  assert.deepEqual(parseLookup('nothing found'), []); assert.deepEqual(parseLookup('[oops'), []); assert.deepEqual(parseLookup('{"ref":"a"}'), []);
 });
 
 test('cloud merge: newer main record wins, sessions combine, deletions stick', () => {

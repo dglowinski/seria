@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-13T14:41:01.600Z",
+  "ranAt": "2026-11-13T14:50:20.781Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 127,
-  "passed": 127,
+  "total": 143,
+  "passed": 143,
   "failed": 0,
   "results": [
     {
@@ -98,6 +98,12 @@
     {
       "part": "A built-in",
       "name": "the text box is cleared once saved",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "with no model connected, a named maker is noted on its machines",
       "ok": true,
       "detail": ""
     },
@@ -427,6 +433,48 @@
     },
     {
       "part": "B Claude API",
+      "name": "named machines are looked up with Claude's web search, and a paused search is carried on",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "a machine found on the web is saved with how it works, what it isolates and its source",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "a source address the search never returned is not accepted; that machine stays \"from memory\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "nothing is saved for machines nobody named",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "the result says which machines were identified and how sure that is",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "the equipment list shows the exact machine and links to its page",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "if the web search fails the machines are still saved, marked as not checked",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
       "name": "saving does not wait for Claude",
       "ok": true,
       "detail": ""
@@ -458,6 +506,12 @@
     {
       "part": "B Claude API",
       "name": "an on-target set does not call Claude",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "the coach is told how each identified machine works and what it isolates",
       "ok": true,
       "detail": ""
     },
@@ -535,7 +589,19 @@
     },
     {
       "part": "C in claude.ai",
+      "name": "inside claude.ai machines are identified from memory and marked as not checked",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
       "name": "cloud copy: one private main record plus one record per workout",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "C in claude.ai",
+      "name": "machine details are part of the cloud copy",
       "ok": true,
       "detail": ""
     },
@@ -685,7 +751,37 @@
     },
     {
       "part": "F OpenAI API",
+      "name": "OpenAI looks the machines up with its web search tool",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "and the result is saved the same way: found with a real source, or from memory",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
       "name": "the reply is marked as coming from OpenAI",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "the plan request tells the model about the exact machine on the exercise",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "the day preview names the machine and what it isolates",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "the workout screen explains the machine you are on",
       "ok": true,
       "detail": ""
     },

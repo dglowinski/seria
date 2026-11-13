@@ -151,7 +151,25 @@ export const KEYWORDS = [
 
 // ---------------------------------------------------------------- helpers
 
-export const emptyEquipment = () => ({ items: {}, custom: [] });
+// `details` holds what is known about the exact machine behind an entry, by
+// equipment id: maker, model, how it works, what it isolates.
+export const emptyEquipment = () => ({ items: {}, custom: [], details: {} });
+
+export const LOADING = { selectorized: 'weight stack with a pin', plate_loaded: 'plates you load', cable: 'cable and weight stack', bodyweight: 'bodyweight', other: 'other' };
+
+/** What is known about the exact machine, or null. */
+export const machineDetail = (eq, id) => (eq?.details || {})[id] || null;
+
+/** The machine an exercise is done on, with its details, when any are saved. */
+export function machineForExercise(eq, exercise) {
+  if (!exercise) return null;
+  const id = (exercise.equip || []).find((x) => machineDetail(eq, x));
+  if (!id) return null;
+  const item = equipmentList(eq).find((x) => x.id === id);
+  return { id, name: item?.name || id, ...machineDetail(eq, id) };
+}
+
+export const machineLabel = (d) => [d?.vendor, d?.model].filter(Boolean).join(' ');
 
 export function equipmentList(eq) {
   const custom = (eq?.custom || []).map((c) => ({ id: c.id, name: c.name, kind: 'custom', zone: c.zone || ZONES.machines, pattern: c.pattern }));
@@ -283,12 +301,24 @@ export function guessPattern(name) {
 
 /**
  * Read a free-text description of a gym.
- * @returns {{add: string[], off: string[], custom: {name: string, pattern: string}[], unknown: string[]}}
+ * @returns {{add: string[], off: string[], custom: {name: string, pattern: string}[], unknown: string[], machines: {ref: string, vendor: string}[]}}
  */
 export function parseEquipmentText(text) {
-  const add = new Set(); const off = new Set(); const custom = []; const unknown = [];
-  const clauses = String(text || '').toLowerCase().replace(/[’`]/g, "'").split(/[,;.\n]|\band\b|\bplus\b|\balso\b|\bbut\b|\bas well as\b/);
-  for (const clause of clauses) {
+  const add = new Set(); const off = new Set(); const custom = []; const unknown = []; const machines = [];
+  const clean = String(text || '').replace(/[’`]/g, "'");
+  // A maker named for a group, as in "these are from Technogym: a, b, c", holds until the sentence ends.
+  const sentences = clean.split(/[.;\n]/);
+  const clauses = [];
+  for (const sentence of sentences) {
+    const m = sentence.match(/\b(?:from|by|made by|brand|vendor|maker)\s+([A-Za-z0-9][A-Za-z0-9&' -]{1,38}?)\s*:/i);
+    // "by the bus" or "from my old gym" is not a maker: a name does not start with an article, and is short.
+    const named = m && !/^(the|my|our|a|an|this|that|these|those|your)\b/i.test(m[1].trim()) && m[1].trim().split(/\s+/).length <= 4;
+    const vendor = named ? m[1].trim().replace(/\b[a-z]/g, (c) => c.toUpperCase()) : null;
+    const body = m ? sentence.slice(m.index + m[0].length) : sentence;
+    for (const c of body.toLowerCase().split(/,|\band\b|\bplus\b|\balso\b|\bbut\b|\bas well as\b/)) clauses.push({ clause: c, vendor });
+  }
+  const note = (ref, vendor) => { if (vendor && !machines.some((x) => x.ref === ref)) machines.push({ ref, vendor }); };
+  for (const { clause, vendor } of clauses) {
     let rest = ` ${clause} `;
     if (!rest.trim()) continue;
     let matched = false;
@@ -300,7 +330,7 @@ export function parseEquipmentText(text) {
         from = at + w.length;
         if (/[a-z]/.test(rest[at - 1] || ' ') || /[a-z]/.test(rest[at + w.length] || ' ')) continue;
         const negative = NEGATIVE.test(rest.slice(0, at));
-        ids.forEach((id) => (negative ? off : add).add(id));
+        ids.forEach((id) => { (negative ? off : add).add(id); if (!negative) note(id, vendor); });
         rest = `${rest.slice(0, at)}${'_'.repeat(w.length)}${rest.slice(at + w.length)}`;
         matched = true;
       }
@@ -312,11 +342,12 @@ export function parseEquipmentText(text) {
     if (name.replace(/[^a-z]/g, '').length < 3) continue;
     // Assisted machines are left out: a higher setting makes them easier, which the load logic would read backwards.
     const pattern = NOT_STRENGTH.test(name) || /assist/.test(name) ? null : guessPattern(name);
-    if (pattern) custom.push({ name: name[0].toUpperCase() + name.slice(1), pattern });
-    else unknown.push(name);
+    const full = /\s/.test(name) ? name : `${name} machine`; // "the glute machine" stays a name, not just "Glute"
+    const shown = full[0].toUpperCase() + full.slice(1);
+    if (pattern) { custom.push({ name: shown, pattern }); note(shown, vendor); } else unknown.push(name);
   }
   for (const id of add) off.delete(id); // "we have X" beats "no X" said elsewhere
-  return { add: [...add], off: [...off], custom, unknown };
+  return { add: [...add], off: [...off], custom, unknown, machines };
 }
 
 /**
@@ -326,8 +357,9 @@ export function parseEquipmentText(text) {
 export function applyEquipmentRead(eq, read, newId) {
   const items = { ...(eq?.items || {}) };
   const custom = [...(eq?.custom || [])];
+  const details = { ...(eq?.details || {}) };
   const byId = Object.fromEntries(EQUIPMENT.map((x) => [x.id, x]));
-  const sum = { added: [], already: [], off: [], custom: [], unknown: [...new Set((read.unknown || []).map((u) => String(u).trim()).filter(Boolean))].slice(0, 12) };
+  const sum = { added: [], already: [], off: [], custom: [], described: [], unknown: [...new Set((read.unknown || []).map((u) => String(u).trim()).filter(Boolean))].slice(0, 12) };
   const addIds = [...new Set(read.add || [])].filter((id) => byId[id]);
   for (const id of addIds) {
     const x = byId[id];
@@ -355,5 +387,70 @@ export function applyEquipmentRead(eq, read, newId) {
     custom.push({ id: newId(), name, pattern: c.pattern, zone: ZONES.machines });
     sum.custom.push(`${name} (${PATTERNS[c.pattern].toLowerCase()})`);
   }
-  return { equipment: { items, custom }, summary: sum, changed: sum.added.length + sum.off.length + sum.custom.length > 0 };
+  // What the reader knows about the exact machines, attached to the entries just saved.
+  let detailChanges = 0;
+  for (const m of read.machines || []) {
+    const id = resolveMachineRef({ items, custom }, m?.ref);
+    const d = cleanDetail(m, m?.basis || (m?.how || m?.isolates ? 'memory' : 'stated'));
+    if (!id || !d) continue;
+    const before = JSON.stringify(details[id] || null);
+    // A checked web result is not downgraded by a later read from memory.
+    details[id] = details[id]?.basis === 'web' ? { ...d, ...details[id] } : { ...(details[id] || {}), ...d };
+    if (JSON.stringify(details[id]) !== before) detailChanges++;
+    // Every machine the text named is listed, changed or not, so a repeat read can still be looked up.
+    sum.described = sum.described.filter((x) => x.id !== id);
+    sum.described.push({ id, name: nameOf({ items, custom }, id), label: machineLabel(details[id]), basis: details[id].basis, ...(details[id].source ? { host: hostOf(details[id].source) } : {}) });
+  }
+  const changed = sum.added.length + sum.off.length + sum.custom.length + detailChanges > 0;
+  return { equipment: { items, custom, details }, summary: sum, changed };
+}
+
+const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } };
+const nameOf = (eq, id) => equipmentList(eq).find((x) => x.id === id)?.name || id;
+const text = (v, max) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '');
+
+/** A machine is pointed at by its catalog id or by the name it was saved under. */
+export function resolveMachineRef(eq, ref) {
+  const r = String(ref || '').trim().toLowerCase();
+  if (!r) return null;
+  const list = equipmentList(eq);
+  const hit = list.find((x) => x.id.toLowerCase() === r) || list.find((x) => x.name.toLowerCase() === r);
+  return hit && isListed(eq, hit.id) ? hit.id : null;
+}
+
+/** Keep only well-formed facts about a machine. Returns null when nothing is left. */
+export function cleanDetail(m, basis) {
+  const d = {
+    vendor: text(m?.vendor, 40), model: text(m?.model, 80),
+    how: text(m?.how ?? m?.how_it_works, 420), isolates: text(m?.isolates, 220), notes: text(m?.notes, 300),
+    loading: LOADING[m?.loading] ? m.loading : '',
+    source: basis === 'web' ? text(m?.source, 300) : '',
+    basis,
+  };
+  if (!d.vendor && !d.model && !d.how && !d.isolates) return null;
+  for (const k of Object.keys(d)) if (d[k] === '') delete d[k];
+  return d;
+}
+
+const sameUrl = (u) => String(u || '').trim().replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase();
+
+/**
+ * Fold web lookup results into the saved details. A result only counts as
+ * "found on the web" when its source address is one the search really returned.
+ */
+export function applyMachineLookup(eq, found, urls) {
+  const allowed = new Set((urls || []).map(sameUrl));
+  const details = { ...(eq?.details || {}) };
+  const described = [];
+  for (const f of Array.isArray(found) ? found : []) {
+    const id = resolveMachineRef(eq, f?.ref);
+    if (!id) continue;
+    const src = typeof f?.source_url === 'string' && /^https:\/\//.test(f.source_url) && allowed.has(sameUrl(f.source_url)) ? f.source_url.trim() : '';
+    if (!src) continue; // nothing checkable: keep what we had
+    const d = cleanDetail({ ...f, source: src }, 'web');
+    if (!d || !(d.how || d.isolates)) continue;
+    details[id] = { ...(details[id] || {}), ...d };
+    described.push({ id, name: nameOf(eq, id), label: machineLabel(details[id]), basis: 'web', host: hostOf(src) });
+  }
+  return { equipment: { ...eq, details }, described };
 }

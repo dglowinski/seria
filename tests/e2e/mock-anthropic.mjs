@@ -2,10 +2,10 @@
 // preflight, POST /v1/messages, typed error bodies. It records what it gets so
 // the test can check the request the app really sends.
 import { createServer } from 'node:http';
-import { canned } from './canned.mjs';
+import { canned, cannedLookup } from './canned.mjs';
 
 export function startMockAnthropic(port) {
-  const state = { requests: [], fail: null, delayMs: 0 };
+  const state = { requests: [], fail: null, delayMs: 0, failLookup: false };
   const cors = (req) => ({
     'access-control-allow-origin': req.headers.origin || '*',
     'access-control-allow-headers': req.headers['access-control-request-headers'] || '*',
@@ -24,6 +24,23 @@ export function startMockAnthropic(port) {
       const json = (status, obj) => res.writeHead(status, { ...cors(req), 'content-type': 'application/json', 'request-id': 'req_mock' }).end(JSON.stringify(obj));
       if (state.fail === 401) return json(401, { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } });
       if (state.fail === 529) return json(529, { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } });
+      // A machine lookup: the request carries the web search tool. The first answer
+      // pauses mid-search, as the real API can; the follow-up finishes it.
+      if ((body.tools || []).some((t) => /^web_search_/.test(t.type))) {
+        if (state.failLookup) return json(400, { type: 'error', error: { type: 'invalid_request_error', message: 'Web search is not enabled for this organization.' } });
+        const look = cannedLookup(JSON.parse(body.messages[0].content));
+        const search = [
+          { type: 'server_tool_use', id: 'srvtoolu_mock', name: 'web_search', input: { query: 'machine' } },
+          { type: 'web_search_tool_result', tool_use_id: 'srvtoolu_mock', content: look.urls.map((url) => ({ type: 'web_search_result', url, title: 'Product page', encrypted_content: 'x', page_age: null })) },
+        ];
+        const paused = body.messages.length === 1;
+        return json(200, {
+          id: 'msg_lookup', type: 'message', role: 'assistant', model: body.model,
+          content: paused ? search : [{ type: 'text', text: look.text, citations: null }],
+          stop_reason: paused ? 'pause_turn' : 'end_turn', stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 10 },
+        });
+      }
       const payload = JSON.parse(body.messages[body.messages.length - 1].content);
       const delay = payload.mode === 'in_session' ? state.delayMs : 0;
       if (delay) await new Promise((r) => setTimeout(r, delay));
