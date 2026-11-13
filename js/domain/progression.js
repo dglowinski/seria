@@ -113,6 +113,7 @@ function previousRun(exerciseId, session, past) {
 export function postSessionChanges(session, plan, past = []) {
   const changes = [];
   if (!plan) return changes;
+  if (session.easePct > 0) return changes; // a deliberately lighter comeback session says nothing about the plan
   for (const ex of session.exercises) {
     const entries = plan.days.flatMap((d) => d.exercises.filter((p) => p.exerciseId === ex.exerciseId).map((p) => ({ d, p })));
     if (!entries.length) continue;

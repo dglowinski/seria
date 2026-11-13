@@ -10,7 +10,7 @@ import { LOAD_TYPES, PROGRESSION } from '../domain/rules.js';
 import { substitutesFor, exerciseById, equipmentNames, zoneOf, machineForExercise } from '../domain/catalog.js';
 import { MachineInfo } from './equipment.js';
 import { describeChange } from '../domain/progression.js';
-import { afterSetSaved, reviewSession, rememberWeight } from '../ai/coach.js';
+import { afterSetSaved, afterWorkout, rememberWeight } from '../ai/coach.js';
 import { sourceName } from '../ai/ai.js';
 import { primeAudio, beep, buzz, keepAwake } from '../platform.js';
 
@@ -122,7 +122,7 @@ export function Workout() {
   const hint = session.hint && S.hintApplies(session, session.hint) ? session.hint : null;
 
   const put = (next, extra) => store.putSession(next, extra);
-  const done = (s) => { reviewSession(s.id); flags.justFinished = s.id; go('session', s.id, { replace: true }); };
+  const done = (s) => { afterWorkout(s); flags.justFinished = s.id; go('session', s.id, { replace: true }); };
 
   const onMain = () => {
     primeAudio();
@@ -198,6 +198,7 @@ export function Workout() {
         ${phase === 'active' && html`<p class="eyebrow">Set in progress · ${clock(setElapsed)}</p>`}
         <h3 data-testid="exercise-name">${ex.name}</h3>
         <p class="muted small">${ex.zone} · set ${setIdx + 1} of ${ex.sets.length}${ex.swappedFrom ? ` · swapped in for ${ex.swappedFrom.name}` : ''}</p>
+        ${waiting && session.easePct > 0 && c.done + c.skipped === 0 && html`<p class="small muted" data-testid="eased">Loads are ${session.easePct}% lighter today to ease back in. The plan keeps its numbers.</p>`}
         ${waiting && firstOfExercise && html`<p class="muted small">${ex.equipment} · ${ex.sets.length} sets · rest ${restText(ex.restSec)}</p>`}
       </div>
 

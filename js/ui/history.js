@@ -52,7 +52,7 @@ export function SessionScreen({ sessionId }) {
   return html`
     <main class=${`main with-tabs ${state.plan ? 'with-dock' : ''}`}>
       <div class="stack tight">
-        <p class="eyebrow">${fresh ? 'Summary' : dateText(session.startedAt)} · ${session.title}</p>
+        <p class="eyebrow">${fresh ? 'Summary' : dateText(session.startedAt)} · ${session.title}${session.easePct ? ` · ${session.easePct}% lighter` : ''}</p>
         <h2>${fresh ? 'Workout saved' : session.title}</h2>
       </div>
       <div class="metrics">

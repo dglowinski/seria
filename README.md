@@ -1,6 +1,6 @@
 # Seria
 
-A gym training app that runs in the phone's browser. You tell the coach how you want to train. Seria builds a week around your goal, your time and your gym's equipment, walks you through every set with a rest timer, keeps a history, and proposes changes for the next workouts.
+A gym training app that runs in the phone's browser. You tell the coach how you want to train. Seria builds a plan around your goal, your time and your gym's equipment, walks you through every set with a rest timer, keeps a history, and keeps the plan up to date as you go.
 
 Built from the design in `seria-design.html`. The app is in English.
 
@@ -25,6 +25,18 @@ Open <https://dglowinski.github.io/seria/> in Chrome on the phone. Then ⋮ menu
 - uses Claude or OpenAI with your own API key, pasted in Settings. Without a key the built-in coach and the training rules do the job.
 
 It is served by GitHub Pages from this repository. Every push to `main` runs the unit tests and then publishes the app files (`.github/workflows/pages.yml`). Tests, scripts and the report are not published. The folder has no build step, so any other static HTTPS host works too.
+
+## How the plan works
+
+The plan is a running list, not a calendar: train this, rest a day, train that, rest two days, and so on. There are no fixed weekdays and nothing to manage.
+
+- **The coach proposes it and you can discuss it.** It is laid out a couple of weeks ahead. The main lifts come back every week so they can progress; the smaller exercises take turns, so what did not fit one week is trained the next.
+- **One button: "Train now".** On the day the next session is planned for, it just starts. On any other day it first shows what makes sense today and why (for example a session that lets yesterday's muscles rest), and how the rest of the plan follows. Starting accepts that update. You can also pick any session yourself, or skip one.
+- **It moves as you train.** After each workout the finished session comes off the list. With Claude or OpenAI connected, the order and rest days of what is left are updated from your results without asking. Changes to weights, reps or exercises still come as proposals with "Apply" and "Keep plan".
+- **When the list runs out, the next run is planned.** The connected model plans it from your results so far. Without a model the same run starts again, with its exercises taking turns.
+- **After ten days away,** the first session back is 10% lighter. The plan keeps its numbers.
+
+The rules behind this are in `js/domain/schedule.js` and in the "A plan that moves" and "Training on any day" parts of `docs/training-rules.md`.
 
 ## Telling it what your gym has
 
@@ -105,7 +117,8 @@ js/platform.js                            what the page can do where it runs: vo
 js/cloud.js                               cloud copy when inside claude.ai
 js/domain/rules.js                        the training rules library, versioned, with sources
 js/domain/catalog.js                      equipment and exercises
-js/domain/planner.js                      builds the week, estimates time
+js/domain/planner.js                      builds the plan, estimates time
+js/domain/schedule.js                     what to train today, the order and rests of what follows
 js/domain/session.js                      the workout: ready, set, result, rest, next, summary
 js/domain/progression.js                  reads results, proposes changes, applies them
 js/ai/prompts.js                          the prompt, the answer schema, the request data

@@ -6,17 +6,18 @@
 // small built-in reader handles the common answers and the rule-based
 // generator builds the plan. Either way the app keeps working.
 
-import { GOALS, MAX_DAYS, levelFor } from '../domain/rules.js';
+import { GOALS, MAX_DAYS, CYCLE, levelFor } from '../domain/rules.js';
+import { recommend, setOrder, setRests, completeDay, queueState, runFinished } from '../domain/schedule.js';
 import { KEYWORDS, allExercises, canDo, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail } from '../domain/catalog.js';
 import {
   WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_NAMES, missingFields, generatePlan, normalizePlan, fitToBudget, refreshPlan, fmtMonths,
   trainingDays, clampMinutes, setPlanLoad,
 } from '../domain/planner.js';
 import { inSessionHint, postSessionChanges, equipmentChanges, applyPlanChange, fromAiChanges } from '../domain/progression.js';
-import { hintApplies, setHint } from '../domain/session.js';
+import { hintApplies, setHint, startSession } from '../domain/session.js';
 import * as store from '../store.js';
 import { ask, aiReady, aiSource, aiName, AiError, canLookUp, lookUpMachines } from './ai.js';
-import { interviewRequest, newPlanRequest, sessionRequest, equipmentRequest } from './prompts.js';
+import { interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, trainNowRequest, nextRunRequest } from './prompts.js';
 
 // ---------------------------------------------------------------- built-in reader
 
@@ -68,6 +69,8 @@ export function parseProfile(text, ctx = {}) {
     const [whole, n, unit, ago] = m;
     const before = t.slice(Math.max(0, m.index - 12), m.index);
     if (ago || /\b(every|next|in|within|times|days|sessions|x|per)\s*$/.test(before)) continue;
+    if (/^\s*-?\s*(long\s+)?(cycles?|rotation|block|programme?|plan)\b/.test(t.slice(m.index + whole.length))) continue; // "a 3 week cycle"
+    if (/\b(cycles?|rotation|block)\s+(of|over|lasting|for)\s*$/.test(t.slice(Math.max(0, m.index - 24), m.index))) continue;
     if ((n === 'a' || n === 'an') && unit.startsWith('week')) continue; // "three times a week"
     let v = toNum(n) + (/and a half/.test(whole) ? 0.5 : 0);
     v = unit.startsWith('y') ? v * 12 : unit.startsWith('w') ? v / 4.345 : v;
@@ -91,6 +94,15 @@ export function parseProfile(text, ctx = {}) {
     patch.daysPerWeek = Math.min(Math.round(toNum(perWeek[1])), MAX_DAYS); patch.days = []; got.push('days');
   } else if (bare && ctx.asked === 'days' && toNum(bare[1]) >= 1 && toNum(bare[1]) <= 7) {
     patch.daysPerWeek = Math.min(Math.round(toNum(bare[1])), MAX_DAYS); patch.days = []; got.push('days');
+  }
+
+  // Cycle length: "2 week cycle", "a cycle of three weeks", "weekly cycle"
+  const cyc = t.match(new RegExp(`\\b${NUM}\\s*-?\\s*weeks?\\s*-?\\s*(?:long\\s+)?(?:cycles?|rotation|block|programme?|plan)\\b`))
+    || t.match(new RegExp(`\\b(?:cycles?|rotation|block)\\s+(?:of|over|lasting|for)\\s+${NUM}\\s*weeks?\\b`))
+    || (/\b(weekly cycle|same every week|repeat every week)\b/.test(t) ? [null, '1'] : null);
+  if (cyc && Number.isFinite(toNum(cyc[1]))) {
+    patch.cycleWeeks = Math.min(Math.max(Math.round(toNum(cyc[1])), CYCLE.minWeeks), CYCLE.maxWeeks);
+    got.push('cycle');
   }
 
   // Session length
@@ -182,7 +194,7 @@ export function mergeAiProfile(profile, ai, equipment) {
 const QUESTIONS = {
   goal: { text: 'What is your main goal?', chips: ['Build strength', 'Build muscle', 'General fitness', 'Muscular endurance'] },
   experience: { text: 'How long have you been lifting regularly?', chips: ['Just starting', 'About 6 months', 'About a year', '3 years'] },
-  days: { text: 'How many days a week can you train, and which days suit you?', chips: ['2 days', '3 days', 'Mon, Wed, Fri', '4 days'] },
+  days: { text: 'How many days a week can you train? They do not have to be the same days each week.', chips: ['2 days', '3 days', '4 days', '5 days'] },
   minutes: { text: 'How long can one session take, warm-up included?', chips: ['30 minutes', '45 minutes', '60 minutes', '75 minutes'] },
 };
 
@@ -194,6 +206,7 @@ function ackText(patch, got) {
   if (got.includes('experience')) bits.push(patch.months < 1 ? 'new to lifting' : `${fmtMonths(patch.months)} of training`);
   if (got.includes('days')) bits.push(patch.days?.length ? patch.days.map((d) => WEEKDAY_SHORT[d]).join(', ') : `${patch.daysPerWeek} day${patch.daysPerWeek === 1 ? '' : 's'} a week`);
   if (got.includes('minutes')) bits.push(`${patch.minutes} min sessions`);
+  if (got.includes('cycle')) bits.push(`planned ${patch.cycleWeeks} week${patch.cycleWeeks === 1 ? '' : 's'} ahead`);
   if (got.includes('avoid')) bits.push('some lifts left out');
   if (got.includes('include')) bits.push('your favourites kept in');
   if (got.includes('limitations')) bits.push('a limitation to work around');
@@ -227,16 +240,15 @@ function localTurn(text) {
     return;
   }
   if (!profile.askedExtras) {
-    const needDays = !(profile.days || []).length;
-    const q = `${needDays ? 'Which days suit you? ' : ''}Are there movements you want to skip, injuries to work around, or exercises you care about?`;
-    store.say('coach', [ack, q].filter(Boolean).join(' '), { asks: 'extras', chips: needDays ? ['Mon, Wed, Fri', 'No, nothing'] : ['No, nothing'] });
+    const q = 'Are there movements you want to skip, injuries to work around, or exercises you care about?';
+    store.say('coach', [ack, q].filter(Boolean).join(' '), { asks: 'extras', chips: ['No, nothing'] });
     return;
   }
   if (got.length || !st.plan) {
     store.say('coach', [ack, st.plan ? 'Here is what I would rebuild the plan on.' : 'Here is what I will build the plan on. Tell me if anything is off.'].filter(Boolean).join(' '), { kind: 'assumptions' });
     return;
   }
-  store.say('coach', 'With the built-in coach I can change your goal, days, session length, and which exercises to skip or include. For anything else, connect Claude or OpenAI in Settings, or swap an exercise during a workout.', { chips: ['Rebuild my plan'] });
+  store.say('coach', 'With the built-in coach I can change your goal, sessions a week, session length, and which exercises to skip or include. For anything else, connect Claude or OpenAI in Settings, or swap an exercise during a workout.', { chips: ['Rebuild my plan'] });
 }
 
 /** Handle one message from the user. */
@@ -281,10 +293,11 @@ export async function userSays(text) {
 
 function planLine(plan) {
   const first = plan.days[0];
-  return `Your week is ready: ${plan.days.map((d) => `${WEEKDAY_SHORT[d.weekday]} ${d.title.toLowerCase()} (${d.estMinutes} min)`).join(', ')}. ${WEEKDAY_NAMES[first.weekday]} starts with ${first.exercises[0].name.toLowerCase()}.`;
+  const n = plan.days.length;
+  return `Here is my proposal: the next ${n} session${n === 1 ? '' : 's'}, about ${Math.max(...plan.days.map((d) => d.estMinutes))} min each, with rest days between. It starts with ${first.title}: ${first.exercises[0].name.toLowerCase()} first. Tell me what to change, or just train: the plan is updated after every workout.`;
 }
 
-/** Build the week from the confirmed assumptions. */
+/** Build the plan from the confirmed assumptions. */
 export async function buildPlan() {
   if (busy) return;
   const st = store.getState();
@@ -317,6 +330,120 @@ export async function buildPlan() {
   // Old proposals point at the old plan, so they go.
   store.set({ plan, proposals: [], profile: { ...store.getState().profile, askedExtras: true } });
   store.say('coach', planLine(plan), { kind: 'plan', via });
+}
+
+// ---------------------------------------------------------------- train now
+
+/**
+ * Start a session right now. It goes to the front of the list; the rest follow
+ * in the order given, or in the order the rules space them best.
+ */
+export function startTraining(dayId, { order, rests, easePct = 0, why = '' } = {}) {
+  const st = store.getState();
+  if (!st.plan || store.activeSession(st) || !st.plan.days.some((d) => d.id === dayId)) return null;
+  const now = Date.now();
+  const rec = recommend(st.plan, st.sessions, now, { prefer: dayId });
+  const rest = (order && order[0] === dayId ? order : rec?.order || [dayId]).filter((id) => id !== dayId);
+  const plan = setRests(setOrder(st.plan, [dayId, ...rest]), rests || {});
+  const session = startSession(plan, dayId, now, { easePct, why });
+  store.putSession(session, { plan });
+  return session;
+}
+
+/**
+ * Check a schedule a model sent against the list, and put it into the plan.
+ * Unknown sessions are dropped; sessions it forgot keep their place behind.
+ * Returns null when there is nothing usable.
+ */
+function withSchedule(plan, sched, sessions) {
+  if (!sched) return null;
+  const state = queueState(plan);
+  const open = (state.queue.length ? state.queue : plan.days).map((d) => d.id);
+  const first = open.includes(sched.first_session_id) ? sched.first_session_id : null;
+  if (!first) return null;
+  const asked = (Array.isArray(sched.order) ? sched.order : []).filter((id, i, a) => open.includes(id) && id !== first && a.indexOf(id) === i);
+  const fallback = recommend(plan, sessions, Date.now(), { prefer: first })?.order.slice(1) || [];
+  const order = [first, ...asked, ...fallback.filter((id) => !asked.includes(id))];
+  const rests = {};
+  (Array.isArray(sched.rest_days) ? sched.rest_days : []).forEach((v, i) => { if (order[i] && Number.isFinite(Number(v))) rests[order[i]] = v; });
+  const ease = Number(sched.ease_percent);
+  return {
+    order, rests,
+    plan: setRests(setOrder(plan, order), rests),
+    reason: String(sched.reason || '').replace(/\s+/g, ' ').trim().slice(0, 320),
+    easePct: Number.isFinite(ease) ? Math.min(Math.max(Math.round(ease), 0), 20) : 0,
+  };
+}
+
+/** A finished workout comes off the list, gets its review, and may end the run. */
+export function afterWorkout(session) {
+  const st = store.getState();
+  if (st.plan && session.planId === st.plan.id && session.exercises.some((ex) => ex.sets.some((x) => x.status === 'done'))) {
+    store.set({ plan: completeDay(st.plan, session.dayId) });
+  }
+  const proposal = reviewSession(session.id);
+  const plan = store.getState().plan;
+  if (plan && runFinished(plan)) planNextRun();
+  return proposal;
+}
+
+let nextRunCtl = null;
+
+/**
+ * The list is done. With a model connected it plans the next run from the
+ * results so far; without one, or if it fails, the same run starts again with
+ * its exercises taking turns. The model's answer is only used if the user has
+ * not already started on the repeat.
+ */
+export function planNextRun() {
+  if (!aiReady()) return;
+  const src = aiSource();
+  const st = store.getState();
+  const planId = st.plan.id;
+  nextRunCtl?.abort();
+  const ctl = new AbortController();
+  nextRunCtl = ctl;
+  ask(nextRunRequest({ profile: st.profile, equipment: st.equipment, plan: st.plan, sessions: st.sessions, weights: st.weights }), { signal: ctl.signal })
+    .then((out) => {
+      const now = store.getState();
+      if (!out.plan || !now.plan || now.plan.id !== planId || !runFinished(now.plan) || store.activeSession(now)) return;
+      const res = normalizePlan(out.plan, now.profile, now.equipment, now.weights);
+      for (const d of res.plan.days) fitToBudget(d.exercises, res.plan.minutes);
+      // Rep targets already earned carry over to the same exercise in the new run.
+      const reps = {};
+      for (const d of now.plan.days) for (const ex of d.exercises) reps[ex.exerciseId] = ex.reps;
+      for (const d of res.plan.days) for (const ex of d.exercises) if (reps[ex.exerciseId]) ex.reps = Math.min(Math.max(reps[ex.exerciseId], ex.repLo), ex.repHi);
+      const next = refreshPlan({ ...res.plan, source: src, version: (now.plan.version || 1) + 1 });
+      next.queue = { ...next.queue, run: queueState(now.plan).run + 1 };
+      next.lastUpdate = { at: Date.now(), by: src, text: out.message || 'The next run is planned from your results.' };
+      store.set({ plan: next, proposals: now.proposals.filter((p) => p.mode === 'post_session' && p.changes.every((c) => c.status !== 'open')) });
+      store.say('coach', `${out.message || 'I planned your next run from your results.'} Open the plan to see it, or tell me what to change.`, { via: src, kind: 'plan' });
+    })
+    .catch(() => { /* the same run simply starts again */ });
+}
+
+/**
+ * Ask the connected model what makes sense today, given the app's own pick.
+ * Returns null when it has nothing usable to add. Everything it says is checked
+ * against the list: an unknown session or a made-up order is dropped.
+ */
+export async function reviewToday(pick, signal) {
+  if (!aiReady() || !pick) return null;
+  const src = aiSource();
+  const st = store.getState();
+  const out = await ask(trainNowRequest({ profile: st.profile, equipment: st.equipment, plan: st.plan, sessions: st.sessions, pick }), { signal });
+  const now = store.getState();
+  if (!now.plan) return null;
+  const sched = withSchedule(now.plan, out.schedule, now.sessions);
+  if (!sched) return null;
+  const day = now.plan.days.find((d) => d.id === sched.order[0]);
+  return {
+    dayId: day.id, title: day.title,
+    reason: sched.reason || out.message || 'This is the session that fits best today.',
+    notes: [], order: sched.order, rests: sched.rests, easePct: sched.easePct,
+    changes: fromAiChanges(out.changes, { plan: now.plan, equipment: now.equipment, mode: 'after_session' }),
+    via: src, same: day.id === pick.dayId,
+  };
 }
 
 // ---------------------------------------------------------------- applying changes
@@ -361,7 +488,11 @@ export function reviewSession(sessionId) {
         // The model's review replaces the rule-based one only while the user has not acted on it.
         const untouched = cur.changes.every((c) => c.status === 'open');
         const ai = fromAiChanges(out.changes, { plan: now.plan, equipment: now.equipment, mode: 'after_session' }).map((c) => ({ status: 'open', ...c }));
+        // The order of what is left and the rest days follow the results without asking; weights and reps stay proposals.
+        const sched = now.plan && !store.activeSession(now) && !runFinished(now.plan) ? withSchedule(now.plan, out.schedule, now.sessions) : null;
+        const plan = sched ? { ...sched.plan, lastUpdate: { at: Date.now(), by: src, text: sched.reason || 'The order of what is left was updated after your workout.' } } : now.plan;
         store.set({
+          plan,
           proposals: now.proposals.map((p) => (p.id !== proposal.id ? p : untouched
             ? { ...p, source: src, changes: ai, message: out.message, checking: false }
             : { ...p, checking: false })),

@@ -98,6 +98,24 @@ async function guarded(fn) {
   }
 }
 
+/** Open a session from the plan list by its name. */
+async function openSession(page, name) {
+  await page.getByTestId('plan-session').filter({ hasText: name }).first().click();
+  await page.getByTestId('start-day').waitFor(); // the session's own screen, not the plan's card of the same name
+  await page.locator('main h2', { hasText: name }).waitFor();
+}
+
+/** Pretend the recorded workouts happened this many days earlier, then reload. */
+async function daysPass(page, n) {
+  await page.evaluate((days) => {
+    const st = JSON.parse(localStorage.getItem('seria.state.v1'));
+    for (const w of st.sessions) for (const k of ['startedAt', 'endedAt', 'updatedAt']) if (w[k]) w[k] -= days * 864e5;
+    localStorage.setItem('seria.state.v1', JSON.stringify(st));
+  }, n);
+  await page.reload();
+  await page.getByTestId('train-now').waitFor();
+}
+
 /** Tap the main action and wait for the screen to move on. */
 async function tap(page) {
   const label = (await main(page).textContent()).trim();
@@ -185,28 +203,36 @@ await guarded(async () => {
   check('opening the coach saves nothing by itself', (await state(page)) === null || (await state(page)).chat.length === 0);
   check('coach status says Claude is not connected', (await page.getByTestId('ai-status').textContent()).includes('Built-in coach'));
   await say(page, "I want to build strength. I've trained for a year. I can come three times a week for 50 minutes.");
-  await page.getByText(/Which days suit you\?/).waitFor();
-  check('coach asks for what is missing (days, things to skip)', true);
+  await page.getByText(/movements you want to skip/).waitFor();
+  check('coach asks for what is missing (things to skip), and not for fixed days', !/Which days/.test(await page.locator('.chat').textContent()));
   await shot(page, '02-coach');
-  await page.fill('#coach-input', 'Mondays, Wednesdays and Fridays. No deadlifts please.');
+  await page.fill('#coach-input', 'No deadlifts please.');
   await page.keyboard.press('Enter');
   await page.getByTestId('assumptions').waitFor();
   const facts = await page.getByTestId('assumptions').textContent();
-  check('assumptions shown before the plan is built', /Strength/.test(facts) && /Mon, Wed, Fri/.test(facts) && /50 min/.test(facts) && /Leaving out/.test(facts), facts);
+  check('assumptions shown before the plan is built', /Strength/.test(facts) && /3 a week, on any days you like/.test(facts) && /50 min/.test(facts) && /Leaving out/.test(facts)
+    && /The next 6 sessions, with rest days between/.test(facts) && /updated after every workout/.test(facts), facts);
   check('no plan exists until the user confirms', (await state(page)).plan === null);
   await shot(page, '03-assumptions');
   await page.getByTestId('build-plan').click();
   await page.getByTestId('open-plan').click();
 
   // --- plan
-  await page.getByRole('heading', { name: 'Your week' }).waitFor();
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor();
   let st = await state(page);
-  check('plan has the three chosen days', st.plan.days.map((d) => d.weekday).join() === 'mon,wed,fri');
-  check('every day fits the 50 minute budget', st.plan.days.every((d) => d.estMinutes <= 50), st.plan.days.map((d) => d.estMinutes));
+  check('the plan is a list of sessions with rest days, not tied to weekdays', st.plan.days.map((d) => d.title).join() === 'Upper body A,Lower body A,Full body A,Upper body B,Lower body B,Full body B'
+    && st.plan.days.map((d) => d.restAfter).join('') === '112112' && st.plan.days.every((d) => !('weekday' in d)) && st.plan.queue.order.length === 6, JSON.stringify(st.plan.days.map((d) => [d.title, d.restAfter])));
+  check('the coach presents it as a proposal you can discuss', /Here is my proposal/.test(await page.evaluate(() => JSON.parse(localStorage.getItem('seria.state.v1')).chat.slice(-1)[0].text)));
+  const tl = page.getByTestId('timeline');
+  check('the plan reads as train, rest, train', (await tl.getByTestId('plan-session').count()) === 6 && (await tl.getByTestId('rest-gap').count()) === 5
+    && /Up next · today/.test(await tl.getByTestId('plan-session').first().textContent()) && /1 rest day/.test(await tl.getByTestId('rest-gap').first().textContent())
+    && /2 rest days/.test(await tl.getByTestId('rest-gap').nth(2).textContent()), await tl.textContent());
+  check('no cycles, weeks or weekdays to manage', !/cycle|Week 1|Round|Monday/i.test(await page.locator('main').textContent()) && (await page.getByTestId('train-now').textContent()).trim() === 'Train now');
+  check('every session fits the 50 minute budget', st.plan.days.every((d) => d.estMinutes <= 50), st.plan.days.map((d) => d.estMinutes));
   check('skipped lifts are left out', !JSON.stringify(st.plan).includes('deadlift'));
-  check('plan records the rules version', st.plan.rulesVersion === '1.0.0');
+  check('plan records the rules version', st.plan.rulesVersion === '1.1.0');
   check('plan shows weekly sets per muscle group against the target', /Target for your level: 10-16 sets/.test(await page.getByTestId('volume').textContent()) && /Back\s*\d+ sets/.test(await page.getByTestId('volume').textContent()));
-  check('plan list shows day, body part and time', /Monday/.test(await page.locator('button.row').first().textContent()) && /Upper body · \d+ min/.test(await page.locator('button.row').first().textContent()));
+  check('each session on the list shows what it is, when it falls and how long it takes', /Lower body A/.test(await tl.getByTestId('plan-session').nth(1).textContent()) && /\d+ min/.test(await tl.getByTestId('plan-session').nth(1).textContent()));
   await shot(page, '04-plan');
 
   // --- equipment
@@ -252,8 +278,7 @@ await guarded(async () => {
 
   // --- day preview
   await tab(page, 'Plan').click();
-  await page.getByRole('button', { name: /^Monday/ }).click();
-  await page.getByRole('heading', { name: 'Upper body' }).waitFor();
+  await openSession(page, 'Upper body A');
   const dayText = await page.locator('main').textContent();
   check('day preview: order, equipment, sets, reps, rest, how to pick the weight, time parts',
     /1\. Dumbbell bench press/.test(dayText) && /Dumbbells, Bench/.test(dayText) && /\d × \d+ reps/.test(dayText) && /rest 3:00 min/.test(dayText) && /You pick it in the first session/.test(dayText) && /warm-up 8, sets \d+, rests \d+, moving between stations \d+/.test(dayText), dayText.slice(0, 300));
@@ -372,11 +397,63 @@ await guarded(async () => {
   check('a saved set can be corrected later from history', (await state(page)).sessions[0].exercises[0].sets[2].actual.reps === 3);
   await shot(page, '15-session-detail');
 
-  // --- second session: history feeds the next plan
+  // --- the plan moves on: train on any day
   await tab(page, 'Plan').click();
-  await page.getByRole('button', { name: /^Monday/ }).click();
-  await page.getByRole('heading', { name: 'Upper body' }).waitFor();
-  check('day preview now shows the recorded weight', /kg per dumbbell/.test(await page.locator('main').textContent()));
+  await page.getByTestId('timeline').waitFor();
+  st = await state(page);
+  check('the finished session is off the list; the next one is planned after the rest day', st.plan.queue.done.join() === 'd1' && (await page.getByTestId('timeline').getByTestId('plan-session').count()) === 5
+    && /Up next · planned for/.test(await page.getByTestId('plan-session').first().textContent()) && /Lower body A/.test(await page.getByTestId('plan-session').first().textContent()));
+  await shot(page, '29-plan-after-workout');
+  await page.getByTestId('train-now').click();
+  await page.getByTestId('today-pick').waitFor();
+  let pickText = await page.getByTestId('today-pick').textContent();
+  check('"Train now" on an unplanned day shows what makes sense and why, before anything starts', /Lower body A/.test(pickText) && /2 days earlier than planned\. These muscles are rested/.test(pickText)
+    && /From the training rules/.test(pickText) && (await state(page)).activeSessionId === null, pickText);
+  check('and how the rest of the plan follows', /1 rest day, then Full body A/.test(await page.getByTestId('today-then').textContent()), await page.getByTestId('today-then').textContent());
+  await shot(page, '30-train-now');
+  await page.getByTestId('today-other').click();
+  check('any other session can be picked instead', (await page.locator('.sheet button.row').count()) === 4);
+  await page.getByRole('button', { name: 'Not today' }).click();
+
+  await daysPass(page, 2); // now it is the planned day
+  check('on the planned day the plan says "today"', /Up next · today/.test(await page.getByTestId('plan-session').first().textContent()));
+  await page.getByTestId('train-now').click();
+  await main(page).waitFor();
+  check('and "Train now" simply starts the next session', (await page.getByTestId('exercise-name').textContent()) === 'Goblet squat' && (await state(page)).sessions.slice(-1)[0].title === 'Lower body A');
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Discard workout' }).click();
+  await page.getByTestId('train-now').waitFor();
+  check('a discarded workout leaves the plan as it was', (await state(page)).plan.queue.done.join() === 'd1' && (await state(page)).sessions.length === 1);
+
+  // skip a session, and bring it back
+  await openSession(page, 'Full body A');
+  await page.getByTestId('skip-session').click();
+  await tab(page, 'Plan').click();
+  await page.getByTestId('skipped').waitFor();
+  check('a session can be skipped; it leaves the list and waits for the next run', (await page.getByTestId('timeline').getByTestId('plan-session').count()) === 4 && /Full body A/.test(await page.getByTestId('skipped').textContent()));
+  await page.getByTestId('skipped').getByRole('button').click();
+  await page.getByTestId('unskip-session').click();
+  await tab(page, 'Plan').click();
+  await page.getByTestId('timeline').waitFor();
+  check('and brought back', (await page.getByTestId('timeline').getByTestId('plan-session').count()) === 5);
+
+  await daysPass(page, 10); // twelve days since the last workout
+  await page.getByTestId('train-now').click();
+  await page.getByTestId('today-pick').waitFor();
+  pickText = await page.getByTestId('today-pick').textContent();
+  check('after a long break the plan says so and offers a lighter session', /12 days since your last workout\. Loads are 10% lighter/.test(pickText) && (await page.getByTestId('ease').getAttribute('aria-checked')) === 'true', pickText);
+  await page.getByTestId('today-other').click();
+  await page.locator('.sheet button.row').filter({ hasText: 'Upper body B' }).click();
+  await main(page).waitFor();
+  st = await state(page);
+  check('a hand-picked session starts, lighter today, and goes to the front of the plan', (await page.getByTestId('exercise-name').textContent()) === 'Dumbbell bench press' && (await page.getByTestId('target-load').textContent()).trim() === '18 kg'
+    && /10% lighter today/.test(await page.getByTestId('eased').textContent()) && st.plan.queue.order[0] === 'd4' && st.plan.days[3].exercises[0].load.value === 20, JSON.stringify(st.plan.queue));
+  await shot(page, '31-eased');
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Discard workout' }).click();
+  await page.getByTestId('train-now').waitFor();
+  await openSession(page, 'Upper body B');
+  check('session preview shows the recorded weight', /kg per dumbbell/.test(await page.locator('main').textContent()));
 
   // --- backup, erase, restore
   await page.getByRole('button', { name: 'Settings' }).click();
@@ -418,7 +495,7 @@ await guarded(async () => {
   check('request: model, structured output, effort, cached system prompt', r.body.model === 'claude-opus-5-5' && r.body.output_config.format.type === 'json_schema' && r.body.output_config.effort === 'low' && r.body.system[0].cache_control.type === 'ephemeral' && r.body.max_tokens === 4000, JSON.stringify(r.body.output_config).slice(0, 200));
   check('request: refusal fallback is switched on', r.body.fallbacks === 'default' && String(r.headers['anthropic-beta']).includes('server-side-fallback-2026-07-01') && r.path === '/v1/messages', `${r.path} ${r.headers['anthropic-beta']}`);
   check('request: no thinking or sampling parameters the model would reject', !('thinking' in r.body) && !('temperature' in r.body) && !('tool_choice' in r.body));
-  check('request: system prompt carries the rules library and its version', /Training rules library, version 1\.0\.0/.test(r.body.system[0].text));
+  check('request: system prompt carries the rules library and its version', /Training rules library, version 1\.1\.0/.test(r.body.system[0].text));
   check('the key is kept apart from the app data', !/sk-ant/.test(await page.evaluate(() => localStorage.getItem('seria.state.v1') || '')));
 
   let before = api.state.requests.length;
@@ -440,7 +517,7 @@ await guarded(async () => {
   check('the reply is marked as coming from Claude', (await page.locator('.bubble .via').first().textContent()) === 'Claude');
   await page.getByTestId('build-plan').click();
   await page.getByTestId('open-plan').click();
-  await page.getByRole('heading', { name: 'Your week' }).waitFor();
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor();
   st = await state(page);
   check('plan built by Claude, cleaned against the catalog', st.plan.source === 'claude' && st.plan.days.length === 3 && !JSON.stringify(st.plan).includes('ghost_lift') && st.plan.days.every((d) => d.estMinutes <= 50));
   check('plan screen says who built it', /Built by Claude/.test(await page.locator('main').textContent()));
@@ -489,12 +566,11 @@ await guarded(async () => {
   api.state.failLookup = false;
   await page.getByRole('button', { name: 'Done' }).click();
   await tab(page, 'Plan').click();
-  await page.getByRole('heading', { name: 'Your week' }).waitFor();
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor();
 
   // in-session: rules at once, Claude a moment later
   api.state.delayMs = 900;
-  await page.getByRole('button', { name: /^Monday/ }).click(); // a fixed day, so the run does not depend on today's date
-  await page.getByTestId('start-day').click();
+  await page.getByTestId('train-now').click(); // the first session of the plan: nothing to review, it starts
   await main(page).waitFor();
   await page.fill('#start-weight', '20'); await sleep(120); await tap(page);
   await tap(page); await tap(page);
@@ -545,9 +621,58 @@ await guarded(async () => {
   check("after the session Claude's review is shown with the app's own old value", /Weight: 20 kg → 22 kg/.test(await card.textContent()) && /Test double/.test(await card.textContent()), await card.textContent());
   await shot(page, '19-claude-review');
 
+  // the plan moves after the workout, and "Train now" on an unplanned day asks Claude
+  await page.getByRole('button', { name: 'Done' }).click();
+  await page.getByTestId('last-update').waitFor();
+  st = await state(page);
+  check('after a workout the order and rest days of what is left are updated without asking', st.plan.queue.done.join() === 'd1' && st.plan.queue.order.slice(0, 2).join() === 'd3,d2' && st.plan.days[2].restAfter === 3
+    && /Updated .* by Claude/.test(await page.getByTestId('last-update').textContent()) && /second session moves up/.test(await page.getByTestId('last-update').textContent()), JSON.stringify(st.plan.queue));
+  check('while the weight change still waits for a yes', st.plan.days[0].exercises[0].load.value === 20 && st.plan.version === 1);
+  await page.getByTestId('train-now').click();
+  await page.getByTestId('today-pick').waitFor();
+  check('off the planned day, the rule-based pick shows at once', /From the training rules/.test(await page.getByTestId('today-pick').textContent()) || /From Claude/.test(await page.getByTestId('today-pick').textContent()));
+  await page.getByTestId('today-pick').getByText('From Claude').waitFor({ timeout: 5000 });
+  const aiPick = await page.getByTestId('today-pick').textContent();
+  const tn = api.state.requests.map((x) => { try { return JSON.parse(x.body.messages[0].content); } catch { return {}; } }).find((x) => x.mode === 'train_now');
+  // The rules had already moved Lower body ahead: Full body repeats the chest and back trained minutes ago.
+  check('Claude reviews what makes sense today, with the history and the app\'s pick in hand', !!tn && tn.days_off_plan < 0 && tn.app_pick.session_id === 'd2' && /time to recover/.test(tn.app_pick.reason)
+    && tn.recent_workouts.length === 1 && tn.current_plan.list.done.join() === 'd1' && tn.hours_since_muscle_group_was_trained.Chest === 0, JSON.stringify(tn && [tn.days_off_plan, tn.app_pick, tn.current_plan.list]));
+  check("Claude's pick replaces it, with its reason", /Full body/.test(aiPick) && /Test double: -\d+ days off plan/.test(aiPick) && /5% lighter today/.test(aiPick), aiPick);
+  check('the rule-based pick stays one tap away', (await page.getByRole('button', { name: /Use the rule-based pick instead: Lower body/ }).count()) === 1);
+  await shot(page, '32-train-now-claude');
+  await page.getByTestId('today-start').click();
+  await main(page).waitFor();
+  st = await state(page);
+  check("starting accepts Claude's update: its order and rest days, minus the session it made up", st.plan.queue.order.slice(0, 2).join() === 'd3,d2' && st.plan.days[2].restAfter === 3 && st.plan.days[1].restAfter === 0
+    && st.sessions.slice(-1)[0].title === 'Full body' && st.sessions.slice(-1)[0].easePct === 5, JSON.stringify([st.plan.queue, st.plan.days.map((d) => d.restAfter)]));
+  check('a change Claude wants further on is filed as a proposal, not applied', st.proposals.some((p) => p.mode === 'coach' && p.changes[0].field === 'rest' && p.changes[0].status === 'open'));
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Discard workout' }).click();
+  await page.getByTestId('train-now').waitFor();
+
+  // the list runs out: Claude plans the next run from the results
+  for (const name of ['Lower body']) { await openSession(page, name); await page.getByTestId('skip-session').click(); await tab(page, 'Plan').click(); await page.getByTestId('timeline').waitFor(); }
+  await page.getByTestId('train-now').click();
+  await page.getByTestId('today-start').click();
+  await main(page).waitFor();
+  await runWorkout(page, { stop: async () => (await state(page)).sessions.slice(-1)[0].exercises[0].sets[0].status === 'done' });
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Finish and save' }).click();
+  await page.getByRole('heading', { name: 'Workout saved' }).waitFor();
+  await until(async () => (await state(page)).plan.days[0].title === 'Push', 6000);
+  st = await state(page);
+  const nr = api.state.requests.map((x) => { try { return JSON.parse(x.body.messages[0].content); } catch { return {}; } }).find((x) => x.mode === 'next_run');
+  check('when the last session is done, Claude is asked for the next run with the results so far', !!nr && Object.keys(nr.results_by_exercise).length > 0 && nr.run_just_finished.list.still_to_do_in_order.length === 0);
+  check('the next run replaces the list and the plan carries on', st.plan.days.map((d) => d.title).join() === 'Push,Pull,Legs' && st.plan.queue.run === 2 && st.plan.queue.done.length === 0 && st.plan.source === 'claude'
+    && /Next run: pressing and rowing stay/.test(st.chat.slice(-1)[0].text), JSON.stringify([st.plan.days.map((d) => d.title), st.plan.queue]));
+  await tab(page, 'Plan').click();
+  await page.getByTestId('timeline').waitFor();
+  check('and is on the plan screen, ready to browse', /Push/.test(await page.getByTestId('plan-session').first().textContent()) && /Updated .* by Claude/.test(await page.getByTestId('last-update').textContent()));
+  await shot(page, '33-next-run');
+
   // chat change request -> proposal in the chat
   await tab(page, 'Coach').click();
-  await say(page, 'Can Monday be shorter?');
+  await say(page, 'Can the first session be shorter?');
   await page.getByTestId('change').first().waitFor();
   check('asking the coach for a change gives a proposal to apply or keep', /Sets: 3 sets → 2 sets/.test(await page.getByTestId('change').first().textContent()));
   await page.getByTestId('change').first().getByRole('button', { name: 'Apply' }).click();
@@ -604,7 +729,7 @@ await guarded(async () => {
     && /from the model's memory, not checked/.test(await page.getByTestId('gym-machines').textContent()) && /cannot search the web/.test(await page.getByTestId('gym-machines').textContent()));
   await page.getByRole('button', { name: 'Done' }).click();
   await tab(page, 'Plan').click();
-  await page.getByTestId('start-next').click();
+  await page.getByTestId('train-now').click();
   await page.fill('#start-weight', '22'); await sleep(120); await tap(page);
   await tap(page); await tap(page); await tap(page);
   await page.waitForFunction(() => Object.keys(JSON.parse(localStorage.getItem('__mockdb') || '{}')).some((k) => k.includes('/sessions/')), null, { timeout: 8000 });
@@ -675,8 +800,29 @@ await guarded(async () => {
   await shot(page, '24b-assumptions-long');
   await page.getByTestId('build-plan').click();
   await page.getByTestId('open-plan').click();
-  check('offline: the app starts and builds a plan with no network', (await state(page)).plan.days.length === 2);
+  check('offline: the app starts and builds a plan with no network', (await state(page)).plan.days.length === 4 && (await state(page)).plan.perWeek === 2);
   await shot(page, '24-offline');
+
+  // A plan saved by the earlier version (one week, tied to weekdays) opens in the new shape with nothing lost.
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('seria.state.v1'));
+    const p = st.plan;
+    p.days = p.days.slice(0, 2);
+    p.days.forEach((d, i) => { d.weekday = ['mon', 'thu'][i]; delete d.week; delete d.slot; delete d.restAfter; });
+    delete p.queue; delete p.perWeek; delete p.cycleWeeks;
+    localStorage.setItem('seria.state.v1', JSON.stringify(st));
+  });
+  await page.reload();
+  await page.getByTestId('timeline').waitFor({ timeout: 8000 });
+  const old = (await state(page)).plan;
+  check('a plan saved by the earlier version is carried over: same sessions, now a list with rest days', (await page.getByTestId('plan-session').count()) === 2 && /2 rest days/.test(await page.getByTestId('rest-gap').first().textContent())
+    && (await page.getByTestId('train-now').textContent()).trim() === 'Train now' && old.days.length === 2 && old.days.every((d) => d.exercises.length >= 3));
+  await page.getByTestId('train-now').click();
+  await main(page).waitFor();
+  const up = (await state(page)).plan;
+  check('and it trains straight away', up.perWeek === 2 && up.days.map((d) => d.restAfter).join('') === '23' && up.queue.order.join() === 'd1,d2' && !('weekday' in up.days[0]), JSON.stringify(up.queue));
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Discard workout' }).click();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check('no sideways scroll at phone width', overflow <= 0, overflow);
   check('no script errors in part D', errors.filter((e) => !/ERR_INTERNET_DISCONNECTED/.test(e)).length === 0, errors.join(' | '));
@@ -697,7 +843,7 @@ await guarded(async () => {
   await page.getByTestId('assumptions').waitFor();
   await page.getByTestId('build-plan').click();
   await page.getByTestId('open-plan').click();
-  await page.getByRole('heading', { name: 'Your week' }).waitFor();
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor();
   check('the single file runs the whole app with Claude and cloud save from the viewer', (await state(page)).plan.source === 'claude'
     && await until(async () => !!(await page.evaluate(() => JSON.parse(localStorage.getItem('__mockdb') || '{}')['data/users/viewer-1/main']?.plan)), 6000));
   check('no script errors in part E', errors.length === 0, errors.join(' | '));
@@ -723,7 +869,7 @@ await guarded(async () => {
   const r = oai.state.requests[0];
   check('request: key as a bearer token, sent by the official SDK to the Responses API', r.headers.authorization === 'Bearer sk-test-openai-key' && r.path === '/v1/responses' && /^7\./.test(r.headers['x-stainless-package-version'] || ''), `${r.path} ${JSON.stringify(r.headers).slice(0, 300)}`);
   check('request: model, strict JSON schema, low effort for a quick call, nothing stored', r.body.model === 'gpt-6.1-sol' && r.body.text.format.type === 'json_schema' && r.body.text.format.strict === true && r.body.reasoning.effort === 'low' && r.body.store === false && r.body.max_output_tokens === 4000, JSON.stringify(r.body).slice(0, 200));
-  check('request: the same rules library goes to OpenAI as to Claude', /Training rules library, version 1\.0\.0/.test(r.body.instructions) && JSON.parse(r.body.input).mode === 'interview');
+  check('request: the same rules library goes to OpenAI as to Claude', /Training rules library, version 1\.1\.0/.test(r.body.instructions) && JSON.parse(r.body.input).mode === 'interview');
   check('no Anthropic request was made', api.state.requests.length === reqsBeforeF);
 
   // name the maker first, so the plan and the workout can use the machine
@@ -744,12 +890,11 @@ await guarded(async () => {
   check('the reply is marked as coming from OpenAI', (await page.locator('.bubble .via').first().textContent()) === 'OpenAI');
   await page.getByTestId('build-plan').click();
   await page.getByTestId('open-plan').click();
-  await page.getByRole('heading', { name: 'Your week' }).waitFor();
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor();
   let st = await state(page);
   const planReq = oai.state.requests.map((x) => { try { return JSON.parse(x.body.input); } catch { return {}; } }).find((x) => x.mode === 'new_plan');
   check('the plan request tells the model about the exact machine on the exercise', planReq.available_exercises.find((x) => x.id === 'leg_press').machine.model === 'Selection 900 Leg Press');
-  await page.getByRole('button', { name: /^Wednesday/ }).click();
-  await page.getByRole('heading', { name: 'Lower body' }).waitFor();
+  await openSession(page, 'Lower body');
   check('the day preview names the machine and what it isolates', /Technogym Selection 900 Leg Press · isolates quadriceps first, then glutes/.test(await page.getByTestId('day-machine').first().textContent()), await page.getByTestId('day-machine').first().textContent());
   await page.getByTestId('start-day').click();
   await main(page).waitFor();
@@ -759,7 +904,7 @@ await guarded(async () => {
   await shot(page, '27-workout-machine');
   await page.getByRole('button', { name: 'End workout' }).click();
   await page.getByRole('button', { name: 'Discard workout' }).click();
-  await page.getByRole('heading', { name: 'Your week' }).waitFor();
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor();
   check('plan built by OpenAI, cleaned against the catalog like any other', st.plan.source === 'openai' && st.plan.days.length === 3 && !JSON.stringify(st.plan).includes('ghost_lift') && /Built by OpenAI/.test(await page.locator('main').textContent()));
 
   await tab(page, 'Equipment').click();
@@ -772,7 +917,8 @@ await guarded(async () => {
 
   oai.state.delayMs = 700;
   await tab(page, 'Plan').click();
-  await page.getByRole('button', { name: /^Monday/ }).click();
+  await page.getByTestId('timeline').waitFor();
+  await openSession(page, 'Upper body'); // picked by hand, out of turn
   await page.getByTestId('start-day').click();
   await main(page).waitFor();
   await page.fill('#start-weight', '20'); await sleep(120); await tap(page);

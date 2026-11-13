@@ -1,4 +1,4 @@
-# Seria training rules, version 1.0.0
+# Seria training rules, version 1.1.0
 
 Last updated 2026-11-13. Generated from `js/domain/rules.js` with `npm run rules-doc`. Do not edit by hand: change the rules file, bump `RULES_VERSION`, and run the script again.
 
@@ -45,6 +45,35 @@ Seria is not medical advice. Stop if something hurts and see a professional.
 
 - Source: App convention
 - In the code: `MAX_DAYS`
+
+## A plan that moves
+
+**RUN-1.** The plan is a running list, not a calendar: train this, rest so many days, train that. It is laid out a couple of weeks ahead. The main lifts come back every week so they can progress, while secondary and accessory exercises take turns, so what did not fit one week is trained the next.
+
+- Source: ACSM 2009; App convention
+- In the code: `RUN`, `restPattern()`
+
+**RUN-2.** The list is updated after every workout from what was recorded. When the last session on it is done, the next run is planned: by the connected model from the results so far, or by repeating the run with its exercises taking turns.
+
+- Source: App convention
+- In the code: `schedule.js`, `coach.js`
+
+## Training on any day
+
+**REC-1.** Leave about 48 hours before training the same muscle group hard again. Any session can be done on any day: when the next one on the list would repeat a muscle group trained in the last 48 hours, a session that lets it recover goes first.
+
+- Source: ACSM 2011
+- In the code: `SCHEDULE.recoverHours`
+
+**REC-2.** Training on the planned day just starts the next session. On any other day, or when a session is picked by hand or skipped, the rest of the list is put in the order that spaces the muscle groups best, and the user sees it before starting. A skipped session comes back in the next run.
+
+- Source: App convention
+- In the code: `recommend()`
+
+**REC-3.** After 10 or more days without training, the first session back uses about 10% less load. The plan keeps its numbers.
+
+- Source: App convention
+- In the code: `SCHEDULE.breakDays`, `SCHEDULE.easePct`
 
 ## Volume
 
@@ -227,6 +256,7 @@ Slots are filled in this order. When time is short they are dropped from the end
 - **Grgic 2018 (rest).** Grgic J, Schoenfeld BJ, Skrepnik M, Davies TB, Mikulic P. Effects of rest interval duration in resistance training on measures of muscular strength: a systematic review. Sports Med. 2018;48(1):137-151. <https://doi.org/10.1007/s40279-017-0788-x>
 - **Zourdos 2016.** Zourdos MC, Klemp A, Dolan C, et al. Novel resistance training-specific rating of perceived exertion scale measuring repetitions in reserve. J Strength Cond Res. 2016;30(1):267-275. <https://doi.org/10.1519/JSC.0000000000001049>
 - **Helms 2016.** Helms ER, Cronin J, Storey A, Zourdos MC. Application of the repetitions in reserve-based rating of perceived exertion scale for resistance training. Strength Cond J. 2016;38(4):42-49. <https://doi.org/10.1519/SSC.0000000000000218>
+- **ACSM 2011.** Garber CE, Blissmer B, Deschenes MR, et al. Quantity and quality of exercise for developing and maintaining cardiorespiratory, musculoskeletal, and neuromotor fitness in apparently healthy adults: guidance for prescribing exercise. Med Sci Sports Exerc. 2011;43(7):1334-1359. <https://doi.org/10.1249/MSS.0b013e318213fefb>
 - **Simão 2012.** Simão R, de Salles BF, Figueiredo T, Dias I, Willardson JM. Exercise order in resistance training. Sports Med. 2012;42(3):251-265. <https://doi.org/10.2165/11597240-000000000-00000>
 - **App convention.** Practical convention chosen for this app. Not taken from a study; change it if it does not suit you.
 

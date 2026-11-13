@@ -8,7 +8,7 @@
 // Bump RULES_VERSION when a number or a rule changes. Plans and sessions store
 // the version they were made with.
 
-export const RULES_VERSION = '1.0.0';
+export const RULES_VERSION = '1.1.0';
 export const RULES_UPDATED = '2026-11-13';
 
 export const SOURCES = {
@@ -61,6 +61,11 @@ export const SOURCES = {
     short: 'Helms 2016',
     cite: 'Helms ER, Cronin J, Storey A, Zourdos MC. Application of the repetitions in reserve-based rating of perceived exertion scale for resistance training. Strength Cond J. 2016;38(4):42-49.',
     url: 'https://doi.org/10.1519/SSC.0000000000000218',
+  },
+  garber2011: {
+    short: 'ACSM 2011',
+    cite: 'Garber CE, Blissmer B, Deschenes MR, et al. Quantity and quality of exercise for developing and maintaining cardiorespiratory, musculoskeletal, and neuromotor fitness in apparently healthy adults: guidance for prescribing exercise. Med Sci Sports Exerc. 2011;43(7):1334-1359.',
+    url: 'https://doi.org/10.1249/MSS.0b013e318213fefb',
   },
   simao2012: {
     short: 'Simão 2012',
@@ -143,6 +148,21 @@ export const SPLITS = {
   6: ['push', 'pull', 'legs', 'push', 'pull', 'legs'],
 };
 export const MAX_DAYS = 6; // keep at least one full rest day a week
+
+// The plan is a running list of sessions with rests between them, laid out this
+// many weeks ahead. More weeks ahead fit in more exercises: the main lifts come
+// back every week, the rest take turns.
+export const RUN = { minWeeks: 1, maxWeeks: 4 };
+export const CYCLE = RUN; // older name, still used by saved data
+export const defaultRunWeeks = (perWeek) => (perWeek >= 5 ? 1 : 2);
+export const defaultCycleWeeks = defaultRunWeeks;
+
+// Deciding what to train today when the user turns up on any day.
+export const SCHEDULE = {
+  recoverHours: 48, // before the same muscle group is trained hard again
+  breakDays: 10, // after this long away, ease back in
+  easePct: 10,
+};
 
 export const DAY_TITLES = {
   full: 'Full body', fullB: 'Full body', upper: 'Upper body', lower: 'Lower body',
@@ -241,6 +261,31 @@ export const RULES = [
     id: 'FRQ-2', area: 'Weekly layout',
     text: 'Plan at most 6 training days so one full rest day stays in the week.',
     sources: ['practice'], uses: ['MAX_DAYS'],
+  },
+  {
+    id: 'RUN-1', area: 'A plan that moves',
+    text: 'The plan is a running list, not a calendar: train this, rest so many days, train that. It is laid out a couple of weeks ahead. The main lifts come back every week so they can progress, while secondary and accessory exercises take turns, so what did not fit one week is trained the next.',
+    sources: ['acsm2009', 'practice'], uses: ['RUN', 'restPattern()'],
+  },
+  {
+    id: 'RUN-2', area: 'A plan that moves',
+    text: 'The list is updated after every workout from what was recorded. When the last session on it is done, the next run is planned: by the connected model from the results so far, or by repeating the run with its exercises taking turns.',
+    sources: ['practice'], uses: ['schedule.js', 'coach.js'],
+  },
+  {
+    id: 'REC-1', area: 'Training on any day',
+    text: 'Leave about 48 hours before training the same muscle group hard again. Any session can be done on any day: when the next one on the list would repeat a muscle group trained in the last 48 hours, a session that lets it recover goes first.',
+    sources: ['garber2011'], uses: ['SCHEDULE.recoverHours'],
+  },
+  {
+    id: 'REC-2', area: 'Training on any day',
+    text: 'Training on the planned day just starts the next session. On any other day, or when a session is picked by hand or skipped, the rest of the list is put in the order that spaces the muscle groups best, and the user sees it before starting. A skipped session comes back in the next run.',
+    sources: ['practice'], uses: ['recommend()'],
+  },
+  {
+    id: 'REC-3', area: 'Training on any day',
+    text: 'After 10 or more days without training, the first session back uses about 10% less load. The plan keeps its numbers.',
+    sources: ['practice'], uses: ['SCHEDULE.breakDays', 'SCHEDULE.easePct'],
   },
   {
     id: 'VOL-1', area: 'Volume',
@@ -358,7 +403,8 @@ export function rulesAsText() {
     const parts = Object.entries(tiers).map(([t, p]) => `${t} ${p.sets} x ${p.repLo}-${p.repHi}, rest ${p.rest}s`);
     lines.push(`- ${goal}: ${parts.join(' | ')}`);
   }
-  lines.push(`Weekly split by days per week: ${Object.entries(SPLITS).map(([d, s]) => `${d}: ${s.map((k) => DAY_TITLES[k]).join(', ')}`).join(' | ')}.`);
+  lines.push(`Sessions in one week, by sessions per week: ${Object.entries(SPLITS).map(([d, s]) => `${d}: ${s.map((k) => DAY_TITLES[k]).join(', ')}`).join(' | ')}.`);
+  lines.push(`Planned ahead: ${RUN.minWeeks}-${RUN.maxWeeks} weeks of sessions. Recovery: ${SCHEDULE.recoverHours} h per muscle group. Coming back after ${SCHEDULE.breakDays}+ days: ${SCHEDULE.easePct}% lighter.`);
   lines.push(`Time model: warm-up ${(TIME.warmupGeneralSec + TIME.warmupRampSec) / 60} min, each set ${TIME.setBaseSec}s + ${TIME.secPerRep}s per rep, ${TIME.transitionSec}s between exercises.`);
   lines.push(`Default load steps (kg): ${Object.entries(PROGRESSION.defaultStep).map(([k, v]) => `${k} ${v}`).join(', ')}.`);
   return lines.join('\n');

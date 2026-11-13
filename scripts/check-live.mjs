@@ -79,12 +79,13 @@ try {
   await page.getByRole('button', { name: 'No, nothing' }).click();
   await page.getByTestId('build-plan').click();
   await page.getByTestId('open-plan').click();
-  await page.getByRole('heading', { name: 'Your week' }).waitFor({ timeout: 8000 });
-  const days = await page.evaluate(() => JSON.parse(localStorage.getItem('seria.state.v1')).plan.days.map((d) => d.weekday).join());
-  check('with the network off it still starts and builds a plan', days === 'mon,wed,fri', days);
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor({ timeout: 8000 });
+  const made = await page.evaluate(() => { const p = JSON.parse(localStorage.getItem('seria.state.v1')).plan; return `${p.perWeek}/${p.days.length}/${p.days.map((d) => d.restAfter).join('')}`; });
+  check('with the network off it still starts and builds a plan: sessions with rest days, no fixed weekdays', made === '3/6/112112', made);
+  check('the plan reads as a list with one "Train now" button', (await page.getByTestId('rest-gap').count()) === 5 && (await page.getByTestId('train-now').textContent()).trim() === 'Train now');
 
   // One full set, still offline: starting weight, start, finish, save, rest timer.
-  await page.getByTestId('start-next').click();
+  await page.getByTestId('train-now').click();
   const main = page.getByTestId('main-action');
   await main.waitFor();
   await page.fill('#start-weight', '20'); await sleep(150);

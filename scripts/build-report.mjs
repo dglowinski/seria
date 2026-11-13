@@ -37,8 +37,11 @@ const PART_TEXT = {
 const shots = [
   ['02-coach', 'Coach', 'You type or speak. The coach asks only for what is missing.'],
   ['03-assumptions', 'Assumptions', 'Before any plan is built you see what it will be based on.'],
-  ['04-plan', 'Plan', 'The week: day, body part, estimated time.'],
-  ['06-day', 'Day preview', 'Order, equipment, sets, reps, rest, and how the time adds up.'],
+  ['04-plan', 'Plan', 'A running list: train this, rest, train that. No fixed weekdays.'],
+  ['30-train-now', 'Train now', 'On a day the plan did not have, you see what makes sense today and how the rest follows.'],
+  ['32-train-now-claude', 'Train now, reviewed', 'With a model connected it reviews the pick against your history.'],
+  ['33-next-run', 'The next run', 'When the list is done, the coach plans what comes next from your results.'],
+  ['06-day', 'Session preview', 'Order, equipment, sets, reps, rest, and how the time adds up.'],
   ['05-equipment', 'Equipment', 'Machines you add. Free weights, bench and bar are on by default.'],
   ['05-gym-text', 'Describe your gym', 'Name the machines or paste any text. It is read and saved, and you see what was added.'],
   ['17c-machines-identified', 'Machines by maker', 'Name the maker and the exact machines are identified. Each says whether it was found on the web or comes from memory.'],
@@ -63,7 +66,7 @@ const spec = [
   ['The coach asks for missing details and shows its assumptions before building the plan.', 'done', 'Works with Claude and without. No plan is created until you tap "Build my plan" under the assumptions.'],
   ['Preferences and movement limitations.', 'done', 'Reads things like "no deadlifts", "I love pull-ups", "my knee hurts". Limitations are handled on the careful side and the app says what it left out.'],
   ['You enter machines. Free weights, benches and the pull-up bar are available by default.', 'done', `${EQUIPMENT.filter((x) => x.kind === 'machine').length} machines to pick from, plus your own machine with what it trains. Or describe the gym in your own words, typed, pasted or spoken: it is read (by the connected model, or by a built-in reader) and the list is saved in one go. Name the maker ("these are from Technogym: ...") and the exact machines are identified, with how each works and what it isolates saved for the coach. Each item has an Available switch.`],
-  ['The plan shows days, body parts, time, exercise order, equipment, sets, reps, weight or how to choose it, and rests. Day time includes warm-up, rests and moving between stations.', 'done', `Plan list and day preview. ${EXERCISES.length} exercises in the catalog. The day preview splits the time into warm-up, sets, rests and moving.`],
+  ['The plan shows days, body parts, time, exercise order, equipment, sets, reps, weight or how to choose it, and rests. Day time includes warm-up, rests and moving between stations.', 'done', `Plan list and session preview. ${EXERCISES.length} exercises in the catalog. The preview splits the time into warm-up, sets, rests and moving. Changed at your request: the plan is no longer a fixed week but a running list of sessions with rest days between, on any days you like.`],
   ['"Start set" shows the active set. "Finish set" opens the result, starting from the planned value. Correct reps by 1 or 2 or type them. Change weight, add reps in reserve.', 'done', 'As described. Reps in reserve is optional.'],
   ['Saving starts the countdown. After the last set the screen shows the next exercise.', 'done', 'Saving takes effect at once and never waits for Claude.'],
   ['For a busy machine, pick a substitute from available equipment.', 'done', '"Machine busy? Swap" lists exercises with the same movement on equipment you marked available. The swap is for that workout only.'],
@@ -76,6 +79,15 @@ const spec = [
   ['The AI prompt: modes for a new plan, during a session and after a session; asks when information is missing; uses only recorded data; returns questions, a plan or a list of changes with reasons; returns an empty list when nothing is justified.', 'done', 'One prompt and one answer format for all modes, plus an interview mode for the chat. The app fills in the "previous value" itself and drops anything that does not match its records.'],
 ];
 
+const changes = [
+  ['A plan that moves, not a weekly calendar.', 'The plan is a running list: train this, rest so many days, train that. The coach proposes it, you can discuss it, and it is updated after every workout. When the list runs out the next run is planned, by the connected model from your results or by repeating the run with its exercises taking turns.'],
+  ['One "Train now" button.', 'On the planned day it starts the next session. On any other day it shows what makes sense today, why, and how the rest of the plan follows; the model reviews the pick when connected. You can pick or skip any session.'],
+  ['Describe your gym in your own words.', 'Type, paste or dictate what the gym has; it is read and saved in one go.'],
+  ['Machines by maker.', 'Name the maker and the exact machines are identified, with how each works and what it isolates saved for the coach, and a label saying whether that was found on the web or comes from memory.'],
+  ['OpenAI as well as Claude.', 'Choose either in Settings on the stand-alone app. Same prompt, rules and checks.'],
+  ['Clearer limit messages.', 'When a provider turns a request down, the app shows the provider\'s own words and what to check.'],
+];
+
 const bugs = [
   ['Finishing a workout opened the plan, not the summary.', 'Two redirects ran at once and the wrong one won. Now only one place decides.'],
   ['The rest timer could show one second too many right after saving.', 'The screen used a slightly old clock reading. It now reads the time fresh.'],
@@ -86,6 +98,7 @@ const bugs = [
 
 const limits = [
   ['No real call to Claude or OpenAI was made.', 'There is no API key for either on this machine. Both paths were run with the official SDKs against local stand-ins, and each request was checked field by field. The first real call could still be turned down by an API for a reason a stand-in cannot show.'],
+  ['The model\'s planning has only met stand-ins.', 'Reviewing what to train today, reordering the plan after a workout and planning the next run were all tested with canned answers. The app checks whatever a model sends against its own list, but how sensible a real model\'s choices are is untested.'],
   ['The web lookup of machines has only met stand-ins.', 'The search tools, the paused-search case and the source check all ran against fake search results. With a real key the lookup also depends on web search being allowed for that key, and on what the search finds. How good the descriptions of real machines are is untested.'],
   ['The live claude.ai page was not opened by me.', 'It is published, and I wrote, read back and deleted a test record in its cloud storage. But I could not open it in a signed-in browser from here, so the real permission prompts for Claude and for dictation are untested. The page logic was tested against a stand-in written from the runtime\'s published type definitions.'],
   ['No real Android phone.', 'Everything, the live site included, ran in desktop Chrome with a Pixel 7 screen profile. Chrome reports nothing that blocks installing, but the actual "Add to Home screen" tap, vibration, the screen staying on, and Chrome\'s own speech recognition can only be tried on a phone.'],
@@ -158,7 +171,7 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
   <header style="display:flex;flex-direction:column;gap:14px">
     <p class="eyebrow">Build report · ${new Date(smoke.ranAt).toISOString().slice(0, 10)}</p>
     <h1>Seria<i>.</i> is built and tested</h1>
-    <p class="lead">The design file is now a working app in English. It builds a training week from a conversation, guides each set with a rest timer, keeps a history, and proposes changes. It runs in the phone's browser and goes on the home screen. No developer mode, no app to install by hand. Both ways of running it are live.</p>
+    <p class="lead">The design file is now a working app in English. It builds a training plan from a conversation, guides each set with a rest timer, keeps a history, and keeps the plan up to date as you train. It runs in the phone's browser and goes on the home screen. No developer mode, no app to install by hand. Both ways of running it are live.</p>
     <div class="nums">
       <div><strong>${smoke.passed} / ${smoke.total}</strong><span>end-to-end checks passed</span></div>
       <div><strong>${unit.pass} / ${unit.pass + unit.fail}</strong><span>unit tests passed</span></div>
@@ -213,6 +226,12 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
   </section>
 
   <section>
+    <p class="eyebrow">Changed since the first version</p>
+    <h2>What you asked for along the way</h2>
+    <div>${changes.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
+  </section>
+
+  <section>
     <p class="eyebrow">AI coach</p>
     <h2>How Claude and OpenAI are hooked up</h2>
     <p>A model reads what you tell the coach, builds the week, and reviews results during and after a workout. Claude and OpenAI get the same prompt, the same rules and the same answer format, and their answers go through the same checks.</p>
@@ -263,6 +282,8 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
     <p class="eyebrow">Choices</p>
     <h2>Decisions I made where the design was silent</h2>
     <ul style="padding-left:18px;display:flex;flex-direction:column;gap:6px">
+      <li><b>The plan moves on its own; your numbers do not.</b> The order of sessions, the rest days and the next run are updated without asking. Changes to weights, reps or exercises still wait for "Apply" or "Keep plan", as in your original design. Say if you want those applied automatically too.</li>
+      <li><b>"Train now" only stops to ask on an unplanned day.</b> On the day the next session is due it starts at once. Earlier or later, it shows what makes sense and why first.</li>
       <li><b>It works without a model.</b> A built-in coach asks the same questions and the plan comes from the rules. Claude or OpenAI makes it better; neither is required.</li>
       <li><b>Machine facts must show where they come from.</b> Every identified machine is labelled: found on a named site, from the model's memory, or maker noted only. A web address the search did not return is thrown away.</li>
       <li><b>OpenAI default is <code>gpt-6.1-sol</code>,</b> the near-top model at about a fifth of the top price. OpenAI's own "start here" pick is GPT-6 Astra; it is one tap away in Settings.</li>

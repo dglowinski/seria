@@ -13,16 +13,25 @@ import { fmtLoadShort } from './planner.js';
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const touch = (s, now) => { s.updatedAt = now; return s; };
 
-export function startSession(plan, dayId, now = Date.now()) {
+/**
+ * @param {object} plan
+ * @param {string} dayId the session of the cycle to do
+ * @param {number} [now]
+ * @param {{easePct?: number, why?: string}} [opts] easePct: lighter loads today, after a long break
+ */
+export function startSession(plan, dayId, now = Date.now(), opts = {}) {
   const day = plan.days.find((d) => d.id === dayId);
-  if (!day) throw new Error('That training day is not in the plan.');
+  if (!day) throw new Error('That session is not in the plan.');
+  const ease = Math.min(Math.max(Number(opts.easePct) || 0, 0), 30);
   return {
     id: `s-${now.toString(36)}`,
-    dayId, title: day.title, weekday: day.weekday,
+    dayId, title: day.title, run: plan.queue?.run || 1,
+    restAfter: Number.isFinite(day.restAfter) ? day.restAfter : null, // the rest planned after this one
+    easePct: ease, why: opts.why || '',
     planId: plan.id, planVersion: plan.version, rulesVersion: plan.rulesVersion,
     budgetMin: plan.minutes, estMinutes: day.estMinutes,
     startedAt: now, endedAt: null, updatedAt: now, status: 'active',
-    exercises: day.exercises.map(sessionExercise),
+    exercises: day.exercises.map((ex) => sessionExercise(ex, ease)),
     cursor: { ex: 0, set: 0 },
     phase: 'ready',
     setStartedAt: null,
@@ -32,20 +41,24 @@ export function startSession(plan, dayId, now = Date.now()) {
   };
 }
 
-function sessionExercise(ex) {
+function sessionExercise(ex, ease = 0) {
   const load = ex.load ? ex.load.value : null;
+  const step = ex.load?.step ?? PROGRESSION.defaultStep[ex.loadType] ?? 2.5;
+  // Easing back in: the plan keeps its numbers, today's targets are lighter, rounded to what can be loaded.
+  const eased = load != null && ease > 0 && ex.loadType !== 'bodyweight'
+    ? Math.max(0, Math.round((Math.round((load * (1 - ease / 100)) / step) * step) * 100) / 100) : load;
   return {
     key: ex.key, exerciseId: ex.exerciseId, name: ex.name, pattern: ex.pattern, tier: ex.tier,
     equipment: ex.equipment, zone: ex.zone, loadType: ex.loadType,
     repLo: ex.repLo, repHi: ex.repHi, restSec: ex.restSec,
-    step: ex.load?.step ?? PROGRESSION.defaultStep[ex.loadType] ?? 2.5,
+    step,
     swappedFrom: null,
     sets: Array.from({ length: ex.sets }, () => ({
       planned: { reps: ex.reps, load },
-      target: { reps: ex.reps, load },
+      target: { reps: ex.reps, load: eased },
       actual: null,
       status: 'pending',
-      note: null,
+      note: eased !== load ? `Eased by ${ease}% after a break` : null,
     })),
   };
 }

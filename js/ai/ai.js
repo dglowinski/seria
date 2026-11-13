@@ -64,6 +64,7 @@ export function tidy(out) {
     plan: o.plan && typeof o.plan === 'object' && Array.isArray(o.plan.days) ? o.plan : null,
     changes: Array.isArray(o.changes) ? o.changes.filter((c) => c && typeof c === 'object') : [],
     equipment: o.equipment && typeof o.equipment === 'object' ? o.equipment : null,
+    schedule: o.schedule && typeof o.schedule === 'object' && typeof o.schedule.first_session_id === 'string' ? o.schedule : null,
   };
 }
 

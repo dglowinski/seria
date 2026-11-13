@@ -4,17 +4,21 @@
 
 import { rulesAsText, RULES_VERSION, GOALS, levelFor } from '../domain/rules.js';
 import { allExercises, canDo, equipmentList, isAvailable, isListed, PATTERNS, EQUIPMENT, LOADING, machineDetail, machineForExercise } from '../domain/catalog.js';
-import { WEEKDAYS, trainingDays, clampMinutes } from '../domain/planner.js';
+import { WEEKDAYS, clampMinutes, sessionsPerWeek, cycleWeeks } from '../domain/planner.js';
+import { queueState, recommend, timeline, doneGroups, daysBetween } from '../domain/schedule.js';
+import { GROUP_OF } from '../domain/catalog.js';
 
-export const SYSTEM_PROMPT = `You are the training coach inside Seria, a gym training app. You build and update one person's weekly resistance-training plan. Each request names a mode: "interview", "new_plan", "in_session", "after_session" or "equipment".
+export const SYSTEM_PROMPT = `You are the training coach inside Seria, a gym training app. You build and update one person's resistance-training plan. The plan is a running list, not a calendar: train this, rest so many days, train that. The user works through it on whatever days they can, and it is updated after every workout from what was recorded. Each request names a mode: "interview", "new_plan", "train_now", "in_session", "after_session", "next_run" or "equipment".
 
 Each request gives you what the app has on record: goal and experience, training days and time budget, preferences and limitations, the current equipment list, the current plan, the results of the current session, earlier sessions, and the version of the training rules library. Follow the rules library below; the app's own generator uses the same one. Use only the recorded data you are given. Never assume a result that is not there.
 
 Modes
-- interview: read the conversation and the user's latest message. Return the full profile as you now understand it, keeping earlier values unless the user changed them. If something a plan needs is missing (goal, experience, days per week or named weekdays, minutes per session), ask one or two specific questions in "questions" and set ready_for_plan to false. Ask once about movements to skip, limitations and favourite exercises if the user has not said. When nothing is missing, set ready_for_plan to true; the app then shows the assumptions and the user confirms. If a plan exists and the user asks to change it, return the change in "changes" instead of a new plan.
-- new_plan: build the week in "plan". Use only exercise ids from available_exercises. Respect the weekdays and the minutes per session, using the time model in the rules. Order each day as the rules say. If a plan truly cannot be built because information is missing, return questions and set plan to null.
+- interview: read the conversation and the user's latest message. Return the full profile as you now understand it, keeping earlier values unless the user changed them. If something a plan needs is missing (goal, experience, sessions per week, minutes per session), ask one or two specific questions in "questions" and set ready_for_plan to false. Ask once about movements to skip, limitations and favourite exercises if the user has not said. When nothing is missing, set ready_for_plan to true; the app then shows the assumptions and the user confirms. If a plan exists and the user asks to change it, return the change in "changes" instead of a new plan.
+- new_plan: build the plan in "plan": the sessions to do, in order, sessions_per_week of them for each of weeks_ahead weeks, each with its week number and rest_days_after, the days of rest before the next one (rests in one week add up to 7 minus the sessions that week). Use only exercise ids from available_exercises. Keep each session within the minutes per session, using the time model in the rules. Give the matching session of every week the same main lifts so they can progress, and let the secondary and accessory exercises take turns, so what did not fit one week is trained the next. Order each session as the rules say. Titles name the body parts, with no weekday and no letter. If a plan truly cannot be built because information is missing, return questions and set plan to null.
+- next_run: the user has finished the sessions on the list. Plan the next run in "plan", in the same form as new_plan, from what the records show: keep what is progressing, change what has stalled or was skipped again and again, and keep the main lifts unless the results say otherwise. Say in "message", in one or two sentences, what changes and why.
+- train_now: the user wants to train today, and today is not the day the plan had for the next session. You get the list with what is done, skipped and still to do, the recent workouts with dates and sets done per muscle group, the hours since each muscle group was trained, how many days early or late today is, and the pick the app's own rules made. Decide what makes sense today and fill "schedule": first_session_id is the session to do now, from those still to do (stay with the app's pick unless the records give a reason not to); reason is one or two short sentences for the user; order lists the other sessions still to do in the order they should now follow; rest_days gives the days of rest after each of them, starting with today's, in that same order; ease_percent is how much lighter today's loads should be (0 to 20, usually 0; about 10 after ten days or more away). Follow the recovery rules in the library. If the content of later sessions should change because of this, add those as "changes"; otherwise leave changes empty.
 - in_session: the user is in the middle of a workout. Compare the sets done so far with their targets and take reps in reserve into account when given. Propose changes only for sets and exercises that are not done yet, using fields "load", "reps" or "rest".
-- after_session: compare the plan with what was done, take reps in reserve into account when given, and check the earlier sessions for the same result. Propose updates for the coming sessions, using fields "load", "reps", "sets", "rest", "exercise" or "remove".
+- after_session: compare the plan with what was done, take reps in reserve into account when given, and check the earlier sessions for the same result. Propose updates for the coming sessions in "changes", using fields "load", "reps", "sets", "rest", "exercise" or "remove". If the order of what is left, or the rest days, should change because of this workout, also fill "schedule" as in train_now, with first_session_id as the next session to do; otherwise set schedule to null.
 
 - equipment: the user describes their gym in their own words, as a list or as loose text. Fill "equipment". Put the ids of catalog items the gym has in add_ids, matching by meaning (a "functional trainer" is the cable station). Put catalog items the user says the gym does not have, or that are broken, in unavailable_ids. A strength machine that is not in equipment_catalog goes in "custom" with a short name as written on the machine and the one movement_id from "movements" it trains most. Leave out assisted machines, where a higher setting makes the lift easier. Anything else (cardio machines, things you cannot place) goes in unrecognized, in the user's words. Only list what the user mentioned. Leave profile, plan and changes empty.
   When the user names a maker or a model, as in "these are from Technogym: leg press, chest press", add one entry per such machine to "machines". Its ref is the catalog id you put in add_ids, or the exact name you gave it in custom. Use at most one entry per catalog id; a second branded machine of the same kind goes in custom under its own name. Give the maker and the model as the maker writes them, then say what you know of that exact product: how it works (path of the movement, seat and pad set-up, one arm or two, how it is loaded) and which muscles it isolates. Set sure to true only when you know this exact product. If you are describing the general kind of machine, say so plainly in how_it_works and set sure to false. Never invent a model name or number.
@@ -53,8 +57,9 @@ export const OUTPUT_SCHEMA = obj({
   ready_for_plan: { type: 'boolean' },
   plan: nullable(obj({
     days: list(obj({
-      weekday: { type: 'string', enum: WEEKDAYS },
-      title: str('Body parts trained, for example "Upper body".'),
+      week: { type: 'integer', description: 'Which week ahead this session belongs to, starting at 1.' },
+      rest_days_after: { type: 'integer', description: 'Days of rest before the next session, 0 to 6.' },
+      title: str('Body parts trained, for example "Upper body". No weekday, no letter.'),
       exercises: list(obj({
         exercise_id: str(),
         role: { type: 'string', enum: ['main', 'secondary', 'accessory'] },
@@ -62,6 +67,13 @@ export const OUTPUT_SCHEMA = obj({
       })),
     })),
     notes: list(str()),
+  })),
+  schedule: nullable(obj({
+    first_session_id: str('Id of the session to do next (now, in train_now), from the sessions still to do.'),
+    reason: str('One or two short sentences for the user.'),
+    order: list(str()),
+    rest_days: list(int),
+    ease_percent: nullable({ type: 'number' }),
   })),
   equipment: nullable(obj({
     add_ids: list(str()),
@@ -92,7 +104,7 @@ export const OUTPUT_SCHEMA = obj({
 
 const profileOut = (p) => ({
   goal: p.goal, months_training: p.months, experience_level: p.months == null ? null : levelFor(p.months),
-  days_per_week: p.daysPerWeek || (p.days?.length || null), weekdays: p.days || [],
+  sessions_per_week: p.daysPerWeek || (p.days?.length || null), usual_weekdays_only_a_note: p.days || [],
   minutes_per_session: p.minutes, preferences: p.preferences || null, limitations: p.limitations || null,
   avoid_exercise_ids: p.avoid || [], include_exercise_ids: p.include || [], work_around: p.avoidTags || [],
 });
@@ -116,17 +128,22 @@ const exercisesOut = (eq) => allExercises(eq).filter((x) => canDo(eq, x)).map((x
   };
 });
 
-const planOut = (plan) => (!plan ? null : {
-  version: plan.version, minutes_per_session: plan.minutes,
-  days: plan.days.map((d) => ({
-    weekday: d.weekday, title: d.title, estimated_minutes: d.estMinutes,
-    exercises: d.exercises.map((ex) => ({
-      exercise_key: ex.key, exercise_id: ex.exerciseId, name: ex.name, role: ex.tier,
-      sets: ex.sets, target_reps: ex.reps, rep_range: [ex.repLo, ex.repHi], rest_seconds: ex.restSec,
-      load_unit: ex.loadType, load: ex.load?.value ?? null, load_step: ex.load?.step ?? null,
+const planOut = (plan) => {
+  if (!plan) return null;
+  const q = queueState(plan);
+  return {
+    version: plan.version, minutes_per_session: plan.minutes, sessions_per_week: plan.perWeek,
+    list: { done: q.done, skipped: q.skipped, still_to_do_in_order: q.queue.map((d) => d.id) },
+    sessions: plan.days.map((d) => ({
+      session_id: d.id, title: d.title, estimated_minutes: d.estMinutes, rest_days_after: d.restAfter,
+      exercises: d.exercises.map((ex) => ({
+        exercise_key: ex.key, exercise_id: ex.exerciseId, name: ex.name, role: ex.tier,
+        sets: ex.sets, target_reps: ex.reps, rep_range: [ex.repLo, ex.repHi], rest_seconds: ex.restSec,
+        load_unit: ex.loadType, load: ex.load?.value ?? null, load_step: ex.load?.step ?? null,
+      })),
     })),
-  })),
-});
+  };
+};
 
 const setOut = (st) => ({
   status: st.status,
@@ -184,7 +201,7 @@ export function interviewRequest({ profile, equipment, plan, chat, message }) {
 
 export function newPlanRequest({ profile, equipment, weights }) {
   return body('new_plan', {
-    profile: { ...profileOut(profile), weekdays: trainingDays(profile), minutes_per_session: clampMinutes(profile.minutes) },
+    profile: { ...profileOut(profile), sessions_per_week: sessionsPerWeek(profile), weeks_ahead: cycleWeeks(profile), minutes_per_session: clampMinutes(profile.minutes) },
     equipment: equipmentOut(equipment),
     available_exercises: exercisesOut(equipment),
     known_loads: Object.fromEntries(Object.entries(weights || {}).map(([id, w]) => [id, w.value])),
@@ -244,3 +261,54 @@ export function parseLookup(text) {
     return Array.isArray(list) ? list.filter((x) => x && typeof x === 'object' && typeof x.ref === 'string') : [];
   } catch { return []; }
 }
+
+// ---------------------------------------------------------------- train now, and the next run
+
+const recentOut = (sessions, now, n = 10) => sessions.filter((x) => x.status === 'done' && x.startedAt <= now)
+  .sort((a, b) => b.startedAt - a.startedAt).slice(0, n).map((x) => ({
+    date: new Date(x.startedAt).toISOString().slice(0, 10), days_ago: daysBetween(x.startedAt, now),
+    title: x.title, sets_done_by_muscle_group: doneGroups(x), planned_rest_days_after: x.restAfter ?? null, eased_percent: x.easePct || 0,
+  }));
+
+/** Everything the model needs to judge what to train today. */
+export function trainNowRequest({ profile, equipment, plan, sessions, now = Date.now(), pick }) {
+  const done = sessions.filter((x) => x.status === 'done' && x.startedAt <= now).sort((a, b) => b.startedAt - a.startedAt);
+  const hours = {};
+  for (const x of done) for (const name of Object.keys(doneGroups(x))) if (!(name in hours)) hours[name] = Math.round((now - x.startedAt) / 3600e3);
+  const d = new Date(now);
+  return body('train_now', {
+    today: { date: d.toISOString().slice(0, 10), weekday: WEEKDAYS[(d.getDay() + 6) % 7] },
+    days_off_plan: pick ? pick.offBy : 0, // below zero: earlier than planned; above: later
+    profile: profileOut(profile),
+    equipment: equipmentOut(equipment),
+    current_plan: planOut(plan),
+    recent_workouts: recentOut(sessions, now),
+    hours_since_muscle_group_was_trained: hours,
+    workouts_in_last_7_days: done.filter((x) => now - x.startedAt < 7 * 24 * 3600e3).length,
+    app_pick: pick ? { session_id: pick.dayId, reason: pick.reason, notes: pick.notes, order_after_today: pick.order.slice(1), ease_percent: pick.easePct } : null,
+  });
+}
+
+/** The run is finished: ask for the next one, with the results so far. */
+export function nextRunRequest({ profile, equipment, plan, sessions, weights, now = Date.now() }) {
+  const results = {};
+  for (const x of sessions.filter((y) => y.status === 'done').sort((a, b) => b.startedAt - a.startedAt).slice(0, 12)) {
+    for (const ex of x.exercises) {
+      const done = ex.sets.filter((st) => st.status === 'done');
+      const list = (results[ex.exerciseId] = results[ex.exerciseId] || []);
+      if (list.length >= 3) continue;
+      list.push({ date: new Date(x.startedAt).toISOString().slice(0, 10), planned: `${ex.sets.length} x ${ex.sets[0].planned.reps}`, planned_load: ex.sets[0].planned.load, reps: done.map((st) => st.actual.reps), load: done.map((st) => st.actual.load), skipped_sets: ex.sets.length - done.length });
+    }
+  }
+  return body('next_run', {
+    profile: { ...profileOut(profile), sessions_per_week: sessionsPerWeek(profile), weeks_ahead: cycleWeeks(profile), minutes_per_session: clampMinutes(profile.minutes) },
+    equipment: equipmentOut(equipment),
+    available_exercises: exercisesOut(equipment),
+    run_just_finished: planOut(plan),
+    recent_workouts: recentOut(sessions, now, 12),
+    results_by_exercise: results,
+    known_loads: Object.fromEntries(Object.entries(weights || {}).map(([id, w]) => [id, w.value])),
+  });
+}
+
+export { recommend, timeline };

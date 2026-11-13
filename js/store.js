@@ -5,7 +5,7 @@
 // Device settings (API key, sound...) live under a second key and are never
 // exported or synced.
 
-import { emptyProfile } from './domain/planner.js';
+import { emptyProfile, upgradePlan } from './domain/planner.js';
 import { emptyEquipment } from './domain/catalog.js';
 
 const KEY = 'seria.state.v1';
@@ -67,6 +67,7 @@ export function hydrate(raw) {
   s.profile = { ...base.profile, ...(raw.profile || {}) };
   s.equipment = { items: { ...(raw.equipment?.items || {}) }, custom: [...(raw.equipment?.custom || [])], details: { ...(raw.equipment?.details || {}) } };
   for (const k of ['sessions', 'deletedSessions', 'chat', 'proposals']) if (!Array.isArray(s[k])) s[k] = [];
+  s.plan = upgradePlan(s.plan); // plans saved before cycles existed keep their sessions and gain a cycle
   if (!s.weights || typeof s.weights !== 'object') s.weights = {};
   s.schema = SCHEMA;
   if (s.activeSessionId && !s.sessions.some((x) => x.id === s.activeSessionId && x.status === 'active')) s.activeSessionId = null;

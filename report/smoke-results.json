@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-13T15:11:34.062Z",
+  "ranAt": "2026-11-13T15:38:44.351Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 149,
-  "passed": 149,
+  "total": 176,
+  "passed": 176,
   "failed": 0,
   "results": [
     {
@@ -31,7 +31,7 @@
     },
     {
       "part": "A built-in",
-      "name": "coach asks for what is missing (days, things to skip)",
+      "name": "coach asks for what is missing (things to skip), and not for fixed days",
       "ok": true,
       "detail": ""
     },
@@ -49,13 +49,31 @@
     },
     {
       "part": "A built-in",
-      "name": "plan has the three chosen days",
+      "name": "the plan is a list of sessions with rest days, not tied to weekdays",
       "ok": true,
       "detail": ""
     },
     {
       "part": "A built-in",
-      "name": "every day fits the 50 minute budget",
+      "name": "the coach presents it as a proposal you can discuss",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "the plan reads as train, rest, train",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "no cycles, weeks or weekdays to manage",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "every session fits the 50 minute budget",
       "ok": true,
       "detail": ""
     },
@@ -79,7 +97,7 @@
     },
     {
       "part": "A built-in",
-      "name": "plan list shows day, body part and time",
+      "name": "each session on the list shows what it is, when it falls and how long it takes",
       "ok": true,
       "detail": ""
     },
@@ -307,7 +325,73 @@
     },
     {
       "part": "A built-in",
-      "name": "day preview now shows the recorded weight",
+      "name": "the finished session is off the list; the next one is planned after the rest day",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Train now\" on an unplanned day shows what makes sense and why, before anything starts",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "and how the rest of the plan follows",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "any other session can be picked instead",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "on the planned day the plan says \"today\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "and \"Train now\" simply starts the next session",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a discarded workout leaves the plan as it was",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a session can be skipped; it leaves the list and waits for the next run",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "and brought back",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "after a long break the plan says so and offers a lighter session",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a hand-picked session starts, lighter today, and goes to the front of the plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "session preview shows the recorded weight",
       "ok": true,
       "detail": ""
     },
@@ -541,6 +625,72 @@
     },
     {
       "part": "B Claude API",
+      "name": "after a workout the order and rest days of what is left are updated without asking",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "while the weight change still waits for a yes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "off the planned day, the rule-based pick shows at once",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "Claude reviews what makes sense today, with the history and the app's pick in hand",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "Claude's pick replaces it, with its reason",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "the rule-based pick stays one tap away",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "starting accepts Claude's update: its order and rest days, minus the session it made up",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "a change Claude wants further on is filed as a proposal, not applied",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "when the last session is done, Claude is asked for the next run with the results so far",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "the next run replaces the list and the plan carries on",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "and is on the plan screen, ready to browse",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
       "name": "asking the coach for a change gives a proposal to apply or keep",
       "ok": true,
       "detail": ""
@@ -686,6 +836,18 @@
     {
       "part": "D install and offline",
       "name": "offline: the app starts and builds a plan with no network",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "a plan saved by the earlier version is carried over: same sessions, now a list with rest days",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "and it trains straight away",
       "ok": true,
       "detail": ""
     },

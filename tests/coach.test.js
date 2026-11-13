@@ -5,7 +5,8 @@ import { mergeStates } from '../js/cloud.js';
 import { tidy, sourceName } from '../js/ai/ai.js';
 import { openaiParams } from '../js/ai/openai.js';
 import { providerSays, ROOM } from '../js/ai/errors.js';
-import { OUTPUT_SCHEMA, SYSTEM_PROMPT, LOOKUP_SYSTEM, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, lookupRequest, parseLookup } from '../js/ai/prompts.js';
+import { OUTPUT_SCHEMA, SYSTEM_PROMPT, LOOKUP_SYSTEM, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, lookupRequest, parseLookup, trainNowRequest, nextRunRequest } from '../js/ai/prompts.js';
+import { recommend, completeDay } from '../js/domain/schedule.js';
 import { emptyProfile, generatePlan, missingFields } from '../js/domain/planner.js';
 import { emptyEquipment, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail, machineForExercise, machineLabel, isAvailable, isListed, EQUIPMENT, allExercises } from '../js/domain/catalog.js';
 import { emptyState, hydrate } from '../js/store.js';
@@ -34,6 +35,11 @@ test('reader: days, durations and sessions lengths in common wordings', () => {
   assert.equal(parseProfile('45', { asked: 'minutes' }).patch.minutes, 45);
   assert.equal(parseProfile('2', { asked: 'experience' }).patch.months, 24);
   assert.equal(parseProfile('I want to get bigger').patch.goal, 'muscle');
+  // How far ahead to plan can be said, and is not mistaken for experience.
+  assert.deepEqual(parseProfile('make it a 3 week cycle').patch, { cycleWeeks: 3 });
+  const both = parseProfile('I have trained for 2 years, 3 times a week, plan 2 weeks ahead? no: a 2-week cycle').patch;
+  assert.equal(both.months, 24); assert.equal(both.cycleWeeks, 2); assert.equal(both.daysPerWeek, 3);
+  assert.equal(parseProfile('a cycle of nine weeks').patch.cycleWeeks, 4, 'capped');
   assert.equal(parseProfile('just want to stay healthy').patch.goal, 'general');
 });
 
@@ -61,7 +67,8 @@ test('claude profile: unknown ids and odd values are dropped', () => {
 });
 
 test('claude answer: missing or wrong fields never break the app', () => {
-  assert.deepEqual(tidy(null), { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [], equipment: null });
+  assert.deepEqual(tidy(null), { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [], equipment: null, schedule: null });
+  assert.equal(tidy({ schedule: { order: [] } }).schedule, null, 'a schedule with no first session is not a schedule');
   assert.equal(tidy({ equipment: 'lots' }).equipment, null);
   const t = tidy({ message: ' hi ', questions: ['a', 3, ''], plan: { days: 'x' }, changes: [null, { field: 'load' }], ready_for_plan: 'yes' });
   assert.equal(t.message, 'hi'); assert.deepEqual(t.questions, ['a']); assert.equal(t.plan, null); assert.equal(t.changes.length, 1); assert.equal(t.ready_for_plan, false);
@@ -84,7 +91,8 @@ test('prompt: schema is strict everywhere and requests carry the mode and rules 
   assert.equal(a.mode, 'interview'); assert.ok(a.rules_version); assert.ok(a.available_exercises.length > 10);
   assert.ok(!a.available_exercises.some((x) => x.id === 'leg_press'), 'only doable exercises are offered');
   const b = JSON.parse(newPlanRequest({ profile, equipment: eq, weights: {} }));
-  assert.deepEqual(b.profile.weekdays, ['mon', 'wed', 'fri']);
+  assert.equal(b.profile.sessions_per_week, 3); assert.equal(b.profile.weeks_ahead, 2); assert.ok(!('weekdays' in b.profile));
+  assert.ok(/not a calendar/.test(SYSTEM_PROMPT) && !/weekly resistance-training plan/.test(SYSTEM_PROMPT));
   let s = S.startSession(plan, 'd1', 1000); s = S.beginSet(s, 2000); s = S.finishSet(s, 3000); s = S.saveSet(s, 4000);
   const c = JSON.parse(sessionRequest({ mode: 'in_session', profile, equipment: eq, plan, session: s, past: [] }));
   assert.equal(c.mode, 'in_session'); assert.equal(c.session.exercises[0].sets[0].reps, plan.days[0].exercises[0].reps);
@@ -113,6 +121,32 @@ test('openai request: strict schema, nothing stored, reasoning only where the mo
   const depth = (s) => (s.anyOf ? Math.max(...s.anyOf.map(depth)) : s.type === 'object' ? 1 + Math.max(0, ...Object.values(s.properties).map(depth)) : s.type === 'array' ? depth(s.items) : 0);
   assert.ok(depth(OUTPUT_SCHEMA) <= 5, `schema nests ${depth(OUTPUT_SCHEMA)} objects deep`);
   assert.equal(sourceName('openai'), 'OpenAI'); assert.equal(sourceName('claude'), 'Claude'); assert.equal(sourceName('rules'), 'the training rules');
+});
+
+test('train now and next run: the model gets the list, the history and the app\'s own pick', () => {
+  const profile = { ...emptyProfile(), goal: 'strength', months: 12, daysPerWeek: 3, minutes: 50 };
+  const eq = emptyEquipment();
+  let plan = generatePlan(profile, eq, { db_bench_press: { value: 20, step: 2 } });
+  const t0 = new Date(2026, 10, 9, 18).getTime();
+  let w = S.startSession(plan, 'd1', t0);
+  while (w.status === 'active') { if (S.needsWeight(w)) w = S.setStartingWeight(w, 20, 2, t0); w = S.beginSet(w, t0); w = S.finishSet(w, t0 + 1); w = S.saveSet(w, t0 + 2); }
+  plan = completeDay(plan, 'd1');
+  const now = t0 + 26 * 3600e3; // the next evening: a day early
+  const pick = recommend(plan, [w], now);
+  const req = JSON.parse(trainNowRequest({ profile, equipment: eq, plan, sessions: [w], now, pick }));
+  assert.equal(req.mode, 'train_now'); assert.equal(req.days_off_plan, -1);
+  assert.deepEqual(req.current_plan.list, { done: ['d1'], skipped: [], still_to_do_in_order: ['d2', 'd3', 'd4', 'd5', 'd6'] });
+  assert.equal(req.current_plan.sessions[0].rest_days_after, 1); assert.ok(!('weekday' in req.current_plan.sessions[0]));
+  assert.equal(req.recent_workouts[0].title, 'Upper body A'); assert.equal(req.recent_workouts[0].days_ago, 1); assert.equal(req.recent_workouts[0].planned_rest_days_after, 1);
+  assert.ok(req.recent_workouts[0].sets_done_by_muscle_group.Chest >= 3);
+  assert.equal(req.hours_since_muscle_group_was_trained.Back, 26); assert.equal(req.workouts_in_last_7_days, 1);
+  assert.equal(req.app_pick.session_id, 'd2'); assert.deepEqual(req.app_pick.order_after_today, pick.order.slice(1));
+  const nr = JSON.parse(nextRunRequest({ profile, equipment: eq, plan, sessions: [w], weights: { db_bench_press: { value: 20 } }, now }));
+  assert.equal(nr.mode, 'next_run'); assert.equal(nr.profile.weeks_ahead, 2); assert.ok(nr.available_exercises.length > 10);
+  assert.deepEqual(nr.results_by_exercise.db_bench_press[0].reps, w.exercises[0].sets.map((x) => x.actual.reps));
+  assert.equal(nr.known_loads.db_bench_press, 20);
+  for (const k of ['first_session_id', 'reason', 'order', 'rest_days', 'ease_percent']) assert.ok(k in OUTPUT_SCHEMA.properties.schedule.anyOf[0].properties, k);
+  assert.ok('rest_days_after' in OUTPUT_SCHEMA.properties.plan.anyOf[0].properties.days.items.properties);
 });
 
 test('gym text: named machines, things the gym lacks, own machines and the rest', () => {

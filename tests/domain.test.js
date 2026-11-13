@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RULES, SOURCES, PRESCRIPTION, prescribe, levelFor, rulesAsText, RULES_VERSION } from '../js/domain/rules.js';
 import { emptyEquipment, isAvailable, substitutesFor, allExercises, EXERCISES, EQUIPMENT, canDo } from '../js/domain/catalog.js';
-import { generatePlan, emptyProfile, missingFields, dayMinutes, buildAssumptions, normalizePlan, brokenExercises, nextDay, weeklySets } from '../js/domain/planner.js';
+import { generatePlan, emptyProfile, missingFields, dayMinutes, buildAssumptions, normalizePlan, brokenExercises, weeklySets, upgradePlan } from '../js/domain/planner.js';
+import * as K from '../js/domain/schedule.js';
 import * as S from '../js/domain/session.js';
 import { inSessionHint, postSessionChanges, applyPlanChange, lowerLoad, equipmentChanges, fromAiChanges } from '../js/domain/progression.js';
 
@@ -40,10 +41,22 @@ test('equipment: basics on by default, machines only when added', () => {
   eq.items.dumbbells = false; assert.ok(!isAvailable(eq, 'dumbbells'));
 });
 
-test('planner: 3 days gives upper / lower / full within the time budget', () => {
+test('planner: 3 a week gives a list of upper / lower / full with rest days, laid out two weeks ahead', () => {
   const plan = generatePlan(profile(), emptyEquipment(), {}, T0);
-  assert.deepEqual(plan.days.map((d) => d.title), ['Upper body', 'Lower body', 'Full body']);
-  assert.deepEqual(plan.days.map((d) => d.weekday), ['mon', 'wed', 'fri']);
+  assert.deepEqual(plan.days.map((d) => d.title), ['Upper body A', 'Lower body A', 'Full body A', 'Upper body B', 'Lower body B', 'Full body B']);
+  assert.deepEqual(plan.days.map((d) => d.restAfter), [1, 1, 2, 1, 1, 2], 'train, a day off, train, a day off, train, two days off');
+  assert.ok(plan.days.every((d) => !('weekday' in d)), 'no fixed weekdays');
+  assert.equal(plan.perWeek, 3); assert.deepEqual(plan.queue, { run: 1, order: ['d1', 'd2', 'd3', 'd4', 'd5', 'd6'], done: [], skipped: [] });
+  // Main lifts come back every week; the other exercises take turns, so more of them fit in.
+  const mains = (d) => d.exercises.filter((x) => x.tier === 'main').map((x) => x.exerciseId).join();
+  assert.equal(mains(plan.days[0]), mains(plan.days[3])); assert.equal(mains(plan.days[1]), mains(plan.days[4]));
+  const others = (d) => d.exercises.filter((x) => x.tier !== 'main').map((x) => x.exerciseId).sort().join();
+  assert.notEqual(others(plan.days[0]), others(plan.days[3]), 'week two brings in what did not fit in week one');
+  const oneWeek = generatePlan(profile({ cycleWeeks: 1 }), emptyEquipment(), {}, T0);
+  const count = (p) => new Set(p.days.flatMap((d) => d.exercises.map((x) => x.exerciseId))).size;
+  assert.ok(count(plan) >= count(oneWeek) + 3, `${count(plan)} exercises against ${count(oneWeek)}`);
+  for (const d of plan.days) for (const [i, ex] of d.exercises.entries()) assert.equal(ex.key, `${d.id}e${i + 1}`);
+  for (const d of plan.days) assert.deepEqual(d.exercises.map((x) => x.tier), [...d.exercises.map((x) => x.tier)].sort((a, b) => ({ main: 0, secondary: 1, accessory: 2 })[a] - ({ main: 0, secondary: 1, accessory: 2 })[b]), 'compound lifts before single-joint work');
   for (const d of plan.days) {
     assert.ok(d.estMinutes <= 50, `${d.title} is ${d.estMinutes} min`);
     assert.ok(d.exercises.length >= 3);
@@ -58,13 +71,16 @@ test('planner: 3 days gives upper / lower / full within the time budget', () => 
   assert.equal(plan.days[0].exercises[0].load, null, 'no history means no weight yet');
 });
 
-test('planner: every day count from 1 to 6 produces a full week', () => {
+test('planner: every count from 1 to 6 sessions a week produces a full list whose rests fill the week', () => {
   for (let n = 1; n <= 6; n++) {
     const plan = generatePlan(profile({ daysPerWeek: n, days: [] }), emptyEquipment(), {}, T0);
-    assert.equal(plan.days.length, n);
-    for (const d of plan.days) assert.ok(d.exercises.length >= 3, `${n} days: ${d.title} has ${d.exercises.length}`);
+    assert.equal(plan.days.length, n * (n >= 5 ? 1 : 2)); assert.equal(plan.perWeek, n);
+    for (const d of plan.days) assert.ok(d.exercises.length >= 3, `${n} a week: ${d.title} has ${d.exercises.length}`);
+    assert.equal(K.restPattern(n).reduce((a, b) => a + b, 0) + n, 7, `${n} a week`);
+    assert.equal(new Set(plan.days.map((d) => d.title)).size, plan.days.length, 'every session has its own name');
   }
-  assert.equal(generatePlan(profile({ daysPerWeek: 7, days: [] }), emptyEquipment(), {}, T0).days.length, 6);
+  assert.equal(generatePlan(profile({ daysPerWeek: 7, days: [] }), emptyEquipment(), {}, T0).perWeek, 6);
+  assert.deepEqual(K.restPattern(3), [1, 1, 2]); assert.deepEqual(K.restPattern(2), [2, 3]); assert.deepEqual(K.restPattern(6), [0, 0, 0, 0, 0, 1]);
 });
 
 test('planner: uses machines once added, honours skip, include and limitations', () => {
@@ -255,7 +271,7 @@ test('equipment change: broken exercises get a same-movement swap', () => {
 });
 
 test('plan changes: removing exercises drops empty days but never the whole plan', () => {
-  let plan = generatePlan(profile({ daysPerWeek: 1, days: ['mon'] }), emptyEquipment(), {}, T0);
+  let plan = generatePlan(profile({ daysPerWeek: 1, days: [], cycleWeeks: 1 }), emptyEquipment(), {}, T0);
   const keys = plan.days[0].exercises.map((x) => x.key);
   for (const key of keys.slice(0, -1)) plan = applyPlanChange(plan, { exerciseKey: key, field: 'remove' }, emptyEquipment(), {}).plan;
   assert.equal(plan.days[0].exercises.length, 1);
@@ -266,16 +282,17 @@ test('plan changes: removing exercises drops empty days but never the whole plan
 test('claude output: plans and changes are checked against the catalog and records', () => {
   const eq = emptyEquipment();
   const raw = { days: [
-    { weekday: 'Monday', title: 'Push day', exercises: [
+    { week: 1, title: 'Push day', rest_days_after: 9, exercises: [
       { exercise_id: 'db_bench_press', role: 'main', sets: 3, rep_low: 8, rep_high: 10, rest_seconds: 120 },
       { exercise_id: 'leg_press', role: 'main', sets: 3, rep_low: 8, rep_high: 10, rest_seconds: 120 },
       { exercise_id: 'made_up_lift', role: 'accessory', sets: 99, rep_low: 8, rep_high: 10, rest_seconds: 5 },
       { exercise_id: 'db_curl', role: 'accessory', sets: 99, rep_low: 12, rep_high: 10, rest_seconds: 5 },
     ] },
-    { weekday: 'someday', title: 'x', exercises: [] },
+    { week: 2, title: 'x', rest_days_after: 1, exercises: [] },
   ], notes: ['hello'] };
   const { plan, dropped } = normalizePlan(raw, profile(), eq, {}, T0);
   assert.equal(plan.days.length, 1); assert.equal(plan.source, 'claude');
+  assert.equal(plan.days[0].restAfter, 6, 'rest days are kept within a week'); assert.deepEqual(plan.queue.order, ['d1']); assert.equal(plan.days[0].title, 'Push day');
   assert.deepEqual(plan.days[0].exercises.map((x) => x.exerciseId), ['db_bench_press', 'db_curl']);
   assert.deepEqual(dropped, ['leg_press', 'made_up_lift']);
   const curl = plan.days[0].exercises[1];
@@ -297,15 +314,128 @@ test('weekly volume: sets are counted per muscle group against the level target'
   const big = weeklySets(generatePlan(profile({ goal: 'muscle', months: 30, daysPerWeek: 4, days: [], minutes: 75 }), eq, {}, T0));
   assert.deepEqual(big.target, [12, 20]);
   assert.ok(big.rows.find((r) => r.group === 'Back').sets >= 10);
-  const small = weeklySets(generatePlan(profile({ daysPerWeek: 1, days: ['mon'], minutes: 30 }), emptyEquipment(), {}, T0));
+  const small = weeklySets(generatePlan(profile({ daysPerWeek: 1, days: [], minutes: 30 }), emptyEquipment(), {}, T0));
   assert.ok(small.rows.some((r) => r.low), 'a single short day is flagged as below target');
   assert.equal(small.rows.filter((r) => r.judged).length, 5, 'all five big groups are listed, even at zero');
 });
 
-test('next day: picks today when it is a training day, the next one otherwise', () => {
+const DAYMS = 864e5;
+const at = (dayOffset, hour = 18) => new Date(2026, 10, 9 + dayOffset, hour).getTime(); // 9 Nov 2026 is a Monday
+
+/** A finished workout of a plan session, with every set done as planned. */
+function did(plan, dayId, when) {
+  let s = S.startSession(plan, dayId, when); let t = when;
+  while (s.status === 'active') {
+    if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t);
+    s = S.beginSet(s, t += 1000); s = S.finishSet(s, t += 1000); s = S.saveSet(s, t += 1000);
+  }
+  return s;
+}
+
+test('timeline: the plan reads as train, rest, train, starting today', () => {
   const plan = generatePlan(profile(), emptyEquipment(), {}, T0);
-  const mon = new Date(2026, 10, 9, 10).getTime();
-  assert.equal(nextDay(plan, mon).weekday, 'mon');
-  assert.equal(nextDay(plan, mon + 864e5).weekday, 'wed');
-  assert.equal(nextDay(plan, mon, [{ status: 'done', startedAt: mon, dayId: 'd1' }]).weekday, 'wed');
+  const line = K.timeline(plan, [], at(0));
+  assert.deepEqual(line.map((x) => x.day.title), ['Upper body A', 'Lower body A', 'Full body A', 'Upper body B', 'Lower body B', 'Full body B']);
+  assert.deepEqual(line.map((x) => x.inDays), [0, 2, 4, 7, 9, 11]);
+  assert.deepEqual(line.map((x) => x.restBefore), [null, 1, 1, 2, 1, 1]);
+  const first = K.recommend(plan, [], at(0));
+  assert.ok(first.onSchedule && first.flags.first); assert.equal(first.dayId, 'd1'); assert.equal(first.easePct, 0);
+});
+
+const late_notes = (plan, w1) => K.recommend(plan, [w1], at(5)).notes;
+
+test('train now: on the planned day it just starts; early or late it says so and the plan moves', () => {
+  let plan = generatePlan(profile(), emptyEquipment(), { db_bench_press: { value: 20, step: 2 } }, T0);
+  const w1 = did(plan, 'd1', at(0));
+  assert.equal(w1.restAfter, 1, 'the workout remembers the rest planned after it');
+  plan = K.completeDay(plan, 'd1');
+  assert.equal(K.dayStatus(plan, 'd1'), 'done');
+  // Same evening: two days early. Lower body uses rested muscles, so it is allowed, and said.
+  const sameDay = K.recommend(plan, [w1], at(0, 21));
+  assert.equal(sameDay.dayId, 'd2'); assert.equal(sameDay.offBy, -2); assert.ok(!sameDay.onSchedule && sameDay.flags.early && !sameDay.flags.clash);
+  assert.match(sameDay.notes[0], /2 days earlier than planned\. These muscles are rested/);
+  // The planned day: nothing to say.
+  const due = K.recommend(plan, [w1], at(2, 7));
+  assert.ok(due.onSchedule); assert.equal(due.offBy, 0); assert.deepEqual(due.notes, []); assert.equal(due.reason, 'Next in your plan.');
+  assert.equal(K.timeline(plan, [w1], at(0, 21))[0].inDays, 2, 'shown as planned for the day after tomorrow');
+  // Browsing the plan shows it as planned, without the "if you trained right now" remarks.
+  const planned = K.plannedNext(plan, [w1], at(0, 21));
+  assert.equal(planned.dayId, 'd2'); assert.ok(planned.onSchedule); assert.deepEqual(planned.notes, []);
+  assert.deepEqual(K.plannedNext(plan, [w1], at(5)).notes, late_notes(plan, w1), 'once the day has passed, being late is part of the picture');
+  assert.equal(K.timeline(plan, [w1], at(5))[0].inDays, 0, 'an overdue session is simply due today');
+  // Three days late: carry on, nothing lost.
+  const late = K.recommend(plan, [w1], at(5));
+  assert.ok(!late.onSchedule && late.flags.late); assert.equal(late.offBy, 3); assert.equal(late.easePct, 0);
+  assert.match(late.notes[0], /3 days later than planned\. Nothing is lost/);
+  // Twelve days away: ease back in.
+  const back = K.recommend(plan, [w1], at(12));
+  assert.ok(back.flags.longBreak); assert.equal(back.easePct, 10); assert.match(back.notes[0], /12 days since your last workout\. Loads are 10% lighter/);
+});
+
+test('train now: a session that would repeat tired muscles gives way to one that lets them rest', () => {
+  let plan = generatePlan(profile(), emptyEquipment(), {}, T0);
+  const w1 = did(plan, 'd1', at(0)); // upper body: chest, back, shoulders
+  plan = K.setOrder(K.completeDay(plan, 'd1'), ['d4']); // the other upper session is put next
+  assert.equal(K.queueState(plan).queue[0].id, 'd4');
+  const rec = K.recommend(plan, [w1], at(1));
+  assert.equal(rec.headId, 'd4'); assert.equal(rec.dayId, 'd2', 'lower body goes first');
+  assert.ok(rec.flags.moved && !rec.onSchedule);
+  assert.match(rec.reason, /You trained .*yesterday\. Lower body A gives them time to recover, so it goes ahead of Upper body B/);
+  assert.equal(rec.order[0], 'd2'); assert.equal(new Set(rec.order).size, 5, 'the rest of the list follows, each session once');
+  // A hand-picked session is respected, with a word of warning when it repeats muscles.
+  const mine = K.recommend(plan, [w1], at(1), { prefer: 'd4' });
+  assert.equal(mine.dayId, 'd4'); assert.match(mine.reason, /Next in your plan|Your pick/); assert.ok(mine.notes.some((n) => /trained less than 48 hours ago/.test(n)));
+  // Right after a full-body day everything repeats something: the least overlap is offered, and rest is suggested.
+  let p2 = generatePlan(profile({ daysPerWeek: 2, days: [] }), emptyEquipment(), {}, T0);
+  const full = did(p2, 'd1', at(0));
+  p2 = K.completeDay(p2, 'd1');
+  const tight = K.recommend(p2, [full], at(1));
+  assert.ok(tight.flags.clash); assert.match(tight.reason, /Resting today is also a good choice/);
+});
+
+test('the list: order, skip, done, and the next run', () => {
+  let plan = generatePlan(profile(), emptyEquipment(), {}, T0);
+  plan = K.setOrder(plan, ['d3', 'nope', 'd3', 'd1']);
+  assert.deepEqual(K.queueState(plan).queue.map((d) => d.id), ['d3', 'd1', 'd2', 'd4', 'd5', 'd6'], 'unknown and repeated ids are ignored');
+  plan = K.skipDay(plan, 'd5');
+  assert.equal(K.dayStatus(plan, 'd5'), 'skipped'); assert.equal(K.queueState(plan).queue.length, 5);
+  plan = K.unskipDay(plan, 'd5'); assert.equal(K.dayStatus(plan, 'd5'), 'todo');
+  plan = K.setRests(plan, { d3: 4, d1: 99, zz: 2 });
+  assert.equal(plan.days[2].restAfter, 4); assert.equal(plan.days[0].restAfter, 6);
+  for (const id of ['d1', 'd2', 'd3', 'd4', 'd5']) plan = K.completeDay(plan, id);
+  assert.ok(!K.runFinished(plan));
+  plan = K.skipDay(plan, 'd6');
+  assert.ok(K.runFinished(plan), 'done or skipped, the run is over');
+  // With nothing left, the next workout starts the list again, in plan order.
+  const again = K.recommend(plan, [], at(20));
+  assert.equal(again.dayId, 'd1'); assert.ok(again.flags.newRun); assert.equal(again.order.length, 6);
+  const rolled = K.setOrder(plan, again.order);
+  assert.deepEqual(rolled.queue, { run: 2, order: ['d1', 'd2', 'd3', 'd4', 'd5', 'd6'], done: [], skipped: [] });
+});
+
+test('easing back in: today is lighter, the plan keeps its numbers, and no conclusions are drawn', () => {
+  const plan = generatePlan(profile(), emptyEquipment(), { db_bench_press: { value: 20, step: 2 }, bb_row: { value: 42.5, step: 2.5 } }, T0);
+  let s = S.startSession(plan, 'd1', T0, { easePct: 10, why: 'back after a break' });
+  assert.equal(s.easePct, 10);
+  assert.equal(s.exercises[0].sets[0].planned.load, 20); assert.equal(s.exercises[0].sets[0].target.load, 18, '10% off, rounded to the 2 kg step');
+  assert.equal(s.exercises[1].sets[0].target.load, 37.5, '42.5 less 10%, rounded to the 2.5 kg step');
+  assert.match(s.exercises[0].sets[0].note, /Eased by 10%/);
+  while (s.status === 'active') { if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, T0); s = S.beginSet(s, T0); s = S.finishSet(s, T0 + 1); s = S.saveSet(s, T0 + 2); }
+  assert.deepEqual(postSessionChanges(s, plan, []), [], 'a lighter comeback session proposes nothing');
+  assert.equal(S.startSession(plan, 'd1', T0).exercises[0].sets[0].target.load, 20);
+});
+
+test('plans saved in older shapes are brought up to date without losing anything', () => {
+  const fresh = generatePlan(profile({ cycleWeeks: 1 }), emptyEquipment(), {}, T0);
+  const weekly = JSON.parse(JSON.stringify(fresh));
+  delete weekly.queue; delete weekly.perWeek; delete weekly.cycleWeeks;
+  weekly.days.forEach((d, i) => { d.weekday = ['mon', 'wed', 'fri'][i]; delete d.week; delete d.slot; delete d.restAfter; });
+  const up = upgradePlan(weekly);
+  assert.equal(up.perWeek, 3); assert.deepEqual(up.days.map((d) => d.restAfter), [1, 1, 2]); assert.ok(up.days.every((d) => !('weekday' in d)));
+  assert.deepEqual(up.queue, { run: 1, order: ['d1', 'd2', 'd3'], done: [], skipped: [] });
+  assert.deepEqual(up.days.map((d) => d.exercises), fresh.days.map((d) => d.exercises), 'the sessions themselves are untouched');
+  const cyc = JSON.parse(JSON.stringify(fresh)); delete cyc.queue; cyc.cycle = { round: 2, order: ['d2', 'd1', 'd3'], done: ['d2'], skipped: [] };
+  assert.deepEqual(upgradePlan(cyc).queue, { run: 2, order: ['d2', 'd1', 'd3'], done: ['d2'], skipped: [] });
+  assert.equal(upgradePlan(fresh), fresh, 'a current plan is left alone'); assert.equal(upgradePlan(null), null);
+  assert.equal(K.recommend(up, [], at(0)).dayId, 'd1');
 });
