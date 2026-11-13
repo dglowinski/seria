@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { canned, cannedLookup } from './canned.mjs';
 
 export function startMockOpenAI(port) {
-  const state = { requests: [], fail: null, delayMs: 0, rejectReasoning: false };
+  const state = { requests: [], fail: null, delayMs: 0, rejectReasoning: false, cutOffOnce: false };
   const cors = (req) => ({
     'access-control-allow-origin': req.headers.origin || '*',
     'access-control-allow-headers': req.headers['access-control-request-headers'] || '*',
@@ -23,6 +23,12 @@ export function startMockOpenAI(port) {
       const body = JSON.parse(raw || '{}');
       state.requests.push({ path: req.url, headers: req.headers, body });
       if (state.fail === 401) return json(401, { error: { message: 'Incorrect API key provided.', type: 'invalid_request_error', param: null, code: 'invalid_api_key' } });
+      if (state.fail === 429) return json(429, { error: { message: 'Rate limit reached for gpt-6.1-sol in organization org-AbC123xyz on tokens per min (TPM): Limit 10000, Used 0, Requested 12000. Please try again in 12s.', type: 'tokens', param: null, code: 'rate_limit_exceeded' } });
+      if (state.fail === 'quota') return json(429, { error: { message: 'You exceeded your current quota, please check your plan and billing details.', type: 'insufficient_quota', param: null, code: 'insufficient_quota' } });
+      if (state.cutOffOnce) {
+        state.cutOffOnce = false;
+        return json(200, { id: 'resp_cut', object: 'response', created_at: 0, status: 'incomplete', model: body.model, error: null, incomplete_details: { reason: 'max_output_tokens' }, output: [], usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 } });
+      }
       if (state.rejectReasoning && body.reasoning) return json(400, { error: { message: "Unsupported parameter: 'reasoning.effort' is not supported with this model.", type: 'invalid_request_error', param: 'reasoning.effort', code: 'unsupported_parameter' } });
       if ((body.tools || []).some((t) => t.type === 'web_search')) {
         const look = cannedLookup(JSON.parse(body.input));

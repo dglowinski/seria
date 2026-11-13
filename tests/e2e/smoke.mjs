@@ -415,11 +415,22 @@ await guarded(async () => {
   await shot(page, '17-claude-connected');
   const r = api.state.requests[0];
   check('request: key, browser-access and version headers, as the official SDK sends them', r.headers.authorization === 'Bearer sk-ant-test-key' && r.headers['anthropic-dangerous-direct-browser-access'] === 'true' && !!r.headers['anthropic-version'] && /^1\./.test(r.headers['x-stainless-package-version']), JSON.stringify(r.headers));
-  check('request: model, structured output, effort, cached system prompt', r.body.model === 'claude-opus-5-5' && r.body.output_config.format.type === 'json_schema' && r.body.output_config.effort === 'low' && r.body.system[0].cache_control.type === 'ephemeral' && r.body.max_tokens === 16000, JSON.stringify(r.body.output_config).slice(0, 200));
+  check('request: model, structured output, effort, cached system prompt', r.body.model === 'claude-opus-5-5' && r.body.output_config.format.type === 'json_schema' && r.body.output_config.effort === 'low' && r.body.system[0].cache_control.type === 'ephemeral' && r.body.max_tokens === 4000, JSON.stringify(r.body.output_config).slice(0, 200));
   check('request: refusal fallback is switched on', r.body.fallbacks === 'default' && String(r.headers['anthropic-beta']).includes('server-side-fallback-2026-07-01') && r.path === '/v1/messages', `${r.path} ${r.headers['anthropic-beta']}`);
   check('request: no thinking or sampling parameters the model would reject', !('thinking' in r.body) && !('temperature' in r.body) && !('tool_choice' in r.body));
   check('request: system prompt carries the rules library and its version', /Training rules library, version 1\.0\.0/.test(r.body.system[0].text));
   check('the key is kept apart from the app data', !/sk-ant/.test(await page.evaluate(() => localStorage.getItem('seria.state.v1') || '')));
+
+  let before = api.state.requests.length;
+  api.state.cutOffOnce = true;
+  await page.getByTestId('test-claude').click();
+  await until(() => api.state.requests.length === before + 2);
+  check('an answer cut off for lack of room is asked for once more with twice as much', api.state.requests[before].body.max_tokens === 4000 && api.state.requests[before + 1].body.max_tokens === 8000 && await until(async () => /Claude answered/.test(await page.getByTestId('test-result').textContent())));
+  api.state.fail = 429;
+  await page.getByTestId('test-claude').click();
+  await page.getByText(/over a limit/).waitFor();
+  check("a 429 from Claude is shown in Claude's own words", /rate limit of 8,000 output tokens per minute/.test(await page.getByTestId('test-result').textContent()));
+  api.state.fail = null;
 
   await tab(page, 'Coach').click();
   await say(page, 'Strength, a year in, three days a week, 50 minutes. Skip deadlifts, I love pull-ups.');
@@ -701,7 +712,7 @@ await guarded(async () => {
   await shot(page, '25-openai-connected');
   const r = oai.state.requests[0];
   check('request: key as a bearer token, sent by the official SDK to the Responses API', r.headers.authorization === 'Bearer sk-test-openai-key' && r.path === '/v1/responses' && /^7\./.test(r.headers['x-stainless-package-version'] || ''), `${r.path} ${JSON.stringify(r.headers).slice(0, 300)}`);
-  check('request: model, strict JSON schema, low effort for a quick call, nothing stored', r.body.model === 'gpt-6.1-sol' && r.body.text.format.type === 'json_schema' && r.body.text.format.strict === true && r.body.reasoning.effort === 'low' && r.body.store === false && r.body.max_output_tokens === 16000, JSON.stringify(r.body).slice(0, 200));
+  check('request: model, strict JSON schema, low effort for a quick call, nothing stored', r.body.model === 'gpt-6.1-sol' && r.body.text.format.type === 'json_schema' && r.body.text.format.strict === true && r.body.reasoning.effort === 'low' && r.body.store === false && r.body.max_output_tokens === 4000, JSON.stringify(r.body).slice(0, 200));
   check('request: the same rules library goes to OpenAI as to Claude', /Training rules library, version 1\.0\.0/.test(r.body.instructions) && JSON.parse(r.body.input).mode === 'interview');
   check('no Anthropic request was made', api.state.requests.length === reqsBeforeF);
 
@@ -786,6 +797,25 @@ await guarded(async () => {
   await page.getByTestId('test-claude').click();
   await until(() => oai.state.requests.length === n + 1);
   check('older models get no reasoning setting at all', oai.state.requests[n].body.model === 'gpt-4.1' && !('reasoning' in oai.state.requests[n].body));
+
+  // limits: say what OpenAI said, not a guess
+  await page.selectOption('#openai-model', 'gpt-6.1-sol');
+  n = oai.state.requests.length;
+  oai.state.cutOffOnce = true;
+  await page.getByTestId('test-claude').click();
+  await until(() => oai.state.requests.length === n + 2);
+  check('OpenAI: a cut-off answer is asked for once more with twice the room', oai.state.requests[n].body.max_output_tokens === 4000 && oai.state.requests[n + 1].body.max_output_tokens === 8000 && await until(async () => /OpenAI answered/.test(await page.getByTestId('test-result').textContent())));
+  oai.state.fail = 429;
+  await page.getByTestId('test-claude').click();
+  await page.getByText(/over a limit/).waitFor();
+  let limitText = await page.getByTestId('test-result').textContent();
+  check("a 429 from OpenAI shows OpenAI's own words and what to check", /tokens per min \(TPM\): Limit 10000, Used 0, Requested 12000/.test(limitText) && /needs bought credit/.test(limitText) && /spend limit/.test(limitText) && !/org-AbC123xyz/.test(limitText), limitText);
+  await shot(page, '28-openai-limit');
+  oai.state.fail = 'quota';
+  await page.getByTestId('test-claude').click();
+  await page.getByText(/no credit to spend/).waitFor();
+  limitText = await page.getByTestId('test-result').textContent();
+  check('an empty OpenAI balance is named as that, not as a rate limit', /exceeded your current quota/.test(limitText) && /Buy credit/.test(limitText) && !/over a limit/.test(limitText), limitText);
 
   // wrong key: plain message, built-in coach takes over
   oai.state.fail = 401;

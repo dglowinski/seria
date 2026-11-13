@@ -6,7 +6,7 @@
 import { runtime } from '../platform.js';
 import { getSettings, DEFAULT_MODEL } from '../store.js';
 import { SYSTEM_PROMPT, OUTPUT_SCHEMA, LOOKUP_SYSTEM } from './prompts.js';
-import { AiError } from './errors.js';
+import { AiError, providerSays, ROOM } from './errors.js';
 
 // Models that can hand a declined request to another model on the server.
 const FALLBACK_MODELS = /^claude-(opus-5-5|sonnet-5-5|fable-5-2)$/;
@@ -21,7 +21,10 @@ function fromSdkError(Anthropic, e) {
   if (e instanceof Anthropic.AuthenticationError) return new AiError('auth', 'Claude rejected the API key. Check it in Settings.');
   if (e instanceof Anthropic.PermissionDeniedError) return new AiError('auth', 'This API key is not allowed to use that model.');
   if (e instanceof Anthropic.NotFoundError) return new AiError('config', 'Claude does not know that model. Pick another one in Settings.');
-  if (e instanceof Anthropic.RateLimitError) return new AiError('busy', 'Claude is rate limited right now. Try again in a minute.');
+  if (e instanceof Anthropic.RateLimitError) {
+    const said = providerSays(e);
+    return new AiError('busy', `Claude turned the request down as over a limit${said ? `: “${said}”` : '.'} Wait a minute and try again. On a new account the per-minute limits are low; they rise as the account is used.`);
+  }
   if (e instanceof Anthropic.BadRequestError) return new AiError('config', `Claude did not accept the request: ${e.message}`);
   if (e instanceof Anthropic.APIConnectionTimeoutError) return new AiError('timeout', 'Claude took too long to answer.');
   if (e instanceof Anthropic.APIConnectionError) return new AiError('offline', 'Could not reach Claude. Check the connection.');
@@ -55,18 +58,22 @@ export async function askClaudeApi(userText, { effort, signal, timeoutMs }) {
     maxRetries: 1,
     timeout: timeoutMs,
   });
+  const room = effort === 'low' ? ROOM.quick : ROOM.normal;
   const params = {
     model,
-    max_tokens: 16000,
+    max_tokens: room,
     system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content: userText }],
     output_config: { effort, format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
   };
+  const send = (p) => (FALLBACK_MODELS.test(model)
+    ? client.beta.messages.create({ ...p, betas: [FALLBACK_BETA], fallbacks: 'default' }, { signal })
+    : client.messages.create(p, { signal }));
   let res;
   try {
-    res = FALLBACK_MODELS.test(model)
-      ? await client.beta.messages.create({ ...params, betas: [FALLBACK_BETA], fallbacks: 'default' }, { signal })
-      : await client.messages.create(params, { signal });
+    res = await send(params);
+    // Cut off for lack of room: ask once more with twice as much.
+    if (res.stop_reason === 'max_tokens') res = await send({ ...params, max_tokens: room * 2 });
   } catch (e) {
     throw fromSdkError(Anthropic, e);
   }
@@ -104,7 +111,7 @@ export async function lookupClaude(userText, { signal }) {
   let text = '';
   try {
     for (let turn = 0; turn < 4; turn++) {
-      const res = await client.messages.create({ model, max_tokens: 16000, system: LOOKUP_SYSTEM, messages, tools: [tool], output_config: { effort: 'low' } }, { signal });
+      const res = await client.messages.create({ model, max_tokens: ROOM.normal, system: LOOKUP_SYSTEM, messages, tools: [tool], output_config: { effort: 'low' } }, { signal });
       if (res.stop_reason === 'refusal') throw new AiError('refused', 'Claude declined that request.');
       for (const block of res.content) {
         if (block.type === 'web_search_tool_result' && Array.isArray(block.content)) for (const r of block.content) if (r?.url) urls.add(r.url);

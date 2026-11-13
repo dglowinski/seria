@@ -4,7 +4,7 @@
 
 import { getSettings, DEFAULT_OPENAI_MODEL } from '../store.js';
 import { SYSTEM_PROMPT, OUTPUT_SCHEMA, LOOKUP_SYSTEM } from './prompts.js';
-import { AiError } from './errors.js';
+import { AiError, providerSays, ROOM } from './errors.js';
 
 let sdkPromise = null;
 const loadSdk = () => (sdkPromise = sdkPromise || import('../../vendor/openai-sdk.js').then((m) => m.default));
@@ -19,7 +19,7 @@ export function openaiParams(model, userText, quick) {
     instructions: SYSTEM_PROMPT,
     input: userText,
     text: { format: { type: 'json_schema', name: 'seria_coach', schema: OUTPUT_SCHEMA, strict: true } },
-    max_output_tokens: 16000,
+    max_output_tokens: quick ? ROOM.quick : ROOM.normal,
     store: false, // do not keep the conversation on OpenAI's side
   };
   if (!NO_REASONING.test(model)) params.reasoning = { effort: quick ? 'low' : 'medium' };
@@ -33,9 +33,12 @@ function fromSdkError(OpenAI, e) {
   if (e instanceof OpenAI.PermissionDeniedError) return new AiError('auth', 'This API key is not allowed to use that model.');
   if (e instanceof OpenAI.NotFoundError) return new AiError('config', 'OpenAI does not know that model. Pick another one in Settings.');
   if (e instanceof OpenAI.RateLimitError) {
-    return e.code === 'insufficient_quota'
-      ? new AiError('auth', 'This OpenAI account has no credit left. Add credit or use another key.')
-      : new AiError('busy', 'OpenAI is rate limited right now. Try again in a minute.');
+    // A 429 has several causes, and "try again later" only fits one of them. Say which.
+    const said = providerSays(e);
+    if (e.code === 'insufficient_quota' || e.type === 'insufficient_quota' || /quota|billing/i.test(said)) {
+      return new AiError('auth', `OpenAI says this account has no credit to spend${said ? `: “${said}”` : '.'} Buy credit or raise the spend limit at platform.openai.com.`);
+    }
+    return new AiError('busy', `OpenAI turned the request down as over a limit${said ? `: “${said}”` : '.'} If this account is new, it needs bought credit before this model works properly. Also check the spend limit on the key's project.`);
   }
   if (e instanceof OpenAI.BadRequestError) return new AiError('config', `OpenAI did not accept the request: ${e.message}`);
   if (e instanceof OpenAI.APIConnectionTimeoutError) return new AiError('timeout', 'OpenAI took too long to answer.');
@@ -52,11 +55,12 @@ export async function askOpenAI(userText, { quick, signal, timeoutMs }) {
     apiKey: s.openaiKey,
     baseURL: s.openaiBaseUrl || undefined,
     dangerouslyAllowBrowser: true, // the key is the user's own and stays on their device
-    maxRetries: 1,
+    maxRetries: quick ? 1 : 2, // the SDK waits as long as OpenAI asks before trying again
     timeout: timeoutMs,
   });
   const params = openaiParams(model, userText, quick);
   let res;
+  let retriedPlain = false;
   try {
     res = await client.responses.create(params, { signal });
   } catch (e) {
@@ -64,7 +68,14 @@ export async function askOpenAI(userText, { quick, signal, timeoutMs }) {
     const aboutReasoning = params.reasoning && e instanceof OpenAI.BadRequestError && /reasoning/i.test(`${e.param || ''} ${e.message || ''}`);
     if (!aboutReasoning) throw fromSdkError(OpenAI, e);
     const { reasoning, ...plain } = params;
+    retriedPlain = true;
     try { res = await client.responses.create(plain, { signal }); } catch (e2) { throw fromSdkError(OpenAI, e2); }
+  }
+  // Cut off for lack of room: ask once more with twice as much.
+  if (res.status === 'incomplete' && res.incomplete_details?.reason === 'max_output_tokens') {
+    const { reasoning, ...rest } = params;
+    const bigger = { ...rest, ...(reasoning && !retriedPlain ? { reasoning } : {}), max_output_tokens: params.max_output_tokens * 2 };
+    try { res = await client.responses.create(bigger, { signal }); } catch (e) { throw fromSdkError(OpenAI, e); }
   }
   const refused = (res.output || []).some((item) => item.type === 'message' && (item.content || []).some((c) => c.type === 'refusal'));
   if (refused || res.incomplete_details?.reason === 'content_filter') throw new AiError('refused', 'OpenAI declined that request.');
@@ -85,7 +96,7 @@ export async function lookupOpenAI(userText, { signal }) {
   const client = new OpenAI({ apiKey: s.openaiKey, baseURL: s.openaiBaseUrl || undefined, dangerouslyAllowBrowser: true, maxRetries: 1, timeout: 120000 });
   let res;
   try {
-    res = await client.responses.create({ model, instructions: LOOKUP_SYSTEM, input: userText, tools: [{ type: 'web_search' }], max_output_tokens: 16000, store: false }, { signal });
+    res = await client.responses.create({ model, instructions: LOOKUP_SYSTEM, input: userText, tools: [{ type: 'web_search' }], max_output_tokens: ROOM.normal, store: false }, { signal });
   } catch (e) {
     throw fromSdkError(OpenAI, e);
   }

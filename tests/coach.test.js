@@ -4,6 +4,7 @@ import { parseProfile, mergeProfile, mergeAiProfile } from '../js/ai/coach.js';
 import { mergeStates } from '../js/cloud.js';
 import { tidy, sourceName } from '../js/ai/ai.js';
 import { openaiParams } from '../js/ai/openai.js';
+import { providerSays, ROOM } from '../js/ai/errors.js';
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT, LOOKUP_SYSTEM, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, lookupRequest, parseLookup } from '../js/ai/prompts.js';
 import { emptyProfile, generatePlan, missingFields } from '../js/domain/planner.js';
 import { emptyEquipment, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail, machineForExercise, machineLabel, isAvailable, isListed, EQUIPMENT, allExercises } from '../js/domain/catalog.js';
@@ -101,6 +102,11 @@ test('openai request: strict schema, nothing stored, reasoning only where the mo
   assert.ok(!('reasoning' in openaiParams('gpt-4.1', 'x', true)));
   assert.ok(!('reasoning' in openaiParams('gpt-5.3-chat-latest', 'x', true)));
   for (const k of ['temperature', 'top_p', 'tools']) assert.ok(!(k in p));
+  // The reserved answer room counts against the per-minute limit, so it is kept small.
+  assert.equal(p.max_output_tokens, ROOM.quick); assert.equal(openaiParams('gpt-6.1-sol', 'x', false).max_output_tokens, ROOM.normal);
+  assert.ok(ROOM.normal <= 8000 && ROOM.quick <= 4000);
+  assert.equal(providerSays({ message: '429 Rate limit reached in organization org-AbC123 on tokens per min: Limit 10000.' }), 'Rate limit reached in organization your account on tokens per min: Limit 10000.');
+  assert.ok(providerSays({ message: 'x'.repeat(400) }).length <= 220); assert.equal(providerSays(null), '');
   // OpenAI's strict mode: the root is a plain object and nesting stays shallow.
   assert.equal(OUTPUT_SCHEMA.type, 'object'); assert.ok(!OUTPUT_SCHEMA.anyOf);
   const depth = (s) => (s.anyOf ? Math.max(...s.anyOf.map(depth)) : s.type === 'object' ? 1 + Math.max(0, ...Object.values(s.properties).map(depth)) : s.type === 'array' ? depth(s.items) : 0);

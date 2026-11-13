@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-13T14:50:20.781Z",
+  "ranAt": "2026-11-13T15:03:26.455Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 143,
-  "passed": 143,
+  "total": 148,
+  "passed": 148,
   "failed": 0,
   "results": [
     {
@@ -386,6 +386,18 @@
     {
       "part": "B Claude API",
       "name": "the key is kept apart from the app data",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "an answer cut off for lack of room is asked for once more with twice as much",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "a 429 from Claude is shown in Claude's own words",
       "ok": true,
       "detail": ""
     },
@@ -830,6 +842,24 @@
     {
       "part": "F OpenAI API",
       "name": "older models get no reasoning setting at all",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "OpenAI: a cut-off answer is asked for once more with twice the room",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "a 429 from OpenAI shows OpenAI's own words and what to check",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "an empty OpenAI balance is named as that, not as a rate limit",
       "ok": true,
       "detail": ""
     },

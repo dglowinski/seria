@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { canned, cannedLookup } from './canned.mjs';
 
 export function startMockAnthropic(port) {
-  const state = { requests: [], fail: null, delayMs: 0, failLookup: false };
+  const state = { requests: [], fail: null, delayMs: 0, failLookup: false, cutOffOnce: false };
   const cors = (req) => ({
     'access-control-allow-origin': req.headers.origin || '*',
     'access-control-allow-headers': req.headers['access-control-request-headers'] || '*',
@@ -40,6 +40,11 @@ export function startMockAnthropic(port) {
           stop_reason: paused ? 'pause_turn' : 'end_turn', stop_sequence: null,
           usage: { input_tokens: 10, output_tokens: 10 },
         });
+      }
+      if (state.fail === 429) return json(429, { type: 'error', error: { type: 'rate_limit_error', message: 'This request would exceed your organization\'s rate limit of 8,000 output tokens per minute.' } });
+      if (state.cutOffOnce) {
+        state.cutOffOnce = false;
+        return json(200, { id: 'msg_cut', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: '{"message": "Hel' }], stop_reason: 'max_tokens', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 } });
       }
       const payload = JSON.parse(body.messages[body.messages.length - 1].content);
       const delay = payload.mode === 'in_session' ? state.delayMs : 0;
