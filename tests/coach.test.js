@@ -1,16 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseProfile, mergeProfile, mergeAiProfile } from '../js/ai/coach.js';
+import { parseProfile, mergeProfile, mergeAiProfile, afterWorkout, afterSetSaved, reviewSession, undoChange, redoChange, editChange, recordUpdate, recomputeSession, deleteWorkout, logActivity, activityText, reviewEquipment, retryPending, reviewWaiting, startTraining } from '../js/ai/coach.js';
 import { mergeStates } from '../js/cloud.js';
 import { tidy, sourceName } from '../js/ai/ai.js';
 import { openaiParams } from '../js/ai/openai.js';
 import { providerSays, ROOM } from '../js/ai/errors.js';
-import { OUTPUT_SCHEMA, SYSTEM_PROMPT, LOOKUP_SYSTEM, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, lookupRequest, parseLookup, trainNowRequest, nextRunRequest } from '../js/ai/prompts.js';
-import { recommend, completeDay } from '../js/domain/schedule.js';
+import { OUTPUT_SCHEMA, SYSTEM_PROMPT, LOOKUP_SYSTEM, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, lookupRequest, parseLookup, trainNowRequest, nextRunRequest, activityRequest } from '../js/ai/prompts.js';
+import { recommend, completeDay, queueState } from '../js/domain/schedule.js';
 import { emptyProfile, generatePlan, missingFields } from '../js/domain/planner.js';
 import { emptyEquipment, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail, machineForExercise, machineLabel, isAvailable, isListed, EQUIPMENT, allExercises, SKETCH_IDS, sketchForExercise, sketchForEquipment, EXERCISES } from '../js/domain/catalog.js';
 import { SKETCHES } from '../js/ui/sketch.js';
 import { emptyState, hydrate } from '../js/store.js';
+import * as store from '../js/store.js';
+import { brokenExercises } from '../js/domain/planner.js';
 import * as S from '../js/domain/session.js';
 
 test('reader: the example message from the design gives goal, experience, days and time', () => {
@@ -68,7 +70,8 @@ test('claude profile: unknown ids and odd values are dropped', () => {
 });
 
 test('claude answer: missing or wrong fields never break the app', () => {
-  assert.deepEqual(tidy(null), { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [], equipment: null, schedule: null });
+  assert.deepEqual(tidy(null), { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [], equipment: null, schedule: null, outlook: '' });
+  assert.equal(tidy({ outlook: '  Eight  weeks\nof steady work. ' }).outlook, 'Eight weeks of steady work.');
   assert.equal(tidy({ schedule: { order: [] } }).schedule, null, 'a schedule with no first session is not a schedule');
   assert.equal(tidy({ equipment: 'lots' }).equipment, null);
   const t = tidy({ message: ' hi ', questions: ['a', 3, ''], plan: { days: 'x' }, changes: [null, { field: 'load' }], ready_for_plan: 'yes' });
@@ -94,10 +97,20 @@ test('prompt: schema is strict everywhere and requests carry the mode and rules 
   const b = JSON.parse(newPlanRequest({ profile, equipment: eq, weights: {} }));
   assert.equal(b.profile.sessions_per_week, 3); assert.equal(b.profile.weeks_ahead, 2); assert.ok(!('weekdays' in b.profile));
   assert.ok(/not a calendar/.test(SYSTEM_PROMPT) && !/weekly resistance-training plan/.test(SYSTEM_PROMPT));
-  let s = S.startSession(plan, 'd1', 1000); s = S.beginSet(s, 2000); s = S.finishSet(s, 3000); s = S.saveSet(s, 4000);
+  let s = S.startSession(plan, 'd1', 1000); s = S.beginSet(s, 2000); s = S.finishSet(s, 4000);
   const c = JSON.parse(sessionRequest({ mode: 'in_session', profile, equipment: eq, plan, session: s, past: [] }));
   assert.equal(c.mode, 'in_session'); assert.equal(c.session.exercises[0].sets[0].reps, plan.days[0].exercises[0].reps);
   assert.equal(c.session.exercises[0].exercise_key, 'd1e1');
+  // Timing goes with every set, and changes the app already made are named as such.
+  assert.equal(c.session.exercises[0].sets[0].seconds_under_load, 2); assert.ok('rest_before_seconds' in c.session.exercises[0].sets[0]);
+  assert.ok('already_applied' in c && !('already_proposed' in c));
+  assert.ok('outlook' in OUTPUT_SCHEMA.properties);
+  assert.ok(/makes your changes at once/.test(SYSTEM_PROMPT) && /"activity"/.test(SYSTEM_PROMPT) && /The long view/.test(SYSTEM_PROMPT));
+  const run = S.newActivity({ type: 'run', minutes: 45, effort: 'hard' }, 5000000);
+  const d = JSON.parse(activityRequest({ profile, plan, sessions: [s, run], activity: run, now: 5000000 + 3600e3 }));
+  assert.equal(d.mode, 'activity'); assert.equal(d.logged_activity.activity, 'Run'); assert.equal(d.logged_activity.minutes, 45);
+  assert.deepEqual(d.logged_activity.counts_as_work_for, ['Quads', 'Hamstrings and glutes', 'Calves']);
+  assert.equal(d.other_activities.length, 0, 'the logged one is not listed twice');
 });
 
 test('openai request: strict schema, nothing stored, reasoning only where the model takes it', () => {
@@ -130,7 +143,7 @@ test('train now and next run: the model gets the list, the history and the app\'
   let plan = generatePlan(profile, eq, { db_bench_press: { value: 20, step: 2 } });
   const t0 = new Date(2026, 10, 9, 18).getTime();
   let w = S.startSession(plan, 'd1', t0);
-  while (w.status === 'active') { if (S.needsWeight(w)) w = S.setStartingWeight(w, 20, 2, t0); w = S.beginSet(w, t0); w = S.finishSet(w, t0 + 1); w = S.saveSet(w, t0 + 2); }
+  while (w.status === 'active') { if (S.needsWeight(w)) w = S.setStartingWeight(w, 20, 2, t0); w = S.beginSet(w, t0); w = S.finishSet(w, t0 + 2); }
   plan = completeDay(plan, 'd1');
   const now = t0 + 26 * 3600e3; // the next evening: a day early
   const pick = recommend(plan, [w], now);
@@ -318,4 +331,198 @@ test('cloud merge: newer main record wins, sessions combine, deletions stick', (
   assert.equal(erased.state.plan, null); assert.ok(erased.pushMain);
   const h = hydrate({ ...m.state, activeSessionId: 'missing' });
   assert.equal(h.activeSessionId, null);
+});
+
+// ---------------------------------------------------------------- updates made at once
+// No model is connected in these tests, so the training rules do the work.
+
+const W0 = { db_bench_press: { value: 20, step: 2 } };
+function freshApp(over = {}) {
+  const profile = { ...emptyProfile(), goal: 'strength', months: 12, daysPerWeek: 3, minutes: 50 };
+  const equipment = emptyEquipment();
+  const plan = generatePlan(profile, equipment, W0);
+  store.replaceState({ ...emptyState(), profile, equipment, plan, weights: { ...W0 }, ...over });
+  return store.getState();
+}
+/** Do a whole session through the store, as the workout screen does. */
+function train(dayId, repsFor = () => null, start = Date.now() - 3600e3) {
+  let s = startTraining(dayId);
+  s = { ...s, id: `s-${start.toString(36)}`, startedAt: start, log: [[0, 'start', dayId]] };
+  store.set({ sessions: store.getState().sessions.map((x) => (x.status === 'active' ? s : x)), activeSessionId: s.id });
+  let t = start;
+  while (s.status === 'active') {
+    if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t);
+    const { ex, set } = S.current(s);
+    s = S.beginSet(s, t += 1000); const r = repsFor(ex, set); if (r != null) s = S.editDraft(s, { reps: r });
+    s = S.finishSet(s, t += 1000);
+  }
+  store.putSession(s);
+  afterWorkout(s);
+  return s;
+}
+const benchIn = (plan) => plan.days.flatMap((d) => d.exercises).filter((x) => x.exerciseId === 'db_bench_press');
+
+test('after a workout: the plan is updated at once, with a summary, and every change can be undone, corrected or made again', () => {
+  const before = freshApp().plan;
+  const reps0 = benchIn(before)[0].reps;
+  const s = train('d1');
+  let st = store.getState();
+  const update = st.proposals.find((p) => p.sessionId === s.id);
+  assert.ok(update, 'an update is written down');
+  assert.equal(update.mode, 'post_session'); assert.equal(update.source, 'rules'); assert.ok(!update.checking && !update.pending);
+  assert.match(update.message, /^All \d+ sets done/);
+  assert.ok(update.changes.length > 0 && update.changes.every((c) => c.status === 'applied' && c.undo), 'changes are in, each with what it replaced');
+  const c = update.changes.find((x) => x.exerciseId === 'db_bench_press');
+  assert.equal(c.field, 'reps');
+  assert.ok(benchIn(st.plan).every((x) => x.reps === reps0 + 1), 'already in the plan, nothing to accept');
+  assert.equal(st.plan.lastUpdate.text, update.message);
+  assert.deepEqual(queueState(st.plan).done, ['d1']);
+  assert.equal(reviewSession(s.id).id, update.id, 'asking again does not double it');
+  // Undo puts back what was there.
+  assert.ok(undoChange(update.id, c.id));
+  st = store.getState();
+  assert.ok(benchIn(st.plan).every((x) => x.reps === reps0));
+  assert.equal(st.proposals[0].changes.find((x) => x.id === c.id).status, 'undone');
+  assert.ok(!undoChange(update.id, c.id), 'nothing to undo twice');
+  // Made again after all.
+  assert.ok(redoChange(update.id, c.id));
+  assert.ok(benchIn(store.getState().plan).every((x) => x.reps === reps0 + 1));
+  // Corrected by hand: the user's number goes in, and the record says what the update had set.
+  assert.ok(editChange(update.id, c.id, reps0 + 2));
+  st = store.getState();
+  const e = st.proposals[0].changes.find((x) => x.id === c.id);
+  assert.equal(e.status, 'edited'); assert.equal(e.value, reps0 + 2); assert.equal(e.suggested, `${reps0 + 1} reps`); assert.equal(e.to, `${reps0 + 2} reps`);
+  assert.ok(benchIn(st.plan).every((x) => x.reps === reps0 + 2));
+  assert.ok(undoChange(update.id, c.id), 'a corrected change can still be undone');
+  assert.ok(benchIn(store.getState().plan).every((x) => x.reps === reps0));
+  // After a rebuild the old list no longer reaches into the new plan.
+  store.set({ plan: { ...store.getState().plan, id: 'plan_new' } });
+  const other = update.changes.find((x) => x.id !== c.id);
+  assert.ok(!undoChange(update.id, other.id));
+  assert.equal(store.getState().proposals[0].changes.find((x) => x.id === other.id).status, 'stale');
+});
+
+test('correcting or deleting the latest workout works the plan out again; an older one leaves it alone', () => {
+  const before = freshApp().plan;
+  const reps0 = benchIn(before)[0].reps;
+  const s1 = train('d1', () => null, Date.now() - 3 * 864e5);
+  assert.ok(benchIn(store.getState().plan).every((x) => x.reps === reps0 + 1));
+  // The first bench set is corrected to two reps short: the +1 rep no longer holds.
+  store.putSession(S.editSet(store.sessionById(s1.id), 0, 0, { reps: reps0 - 2, load: 20, rir: null }));
+  assert.equal(recomputeSession(s1.id), 'redone');
+  let st = store.getState();
+  assert.ok(benchIn(st.plan).every((x) => x.reps === reps0), 'the change built on the old numbers is gone');
+  const u = st.proposals.filter((p) => p.sessionId === s1.id);
+  assert.equal(u.length, 1); assert.ok(!u[0].changes.some((c) => c.exerciseId === 'db_bench_press'));
+  assert.match(u[0].message, /under plan/);
+  // A second workout makes the first one history: correcting it now only changes the record.
+  const s2 = train('d2', () => null, Date.now() - 864e5);
+  const planNow = JSON.stringify(store.getState().plan);
+  store.putSession(S.editSet(store.sessionById(s1.id), 0, 0, { reps: reps0, load: 20, rir: null }));
+  assert.equal(recomputeSession(s1.id), 'old');
+  assert.equal(JSON.stringify(store.getState().plan), planNow);
+  // Deleting the latest workout takes its changes back and puts its session on the list again.
+  const made = store.getState().proposals.find((p) => p.sessionId === s2.id).changes.filter((c) => c.status === 'applied');
+  assert.ok(made.length > 0);
+  deleteWorkout(s2.id);
+  st = store.getState();
+  assert.ok(!st.sessions.some((x) => x.id === s2.id) && !st.proposals.some((p) => p.sessionId === s2.id));
+  assert.deepEqual(queueState(st.plan).done, ['d1']);
+  for (const c of made) {
+    const ex = st.plan.days.flatMap((d) => d.exercises).find((x) => x.exerciseId === c.exerciseId);
+    assert.notEqual(c.field === 'reps' ? ex.reps : ex.load?.value, c.value, `${c.exerciseName} is back to what it was`);
+  }
+  // Deleting an older workout leaves the plan alone.
+  train('d2', () => null, Date.now() - 3600e3);
+  const keep = JSON.stringify(store.getState().plan);
+  deleteWorkout(s1.id);
+  assert.equal(JSON.stringify(store.getState().plan), keep);
+});
+
+test('during a workout: a missed set changes the sets to come at once, and the change can be undone', () => {
+  freshApp();
+  let s = startTraining('d1');
+  const target = S.current(s).set.target.reps;
+  s = S.beginSet(s); s = S.editDraft(s, { reps: target - 1 });
+  const done = S.finishSet(s);
+  store.putSession(done);
+  afterSetSaved(s, s.exercises[0].key, 0);
+  let live = store.activeSession();
+  assert.ok(live.hint?.applied, 'made without asking');
+  assert.equal(live.exercises[0].sets[1].target.load, 18);
+  store.putSession(S.undoHint(live));
+  assert.equal(store.activeSession().exercises[0].sets[1].target.load, 20);
+  // Putting the rep back during the rest: no change is left standing.
+  store.putSession(S.adjustLast(store.activeSession(), { reps: target }));
+  afterSetSaved(store.activeSession(), s.exercises[0].key, 0);
+  live = store.activeSession();
+  assert.equal(live.hint, null); assert.equal(live.exercises[0].sets[1].target.load, 20);
+});
+
+test('other activity: logged with the workouts, explained in words, and gone again when deleted', () => {
+  freshApp();
+  const act = logActivity({ type: 'run', minutes: 45, effort: 'hard' });
+  let st = store.getState();
+  assert.equal(st.sessions.length, 1); assert.equal(st.activeSessionId, null);
+  assert.equal(store.doneWorkouts(st).length, 0, 'not counted as a workout');
+  const u = st.proposals.find((p) => p.sessionId === act.id);
+  assert.equal(u.mode, 'activity'); assert.deepEqual(u.changes, []);
+  assert.match(u.message, /45 min run, hard effort\. It counts as work for quads, hamstrings and glutes and calves/);
+  assert.equal(st.plan.lastUpdate.text, u.message);
+  assert.match(activityText({ title: 'Swim', activity: 'swim', minutes: 10, effort: 'easy' }), /Too light or too short/);
+  // The first session of the plan trains legs too? Whatever is next, a leg session is not offered today.
+  const pick = recommend(st.plan, st.sessions, Date.now() + 2 * 3600e3);
+  const legs = (d) => d.exercises.some((x) => ['squat', 'hinge', 'lunge'].includes(x.pattern) && x.tier === 'main');
+  assert.ok(!legs(st.plan.days.find((d) => d.id === pick.dayId)) || pick.flags.clash);
+  deleteWorkout(act.id);
+  st = store.getState();
+  assert.equal(st.sessions.length, 0); assert.ok(!st.proposals.some((p) => p.sessionId === act.id));
+});
+
+test('equipment taken away: the plan swaps at once; an undone swap is not forced back in', () => {
+  const eq = emptyEquipment(); eq.items.leg_press = true; eq.items.rack = true;
+  const profile = { ...emptyProfile(), goal: 'strength', months: 12, daysPerWeek: 3, minutes: 50 };
+  store.replaceState({ ...emptyState(), profile, equipment: eq, plan: generatePlan(profile, eq, {}) });
+  assert.equal(reviewEquipment(), null, 'nothing to do while everything is there');
+  const eq2 = JSON.parse(JSON.stringify(eq)); eq2.items.rack = false;
+  store.set({ equipment: eq2 });
+  const n = brokenExercises(store.getState().plan, eq2).length;
+  assert.ok(n > 0);
+  const u = reviewEquipment();
+  assert.equal(u.mode, 'equipment'); assert.equal(u.changes.length, n); assert.match(u.message, /equipment list changed/);
+  assert.equal(brokenExercises(store.getState().plan, eq2).length, 0);
+  assert.ok(undoChange(u.id, u.changes[0].id));
+  assert.equal(brokenExercises(store.getState().plan, eq2).length >= 1, true);
+  assert.equal(reviewEquipment(), null, 'the user said no to that one');
+  assert.ok(reviewEquipment({ force: true }), '"Swap them" still works');
+  assert.equal(brokenExercises(store.getState().plan, eq2).length, 0);
+});
+
+test('older data: a workout left on the old result step carries on as a set in progress', () => {
+  const st = freshApp();
+  let s = S.beginSet(S.setStartingWeight(S.startSession(st.plan, 'd1'), 20, 2));
+  const old = hydrate({ ...st, sessions: [{ ...s, phase: 'log', log: undefined, last: undefined }], activeSessionId: s.id });
+  assert.equal(old.sessions[0].phase, 'active'); assert.equal(old.activeSessionId, s.id);
+  const done = S.finishSet(old.sessions[0]);
+  assert.equal(done.phase, 'rest'); assert.equal(done.exercises[0].sets[0].status, 'done'); assert.ok(Array.isArray(done.log));
+  assert.deepEqual(S.readLog({ ...done, log: undefined }), []);
+});
+
+test('offline: a review that waits is shown as waiting, and dropped when no model is connected any more', () => {
+  freshApp();
+  const s = train('d1');
+  const u = store.getState().proposals.find((p) => p.sessionId === s.id);
+  store.patchUpdate(u.id, { pending: true });
+  assert.ok(reviewWaiting());
+  retryPending(); // no model connected: there is nobody to ask
+  assert.ok(!reviewWaiting());
+  assert.equal(store.getState().proposals[0].changes.length, u.changes.length, 'the rule-based update stands');
+  // Data saved by the version before, with changes that were never accepted: they can still be applied.
+  const st = store.getState();
+  const legacy = { id: 'p-old', createdAt: 1, mode: 'coach', source: 'claude', sessionId: null, changes: [{ id: 'c-old', status: 'open', exerciseKey: st.plan.days[0].exercises[0].key, exerciseName: 'x', field: 'sets', from: '4 sets', to: '2 sets', value: 2, reason: 'r' }] };
+  store.set({ proposals: [...st.proposals, legacy] });
+  assert.ok(redoChange('p-old', 'c-old'));
+  assert.equal(store.getState().plan.days[0].exercises[0].sets, 2);
+  const made = recordUpdate({ mode: 'coach', source: 'claude', changes: [{ id: 'c-x', exerciseKey: 'nope', exerciseName: 'gone', field: 'sets', value: 3, from: '', to: '', reason: 'r' }] });
+  assert.equal(made.changes[0].status, 'stale', 'a change that points at nothing is written down, not made');
 });

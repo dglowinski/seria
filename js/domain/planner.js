@@ -4,7 +4,7 @@
 
 import {
   SPLITS, TEMPLATES, DAY_TITLES, PATTERN_FALLBACK, TIME, MAX_DAYS, GOALS, TARGET_RIR, CYCLE,
-  RULES_VERSION, PROGRESSION, WEEKLY_SETS, prescribe, levelFor, setSeconds, defaultCycleWeeks,
+  RULES_VERSION, PROGRESSION, WEEKLY_SETS, SCHEDULE, prescribe, levelFor, setSeconds, defaultCycleWeeks,
 } from './rules.js';
 import { newRun, restPattern } from './schedule.js';
 import { allExercises, canDo, zoneOf, equipmentNames, isLowerPattern, equipmentList, isAvailable, GROUP_OF, MAIN_GROUPS } from './catalog.js';
@@ -361,6 +361,53 @@ export function fmtMonths(m) {
   if (m < 24) return `${Math.round(m)} month${Math.round(m) === 1 ? '' : 's'}`;
   const y = Math.round((m / 12) * 10) / 10;
   return `${y} years`;
+}
+
+// ---------------------------------------------------------------- the long view
+
+const listAnd = (a) => (a.length <= 1 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
+
+/**
+ * How the training is meant to develop from here, in words, built from the
+ * plan and the rules library: what this round holds, how it gets harder, what
+ * happens round after round, what happens when it stalls, and what would be
+ * added with more time. Returns [{ title, text }].
+ */
+export function buildOutlook(plan) {
+  if (!plan?.days?.length) return [];
+  const n = plan.days.length;
+  const weeks = Math.max(plan.cycleWeeks || Math.round(n / (plan.perWeek || n)), 1);
+  const names = (pred) => [...new Set(plan.days.flatMap((d) => d.exercises.filter(pred).map((x) => x.name)))];
+  const mains = names((x) => x.tier === 'main');
+  const others = names((x) => x.tier !== 'main');
+  const low = weeklySets(plan).rows.filter((r) => r.low).map((r) => r.group.toLowerCase());
+  const [rirLo, rirHi] = TARGET_RIR[plan.level] || TARGET_RIR.intermediate;
+  const out = [];
+  out.push({
+    title: 'This round',
+    text: `${n} session${n === 1 ? '' : 's'} over about ${weeks} week${weeks === 1 ? '' : 's'}, ${plan.perWeek} a week, on any days you like. `
+      + (mains.length ? `The main lifts (${listAnd(mains.slice(0, 5))}${mains.length > 5 ? ' and others' : ''}) come back every week so they can progress. ` : '')
+      + (weeks > 1 && others.length ? `The ${others.length} smaller exercises take turns from week to week, so more of them fit in.` : ''),
+  });
+  out.push({
+    title: 'How it gets harder',
+    text: `Each exercise has a rep range. You keep the weight and add reps until every set reaches the top of the range. Then the weight goes up by the smallest step your equipment allows and the reps start again at the bottom. Most sets stop with ${rirLo}-${rirHi} reps left in the tank; the last set of an exercise is the one to push. Progress is quick in the first months and slows down later, which is normal.`,
+  });
+  out.push({
+    title: 'Round after round',
+    text: `After every workout the plan is updated from what you recorded. When the last session of a round is done, the next round of about ${weeks} week${weeks === 1 ? '' : 's'} is planned from your results: lifts that keep moving stay, ones that stalled or were skipped again and again are changed, and the smaller exercises rotate.`,
+  });
+  out.push({
+    title: 'When it stalls',
+    text: `One off day changes nothing. Two sessions in a row short of the target on the same exercise, and its weight drops by about ${PROGRESSION.deloadPct}% so you can build back up. After ${SCHEDULE.breakDays} days or more away, the first session back is ${SCHEDULE.easePct}% lighter and the plan keeps its numbers.`,
+  });
+  out.push({
+    title: 'Room to add',
+    text: low.length
+      ? `Your time fits fewer sets than the target for ${listAnd(low)}. With longer sessions or one more day a week, extra sets for ${low.length > 1 ? 'these' : 'this'} come first.${plan.notes?.length ? ' What was left out for time is listed on the plan screen.' : ''}`
+      : 'The week reaches the target sets for every big muscle group. With more time, the next thing to add is a second exercise for the areas you care most about. Tell the coach which.',
+  });
+  return out;
 }
 
 // ---------------------------------------------------------------- plan upkeep

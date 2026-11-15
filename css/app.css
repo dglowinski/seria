@@ -76,6 +76,7 @@ h4 { font-size: 16px; letter-spacing: -.015em; }
 }
 button.row:active, .row.tap:active { background: var(--panel-2); }
 .row > * { min-width: 0; }
+.row > .accent, .row > .tag { flex: none; }
 .row .sub { color: var(--muted); font-size: 14px; }
 .row.on { border-color: var(--accent); }
 .note { border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; font-size: 15px; }
@@ -168,6 +169,8 @@ details.note > summary { cursor: pointer; }
 .num::placeholder { color: var(--line); font-weight: 700; }
 .step { width: 52px; height: 52px; border: 1px solid var(--line); border-radius: 12px; font-size: 18px; font-weight: 700; display: grid; place-items: center; font-variant-numeric: tabular-nums; flex: none; }
 .step:active { background: var(--panel-2); }
+.big { font-size: 46px; line-height: 1; letter-spacing: -.05em; font-weight: 800; font-variant-numeric: tabular-nums; }
+.note.push { border-color: var(--accent); }
 .sets { display: flex; flex-direction: column; gap: 6px; }
 .set { display: grid; grid-template-columns: 54px 1fr auto; gap: 8px; align-items: center; font-size: 15px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; width: 100%; font-variant-numeric: tabular-nums; }
 .set.now { border-color: var(--accent); }

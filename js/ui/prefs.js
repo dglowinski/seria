@@ -1,13 +1,13 @@
 // Settings: connect an AI model (Claude or OpenAI), workout signals, backup, and the training rules.
 
-import { html, useState, useRef, useStore, useSignal, go, toast } from './kit.js';
+import { html, useState, useRef, useStore, useSignal, go, toast, plural } from './kit.js';
 import * as store from '../store.js';
 import { aiStatus, aiName, testConnection } from '../ai/ai.js';
-import { inViewer, runtime, onRuntime, saveFile, isStandalone } from '../platform.js';
+import { inViewer, runtime, onRuntime, saveFile, isStandalone, primeAudio, beep, buzz, canNotify, notifyState, askNotify, notify } from '../platform.js';
 import { cloud, onCloud, syncNow, CLOUD_TEXT } from '../cloud.js';
 import { RULES, SOURCES, RULES_VERSION, RULES_UPDATED, PRESCRIPTION, GOALS } from '../domain/rules.js';
 
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 let installEvent = null;
 if (typeof window !== 'undefined') window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; });
 
@@ -26,6 +26,7 @@ export function PrefsScreen() {
   const status = aiStatus();
   const [test, setTest] = useState({ state: 'idle', text: '' });
   const [confirmReset, setConfirmReset] = useState(false);
+  const [signal, setSignal] = useState('');
   const file = useRef(null);
 
   const openai = s.provider === 'openai';
@@ -45,6 +46,20 @@ export function PrefsScreen() {
     e.target.value = '';
     if (!f) return;
     try { store.importData(await f.text()); toast('Backup restored'); } catch (err) { toast(err.message || 'That file could not be read'); }
+  };
+  // The signal that reaches a locked phone is a notification, so it needs the phone's permission.
+  const setNotify = async (on) => {
+    if (!on) { store.setSettings({ notify: false }); return; }
+    primeAudio();
+    const ok = await askNotify();
+    store.setSettings({ notify: ok });
+    toast(ok ? 'Notifications are on' : 'The phone did not allow notifications. Allow them for this site in the browser settings.');
+  };
+  const testSignal = () => {
+    primeAudio();
+    if (s.sound) beep();
+    if (s.vibrate) buzz();
+    if (s.notify) { setSignal('wait'); setTimeout(async () => setSignal((await notify('Rest over', 'This is the test signal from Seria.')) ? 'sent' : 'failed'), 8000); } else setSignal('now');
   };
   const install = async () => {
     if (!installEvent) return;
@@ -109,9 +124,15 @@ export function PrefsScreen() {
 
     <section class="stack">
       <h3>During a workout</h3>
+      <${Switch} id="pref-autostart" label="Start the next set by itself" hint="When the rest runs out, the next set of the same exercise begins. 'Start now' resets its clock." on=${s.autoStart} onChange=${(v) => store.setSettings({ autoStart: v })} />
       <${Switch} id="pref-sound" label="Sound when rest ends" on=${s.sound} onChange=${(v) => store.setSettings({ sound: v })} />
       <${Switch} id="pref-vibrate" label="Vibrate when rest ends" on=${s.vibrate} onChange=${(v) => store.setSettings({ vibrate: v })} />
       <${Switch} id="pref-awake" label="Keep the screen on" on=${s.keepAwake} onChange=${(v) => store.setSettings({ keepAwake: v })} />
+      ${canNotify() ? html`<${Switch} id="pref-notify" label="Signal with the screen off" hint="A notification when the rest ends, so the phone can buzz in your pocket" on=${s.notify && notifyState() === 'granted'} onChange=${setNotify} />`
+        : html`<p class="small muted" data-testid="notify-unavailable">${inViewer ? 'Inside claude.ai the page cannot send notifications. For a signal with the screen off, use the stand-alone app.' : 'This browser cannot send notifications from the page, so there is no signal with the screen off here.'}</p>`}
+      <p class="small muted">With the screen on, the phone buzzes and beeps by itself. With the screen off a web page is not allowed to vibrate; the only way is a notification, and the phone decides how that buzzes (check that notifications from the browser or the installed app are not silenced). It works best with Seria added to the home screen. This part could not be tried on a real phone while building, so use the test below.</p>
+      <button class="cta ghost" data-testid="test-signal" onClick=${testSignal}>Test the signal</button>
+      ${signal && html`<p class="small muted" data-testid="signal-result">${{ now: 'That was the sound and the buzz you get with the screen on.', wait: 'Lock the phone now. A notification comes in 8 seconds.', sent: 'Notification sent. If the phone stayed quiet, check its notification settings for this app.', failed: 'The notification could not be sent. Check that notifications are allowed for this site.' }[signal]}</p>`}
     </section>
 
     <section class="stack">
@@ -124,7 +145,7 @@ export function PrefsScreen() {
         ${!store.storageWorks() && html`<span class="small" style="color:var(--bad)">This browser is not letting the page save. Changes may be lost on reload.</span>`}
       </div>
       ${inViewer && cloud.status !== 'off' && html`<button class="cta ghost" onClick=${() => { syncNow(); toast('Syncing…'); }}>Sync now</button>`}
-      <p class="small muted">${state.sessions.filter((x) => x.status === 'done').length} workouts · plan ${state.plan ? `v${state.plan.version}` : 'not built yet'}</p>
+      <p class="small muted">${plural(store.doneWorkouts(state).length, 'workout')} · plan ${state.plan ? `v${state.plan.version}` : 'not built yet'}</p>
       <button class="cta ghost" data-testid="export" onClick=${doExport}>Save a backup file</button>
       <button class="cta ghost" onClick=${() => file.current.click()}>Restore from a backup file</button>
       <input ref=${file} id="import-file" type="file" accept="application/json,.json" hidden onChange=${doImport} />

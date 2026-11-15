@@ -11,16 +11,19 @@ import { HistoryScreen, SessionScreen } from './ui/history.js';
 import { EquipmentScreen } from './ui/equipment.js';
 import { PrefsScreen, RulesScreen } from './ui/prefs.js';
 import { Workout } from './ui/workout.js';
+import { WeightsScreen } from './ui/weights.js';
+import { retryPending, reviewEquipment } from './ai/coach.js';
 
 const TABS = [['plan', 'Plan'], ['coach', 'Coach'], ['history', 'History'], ['equipment', 'Equipment']];
-const TAB_OF = { plan: 'plan', day: 'plan', review: 'plan', coach: 'coach', history: 'history', session: 'history', equipment: 'equipment' };
-const SUB_TITLE = { day: 'Day', review: 'Proposed changes', session: 'Workout', prefs: 'Settings', rules: 'Training rules' };
-const PARENT = { day: 'plan', review: 'plan', session: 'history', prefs: 'plan', rules: 'prefs' };
+const TAB_OF = { plan: 'plan', day: 'plan', review: 'plan', weights: 'plan', coach: 'coach', history: 'history', session: 'history', equipment: 'equipment' };
+const SUB_TITLE = { day: 'Session', review: 'What changed', weights: 'Weights', session: 'Workout', prefs: 'Settings', rules: 'Training rules' };
+const PARENT = { day: 'plan', review: 'plan', weights: 'plan', session: 'history', prefs: 'plan', rules: 'prefs' };
 
 function Screen({ route }) {
   switch (route.name) {
     case 'day': return html`<${DayScreen} dayId=${route.param} />`;
     case 'review': return html`<${ReviewScreen} />`;
+    case 'weights': return html`<${WeightsScreen} />`;
     case 'coach': return html`<${CoachScreen} />`;
     case 'history': return html`<${HistoryScreen} />`;
     case 'session': return html`<${SessionScreen} sessionId=${route.param} />`;
@@ -40,6 +43,18 @@ function App() {
   // A workout in progress is where the user wants to be after a reload.
   const ready = !inViewer || cloud.started;
   useEffect(() => { if (ready && store.activeSession() && parseHash().name !== 'workout') go('workout'); }, [ready]);
+
+  // A review of the last workout that could not be had (no connection, page closed) is asked for again:
+  // once the app is up, and whenever the phone comes back online.
+  useEffect(() => {
+    if (!ready) return undefined;
+    const t = setTimeout(retryPending, 1500);
+    window.addEventListener('online', retryPending);
+    return () => { clearTimeout(t); window.removeEventListener('online', retryPending); };
+  }, [ready]);
+
+  // Equipment taken off the list: once the user leaves the Equipment tab, the plan swaps what can no longer be done.
+  useEffect(() => { if (ready && route.name !== 'equipment' && route.name !== 'workout') reviewEquipment(); }, [ready, route.name, state.equipment]);
 
   // Inside claude.ai, hold the app until the cloud copy is in, so nothing typed early can overwrite it.
   if (inViewer && !cloud.started) {

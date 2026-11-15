@@ -1,9 +1,11 @@
-// Reads results and turns them into proposed changes, using the numbers in the
-// rules library. Works with no network. Each change carries the old value, the
-// new value and a short reason built only from recorded data.
+// Reads results and turns them into changes to the plan, using the numbers in
+// the rules library. Works with no network. Each change carries the old value,
+// the new value and a short reason built only from recorded data. Changes are
+// made at once; each keeps what it replaced, so it can be undone.
 
 import { PROGRESSION } from './rules.js';
 import { fmtLoadShort, refreshPlan } from './planner.js';
+import { summarize } from './session.js';
 import { allExercises, canDo, equipmentNames, zoneOf, substitutesFor } from './catalog.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -85,7 +87,9 @@ function facts(ex) {
   const loads = [...new Set(done.map((st) => st.actual.load))];
   const plannedLoad = ex.sets[0].planned.load;
   const plannedReps = ex.sets[0].planned.reps;
-  const lowered = done.some((st) => plannedLoad != null && st.actual.load != null && st.actual.load < plannedLoad);
+  // With no weight in the plan yet (it was chosen in this session), the first set done is the yardstick.
+  const baseLoad = plannedLoad ?? done[0]?.actual.load ?? null;
+  const lowered = done.some((st) => baseLoad != null && st.actual.load != null && st.actual.load < baseLoad);
   return {
     done, allDone, short, loads, plannedLoad, plannedReps, lowered,
     oneLoad: loads.length === 1 ? loads[0] : null,
@@ -108,7 +112,7 @@ function previousRun(exerciseId, session, past) {
 
 /**
  * Compare a finished session with the plan and with earlier sessions, and
- * propose updates for the next sessions. Returns [] when nothing is justified.
+ * work out the updates for the next sessions. Returns [] when nothing is justified.
  */
 export function postSessionChanges(session, plan, past = []) {
   const changes = [];
@@ -218,13 +222,18 @@ export function equipmentChanges(plan, equipment, profile = {}) {
 
 // ---------------------------------------------------------------- applying
 
+const IDENTITY = ['exerciseId', 'name', 'pattern', 'loadType', 'equipment', 'zone', 'load'];
+const pickFields = (o, keys) => Object.fromEntries(keys.map((k) => [k, o[k] == null ? o[k] ?? null : clone(o[k])]));
+
 /**
- * Apply one accepted change to the plan. Returns { plan, weights } with the
- * plan version bumped. Finished sessions keep their own copy of the old plan.
+ * Make one change to the plan. Returns { plan, weights, touched, undo } with the
+ * plan version bumped; `undo` holds what was there before, for undoPlanChange.
+ * Finished sessions keep their own copy of the old plan.
  */
 export function applyPlanChange(plan, change, equipment, weights = {}) {
   const next = clone(plan);
   const w = { ...weights };
+  const undo = { planId: plan.id, items: [], weights: {}, days: [] };
   const targets = [];
   for (const d of next.days) {
     for (const ex of d.exercises) {
@@ -239,37 +248,156 @@ export function applyPlanChange(plan, change, equipment, weights = {}) {
     for (const d of next.days) for (const ex of d.exercises) if (ex.exerciseId === id && !targets.some((t) => t.ex === ex)) targets.push({ d, ex });
   }
   for (const { d, ex } of targets) {
+    const item = { dayId: d.id, key: ex.key, index: d.exercises.indexOf(ex), field: change.field };
     if (change.field === 'load') {
-      const step = ex.load?.step ?? PROGRESSION.defaultStep[ex.loadType] ?? 2.5;
+      item.before = { load: ex.load ? { ...ex.load } : null, reps: ex.reps };
+      if (!(ex.exerciseId in undo.weights)) undo.weights[ex.exerciseId] = w[ex.exerciseId] ? { ...w[ex.exerciseId] } : null;
+      const step = ex.load?.step ?? w[ex.exerciseId]?.step ?? PROGRESSION.defaultStep[ex.loadType] ?? 2.5;
       ex.load = { value: change.value, step };
       w[ex.exerciseId] = { ...(w[ex.exerciseId] || {}), value: change.value, step, type: ex.loadType, at: Date.now() };
       if (change.reps != null) ex.reps = clampInt(change.reps, 1, 30);
     } else if (change.field === 'reps') {
+      item.before = { reps: ex.reps, repLo: ex.repLo, repHi: ex.repHi };
       ex.reps = clampInt(change.value, 1, 30);
       ex.repLo = Math.min(ex.repLo, ex.reps);
       ex.repHi = Math.max(ex.repHi, ex.reps);
     } else if (change.field === 'sets') {
+      item.before = { sets: ex.sets };
       ex.sets = clampInt(change.value, 1, 6);
     } else if (change.field === 'rest') {
+      item.before = { restSec: ex.restSec };
       ex.restSec = clampInt(change.value, 20, 360);
     } else if (change.field === 'remove') {
+      item.before = clone(ex);
       d.exercises = d.exercises.filter((x) => x !== ex);
     } else if (change.field === 'exercise') {
       const cat = allExercises(equipment).find((x) => x.id === change.value);
       if (!cat) continue;
+      item.before = pickFields(ex, IDENTITY);
       const known = w[cat.id];
       Object.assign(ex, {
         exerciseId: cat.id, name: cat.name, pattern: cat.pattern, loadType: cat.load,
         equipment: equipmentNames(equipment, cat), zone: zoneOf(equipment, cat),
         load: known ? { value: known.value, step: known.step } : (cat.load === 'bodyweight' ? { value: 0, step: PROGRESSION.defaultStep.bodyweight } : null),
       });
-    }
+    } else continue;
+    undo.items.push(item);
   }
+  // A session left with nothing in it goes; it is kept whole so undo can bring it back.
+  next.days.forEach((d, i) => { if (!d.exercises.length) undo.days.push({ index: i, day: clone(plan.days.find((x) => x.id === d.id)) }); });
   next.days = next.days.filter((d) => d.exercises.length > 0);
-  if (!next.days.length) return { plan, weights, touched: 0 }; // a plan needs at least one exercise
+  if (!next.days.length) return { plan, weights, touched: 0, undo: null }; // a plan needs at least one exercise
+  if (!undo.items.length) return { plan, weights, touched: 0, undo: null };
   next.version = (plan.version || 1) + 1;
   next.updatedAt = Date.now();
-  return { plan: refreshPlan(next), weights: w, touched: targets.length };
+  return { plan: refreshPlan(next), weights: w, touched: undo.items.length, undo };
+}
+
+/** Can this change still be taken back? Only on the plan it was made to. */
+export const canUndo = (plan, change) => !!plan && !!change?.undo && change.undo.planId === plan.id && (change.status === 'applied' || change.status === 'edited');
+
+/**
+ * Take one change back. Each value returns only where it still is what the
+ * change set it to: anything changed again since is left alone.
+ * Returns { plan, weights, touched }; touched 0 means nothing could be undone.
+ */
+export function undoPlanChange(plan, change, weights = {}) {
+  const u = change?.undo;
+  if (!u || !plan || plan.id !== u.planId) return { plan, weights, touched: 0 };
+  const next = clone(plan);
+  const w = { ...weights };
+  let touched = 0;
+  const back = new Set();
+  for (const r of u.days || []) {
+    if (next.days.some((d) => d.id === r.day.id)) continue;
+    next.days.splice(Math.min(r.index, next.days.length), 0, clone(r.day));
+    back.add(r.day.id);
+    touched++;
+  }
+  for (const it of u.items) {
+    if (back.has(it.dayId)) continue;
+    const d = next.days.find((x) => x.id === it.dayId);
+    if (!d) continue;
+    if (it.field === 'remove') {
+      if (d.exercises.some((x) => x.key === it.key)) continue;
+      d.exercises.splice(Math.min(it.index, d.exercises.length), 0, clone(it.before));
+      touched++;
+      continue;
+    }
+    const ex = d.exercises.find((x) => x.key === it.key);
+    if (!ex) continue;
+    if (it.field === 'load') {
+      if (ex.load?.value !== change.value) continue;
+      ex.load = it.before.load ? { ...it.before.load } : null;
+      if (change.reps != null && ex.reps === clampInt(change.reps, 1, 30)) ex.reps = it.before.reps;
+    } else if (it.field === 'reps') {
+      if (ex.reps !== clampInt(change.value, 1, 30)) continue;
+      Object.assign(ex, it.before);
+    } else if (it.field === 'sets') {
+      if (ex.sets !== clampInt(change.value, 1, 6)) continue;
+      ex.sets = it.before.sets;
+    } else if (it.field === 'rest') {
+      if (ex.restSec !== clampInt(change.value, 20, 360)) continue;
+      ex.restSec = it.before.restSec;
+    } else if (it.field === 'exercise') {
+      if (ex.exerciseId !== change.value) continue;
+      Object.assign(ex, clone(it.before));
+    }
+    touched++;
+  }
+  if (!touched) return { plan, weights, touched: 0 };
+  for (const [id, prev] of Object.entries(u.weights || {})) {
+    if (w[id]?.value !== change.value) continue;
+    if (prev) w[id] = prev; else delete w[id];
+  }
+  next.version = (plan.version || 1) + 1;
+  next.updatedAt = Date.now();
+  return { plan: refreshPlan(next), weights: w, touched };
+}
+
+/** Fields the user can correct by hand after a change was made. */
+export const EDITABLE = ['load', 'reps', 'sets', 'rest'];
+
+/** The same change with another value, typed by the user. Null when the value makes no sense. */
+export function withValue(plan, change, value) {
+  const v = Number(value);
+  if (!EDITABLE.includes(change.field) || !Number.isFinite(v) || v < 0) return null;
+  const ex = plan?.days.flatMap((d) => d.exercises).find((x) => (change.exerciseKey ? x.key === change.exerciseKey : x.exerciseId === change.exerciseId));
+  if (!ex) return null;
+  const next = { ...change, undo: undefined };
+  if (change.field === 'load') {
+    next.value = Math.round(v * 100) / 100;
+    next.to = fmtLoadShort(ex.loadType, next.value);
+  } else {
+    const lim = { reps: [1, 30], sets: [1, 6], rest: [20, 360] }[change.field];
+    next.value = clampInt(v, lim[0], lim[1]);
+    next.to = `${next.value}${{ reps: ' reps', sets: ' sets', rest: ' s rest' }[change.field]}`;
+  }
+  return next;
+}
+
+// ---------------------------------------------------------------- summary in words
+
+const secText = (sec) => (sec >= 60 ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')} min` : `${sec} s`);
+
+/**
+ * The workout in two or three sentences, from the records alone: what was done
+ * against the plan, and what changes for next time. Used when no model is
+ * connected, and until the model's own summary arrives.
+ */
+export function ruleSummary(session, changes = []) {
+  const sum = summarize(session);
+  const parts = [];
+  parts.push(sum.done === sum.total
+    ? `All ${sum.total} sets done in ${sum.minutes} min.`
+    : `${sum.done} of ${sum.total} sets done in ${sum.minutes} min${sum.skipped ? `, ${sum.skipped} skipped` : ''}.`);
+  if (sum.onPlan) parts.push('Everything went to plan.');
+  else parts.push(`${sum.highlights.slice(0, 2).join('; ')}${sum.highlights.length > 2 ? `, and ${sum.highlights.length - 2} more` : ''}.`);
+  if (sum.rests && sum.rests.actual > sum.rests.planned * 1.3) parts.push(`Rests between sets ran to ${secText(sum.rests.actual)} on average against ${secText(sum.rests.planned)} planned.`);
+  if (session.easePct > 0) parts.push('This was a lighter session to ease back in, so the plan keeps its numbers.');
+  else if (changes.length) parts.push(`Changed for next time: ${changes.slice(0, 3).map((c) => `${c.exerciseName} ${c.field === 'remove' ? 'removed' : `→ ${c.to}`}`).join('; ')}${changes.length > 3 ? `, and ${changes.length - 3} more` : ''}.`);
+  else parts.push('Nothing in the plan needs to change yet.');
+  return parts.join(' ');
 }
 
 function clampInt(v, lo, hi) {
@@ -340,3 +468,6 @@ export function describeChange(c) {
   const extra = c.field === 'load' && c.reps != null ? `, ${c.reps} reps` : '';
   return { what, text: `${c.from} → ${c.to}${extra}` };
 }
+
+/** Is the change in the plan right now? */
+export const isApplied = (c) => c.status === 'applied' || c.status === 'edited';

@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { canned, cannedLookup } from './canned.mjs';
 
 export function startMockAnthropic(port) {
-  const state = { requests: [], fail: null, delayMs: 0, failLookup: false, cutOffOnce: false };
+  const state = { requests: [], fail: null, delayMs: 0, reviewDelayMs: 0, failLookup: false, cutOffOnce: false };
   const cors = (req) => ({
     'access-control-allow-origin': req.headers.origin || '*',
     'access-control-allow-headers': req.headers['access-control-request-headers'] || '*',
@@ -47,7 +47,7 @@ export function startMockAnthropic(port) {
         return json(200, { id: 'msg_cut', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: '{"message": "Hel' }], stop_reason: 'max_tokens', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 } });
       }
       const payload = JSON.parse(body.messages[body.messages.length - 1].content);
-      const delay = payload.mode === 'in_session' ? state.delayMs : 0;
+      const delay = payload.mode === 'in_session' ? state.delayMs : payload.mode === 'after_session' ? state.reviewDelayMs : 0;
       if (delay) await new Promise((r) => setTimeout(r, delay));
       return json(200, {
         id: 'msg_mock', type: 'message', role: 'assistant', model: body.model,

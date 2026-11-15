@@ -1,7 +1,7 @@
 // Equipment tab: what the gym has. Free weights, benches and the pull-up bar
 // are there by default; machines are added by the user.
 
-import { html, useState, useRef, useEffect, useStore, Sheet, Icon, toast } from './kit.js';
+import { html, useState, useRef, useEffect, useStore, Sheet, Icon, toast, go } from './kit.js';
 import * as store from '../store.js';
 import { EQUIPMENT, PATTERNS, ZONES, LOADING, isAvailable, isListed, machineDetail, machineLabel, sketchForEquipment } from '../domain/catalog.js';
 import { Sketch } from './sketch.js';
@@ -131,6 +131,8 @@ export function EquipmentScreen() {
 
   return html`<main class="main with-tabs">
     <div class="spread"><div class="stack tight"><p class="eyebrow">Equipment</p><h2>What is available?</h2></div><small>My gym</small></div>
+    <button class="row" data-testid="equipment-weights" onClick=${() => go('weights')}>
+      <span class="stack tight"><b>The weights you lift</b><span class="sub">Enter them for every exercise up front, with the step each machine allows</span></span><span class="accent">Open</span></button>
 
     <div class="stack">
       <div class="row">

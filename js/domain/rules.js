@@ -8,8 +8,8 @@
 // Bump RULES_VERSION when a number or a rule changes. Plans and sessions store
 // the version they were made with.
 
-export const RULES_VERSION = '1.1.0';
-export const RULES_UPDATED = '2026-11-13';
+export const RULES_VERSION = '1.3.0';
+export const RULES_UPDATED = '2026-11-15';
 
 export const SOURCES = {
   acsm2009: {
@@ -66,6 +66,11 @@ export const SOURCES = {
     short: 'ACSM 2011',
     cite: 'Garber CE, Blissmer B, Deschenes MR, et al. Quantity and quality of exercise for developing and maintaining cardiorespiratory, musculoskeletal, and neuromotor fitness in apparently healthy adults: guidance for prescribing exercise. Med Sci Sports Exerc. 2011;43(7):1334-1359.',
     url: 'https://doi.org/10.1249/MSS.0b013e318213fefb',
+  },
+  wilson2012: {
+    short: 'Wilson 2012',
+    cite: 'Wilson JM, Marin PJ, Rhea MR, Wilson SMC, Loenneke JP, Anderson JC. Concurrent training: a meta-analysis examining interference of aerobic and resistance exercises. J Strength Cond Res. 2012;26(8):2293-2307.',
+    url: 'https://doi.org/10.1519/JSC.0b013e31823a3e2d',
   },
   simao2012: {
     short: 'Simão 2012',
@@ -163,6 +168,31 @@ export const SCHEDULE = {
   breakDays: 10, // after this long away, ease back in
   easePct: 10,
 };
+
+// Other activity logged next to the gym plan: a run, a ride, a game. What it
+// loads, and how much of it counts as real work for those muscles.
+const LEGS = ['Quads', 'Hamstrings and glutes', 'Calves'];
+export const ACTIVITIES = {
+  run: { label: 'Run', groups: LEGS },
+  bike: { label: 'Bike ride', groups: LEGS },
+  hike: { label: 'Hike or long walk', groups: LEGS },
+  team: { label: 'Team or racket sport', groups: LEGS },
+  swim: { label: 'Swim', groups: ['Back', 'Shoulders'] },
+  row: { label: 'Rowing', groups: ['Back', 'Quads', 'Hamstrings and glutes'] },
+  climb: { label: 'Climbing', groups: ['Back', 'Biceps'] },
+  other: { label: 'Something else', groups: [] },
+};
+export const EFFORTS = { easy: { label: 'Easy', factor: 0.5 }, moderate: { label: 'Moderate', factor: 1 }, hard: { label: 'Hard', factor: 1.5 } };
+// Minutes at a moderate effort from which an activity counts as work for its muscles.
+export const ACTIVITY = { countsFromMin: 30 };
+
+/** The muscle groups an activity loaded enough to need recovery, or [] when it was too light. */
+export function activityGroups(a) {
+  const kind = ACTIVITIES[a?.activity];
+  const factor = EFFORTS[a?.effort]?.factor ?? 1;
+  if (!kind || (Number(a.minutes) || 0) * factor < ACTIVITY.countsFromMin) return [];
+  return kind.groups;
+}
 
 export const DAY_TITLES = {
   full: 'Full body', fullB: 'Full body', upper: 'Upper body', lower: 'Lower body',
@@ -288,6 +318,11 @@ export const RULES = [
     sources: ['practice'], uses: ['SCHEDULE.breakDays', 'SCHEDULE.easePct'],
   },
   {
+    id: 'REC-4', area: 'Training on any day',
+    text: 'Other activity counts toward recovery. A run, ride, hike, game or swim that adds up to about 30 minutes at a moderate effort (less when hard, more when easy) counts as work for the muscles it uses, mostly the legs. Sessions that train those muscles hard wait about 48 hours, as after a gym session. Short, easy activity changes nothing.',
+    sources: ['wilson2012', 'garber2011', 'practice'], uses: ['ACTIVITIES', 'ACTIVITY.countsFromMin', 'activityGroups()'],
+  },
+  {
     id: 'VOL-1', area: 'Volume',
     text: 'More weekly sets per muscle group bring more muscle growth, with 10 or more sets a week doing better than fewer. Strength also gains more from medium and high weekly set counts than from low ones. The app\'s own targets, built on that: 6-10 weekly sets per muscle group for novices, 10-16 for intermediates and 12-20 for advanced lifters. The time budget comes first; the plan screen shows where a week falls short of the target.',
     sources: ['schoenfeld2017volume', 'ralston2017', 'practice'], uses: ['WEEKLY_SETS', 'PRESCRIPTION.sets', 'weeklySets()'],
@@ -311,6 +346,11 @@ export const RULES = [
     id: 'INT-3', area: 'Intensity',
     text: 'End working sets with about 1-3 reps in reserve (novices 2-3). Reps in reserve is the number of extra reps the lifter could still have done with good form.',
     sources: ['zourdos2016', 'helms2016'], uses: ['TARGET_RIR'],
+  },
+  {
+    id: 'EFF-1', area: 'Intensity',
+    text: 'Sets before the last one stop at the target, with reps in reserve. The last set of an exercise may go past the target, to about one rep short of failure (two for novices on the main lifts). The extra reps are recorded: they show when the lifter is ready for more.',
+    sources: ['helms2016', 'practice'], uses: ['effortCue()'],
   },
   {
     id: 'INT-4', area: 'Intensity',
@@ -354,7 +394,7 @@ export const RULES = [
   },
   {
     id: 'ADJ-3', area: 'Reading results',
-    text: 'Judge only what was recorded: planned against done reps and load, reps in reserve when given, skipped sets, and earlier sessions of the same exercise. If the records do not justify a change, propose none.',
+    text: 'Judge only what was recorded: planned against done reps and load, reps in reserve when given, skipped sets, and earlier sessions of the same exercise. If the records do not justify a change, make none. Changes are made at once and listed with their reasons; each can be undone or corrected by hand.',
     sources: ['practice'], uses: ['history'],
   },
   {

@@ -6,18 +6,18 @@
 // small built-in reader handles the common answers and the rule-based
 // generator builds the plan. Either way the app keeps working.
 
-import { GOALS, MAX_DAYS, CYCLE, levelFor } from '../domain/rules.js';
-import { recommend, setOrder, setRests, completeDay, queueState, runFinished } from '../domain/schedule.js';
+import { GOALS, MAX_DAYS, CYCLE, SCHEDULE, EFFORTS, levelFor, activityGroups } from '../domain/rules.js';
+import { recommend, setOrder, setRests, completeDay, uncompleteDay, queueState, runFinished } from '../domain/schedule.js';
 import { KEYWORDS, allExercises, canDo, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail } from '../domain/catalog.js';
 import {
   WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_NAMES, missingFields, generatePlan, normalizePlan, fitToBudget, refreshPlan, fmtMonths,
   trainingDays, clampMinutes, setPlanLoad,
 } from '../domain/planner.js';
-import { inSessionHint, postSessionChanges, equipmentChanges, applyPlanChange, fromAiChanges } from '../domain/progression.js';
-import { hintApplies, setHint, startSession } from '../domain/session.js';
+import { inSessionHint, postSessionChanges, equipmentChanges, applyPlanChange, undoPlanChange, withValue, fromAiChanges, ruleSummary, isApplied } from '../domain/progression.js';
+import { applyHint, withoutHint, startSession, newActivity } from '../domain/session.js';
 import * as store from '../store.js';
 import { ask, aiReady, aiSource, aiName, AiError, canLookUp, lookUpMachines } from './ai.js';
-import { interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, trainNowRequest, nextRunRequest } from './prompts.js';
+import { interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, trainNowRequest, nextRunRequest, activityRequest } from './prompts.js';
 
 // ---------------------------------------------------------------- built-in reader
 
@@ -274,8 +274,9 @@ export async function userSays(text) {
     const changes = now.plan ? fromAiChanges(out.changes, { plan: now.plan, equipment: now.equipment, mode: 'after_session' }) : [];
     const textOut = [out.message, ...out.questions].filter(Boolean).join('\n') || 'Okay.';
     if (changes.length) {
-      const p = store.addProposal({ mode: 'coach', source: src, changes });
-      store.say('coach', textOut, { via: src, kind: 'proposal', proposalId: p.id });
+      // What the user asked for is done at once; the chat shows each change with its Undo.
+      const update = recordUpdate({ mode: 'coach', source: src, changes });
+      store.say('coach', textOut, { via: src, kind: 'proposal', proposalId: update.id });
     } else if (out.ready_for_plan && !missingFields(profile).length && (!now.plan || JSON.stringify(profile) !== before)) {
       store.say('coach', textOut, { via: src, kind: 'assumptions' });
     } else {
@@ -313,7 +314,7 @@ export async function buildPlan() {
       if (out.plan) {
         const res = normalizePlan(out.plan, st.profile, st.equipment, st.weights);
         for (const d of res.plan.days) fitToBudget(d.exercises, res.plan.minutes);
-        plan = refreshPlan({ ...res.plan, source: src });
+        plan = refreshPlan({ ...res.plan, source: src, outlook: out.outlook ? { text: out.outlook, by: src } : null });
         via = src;
       } else if (out.questions.length) {
         store.say('coach', [out.message, ...out.questions].filter(Boolean).join('\n'), { via: src });
@@ -327,7 +328,7 @@ export async function buildPlan() {
     }
   }
   if (!plan) plan = generatePlan(st.profile, st.equipment, st.weights);
-  // Old proposals point at the old plan, so they go.
+  // The list of updates belongs to the old plan, so it goes.
   store.set({ plan, proposals: [], profile: { ...store.getState().profile, askedExtras: true } });
   store.say('coach', planLine(plan), { kind: 'plan', via });
 }
@@ -413,10 +414,10 @@ export function planNextRun() {
       const reps = {};
       for (const d of now.plan.days) for (const ex of d.exercises) reps[ex.exerciseId] = ex.reps;
       for (const d of res.plan.days) for (const ex of d.exercises) if (reps[ex.exerciseId]) ex.reps = Math.min(Math.max(reps[ex.exerciseId], ex.repLo), ex.repHi);
-      const next = refreshPlan({ ...res.plan, source: src, version: (now.plan.version || 1) + 1 });
+      const next = refreshPlan({ ...res.plan, source: src, version: (now.plan.version || 1) + 1, outlook: out.outlook ? { text: out.outlook, by: src } : now.plan.outlook || null });
       next.queue = { ...next.queue, run: queueState(now.plan).run + 1 };
       next.lastUpdate = { at: Date.now(), by: src, text: out.message || 'The next run is planned from your results.' };
-      store.set({ plan: next, proposals: now.proposals.filter((p) => p.mode === 'post_session' && p.changes.every((c) => c.status !== 'open')) });
+      store.set({ plan: next });
       store.say('coach', `${out.message || 'I planned your next run from your results.'} Open the plan to see it, or tell me what to change.`, { via: src, kind: 'plan' });
     })
     .catch(() => { /* the same run simply starts again */ });
@@ -446,65 +447,229 @@ export async function reviewToday(pick, signal) {
   };
 }
 
-// ---------------------------------------------------------------- applying changes
+// ---------------------------------------------------------------- plan updates
+// Changes to the plan are made at once and written down in a list. Each entry
+// says what changed, why, and where it came from, and each change keeps what
+// it replaced, so the user can undo it or correct it by hand.
 
-export function applyChange(proposalId, changeId) {
+const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+
+/** Make the changes one after another. Ones that no longer point at anything are marked, not made. */
+function applyAll(changes, plan, weights, equipment) {
+  const out = [];
+  for (const c of changes) {
+    const res = applyPlanChange(plan, c, equipment, weights);
+    if (!res.touched) { out.push({ ...c, status: 'stale' }); continue; }
+    plan = res.plan; weights = res.weights;
+    out.push({ ...c, status: 'applied', undo: res.undo });
+  }
+  return { plan, weights, changes: out };
+}
+
+/** Take back every change of an update that is still in the plan, newest first. */
+function undoAll(update, plan, weights) {
+  for (const c of [...update.changes].reverse()) {
+    if (!isApplied(c)) continue;
+    const res = undoPlanChange(plan, c, weights);
+    if (res.touched) { plan = res.plan; weights = res.weights; }
+  }
+  return { plan, weights };
+}
+
+const noted = (plan, by, text) => ({ ...plan, lastUpdate: { at: Date.now(), by, text } });
+
+/** Make a set of changes and write them down as one update. Returns the update. */
+export function recordUpdate({ mode, source, sessionId = null, changes, message = '' }) {
   const st = store.getState();
-  const p = st.proposals.find((x) => x.id === proposalId);
-  const c = p?.changes.find((x) => x.id === changeId);
-  if (!c || c.status !== 'open' || !st.plan) return false;
-  const res = applyPlanChange(st.plan, c, st.equipment, st.weights);
-  store.markChange(proposalId, changeId, res.touched ? 'applied' : 'stale', res.touched ? { plan: res.plan, weights: res.weights } : {});
+  if (!st.plan) return null;
+  const done = applyAll(changes, st.plan, st.weights, st.equipment);
+  const made = done.changes.some(isApplied);
+  return store.addUpdate({ mode, source, sessionId, message, changes: done.changes },
+    made ? { plan: message ? noted(done.plan, source, message) : done.plan, weights: done.weights } : {});
+}
+
+const findChange = (updateId, changeId) => store.getState().proposals.find((p) => p.id === updateId)?.changes.find((c) => c.id === changeId) || null;
+
+/** "Undo" on one change. False when the plan has moved on and there is nothing left to take back. */
+export function undoChange(updateId, changeId) {
+  const st = store.getState();
+  const c = findChange(updateId, changeId);
+  if (!c || !isApplied(c) || !st.plan) return false;
+  const res = undoPlanChange(st.plan, c, st.weights);
+  store.patchChange(updateId, changeId, { status: res.touched ? 'undone' : 'stale' }, res.touched ? { plan: res.plan, weights: res.weights } : {});
   return !!res.touched;
 }
 
-export function keepPlan(proposalId, changeId) {
-  store.markChange(proposalId, changeId, 'kept');
+/** Make a change that was undone (or, in older data, never accepted) after all. */
+export function redoChange(updateId, changeId) {
+  const st = store.getState();
+  const c = findChange(updateId, changeId);
+  if (!c || isApplied(c) || !st.plan) return false;
+  const res = applyPlanChange(st.plan, c, st.equipment, st.weights);
+  store.patchChange(updateId, changeId, res.touched ? { status: 'applied', undo: res.undo } : { status: 'stale' }, res.touched ? { plan: res.plan, weights: res.weights } : {});
+  return !!res.touched;
+}
+
+/** Correct a change by hand: the plan gets the value the user typed instead. */
+export function editChange(updateId, changeId, value) {
+  const st = store.getState();
+  const c = findChange(updateId, changeId);
+  if (!c || !st.plan) return false;
+  let { plan, weights } = st;
+  if (isApplied(c)) {
+    const back = undoPlanChange(plan, c, weights);
+    if (!back.touched) { store.patchChange(updateId, changeId, { status: 'stale' }); return false; }
+    plan = back.plan; weights = back.weights;
+  }
+  const edited = withValue(plan, c, value);
+  const res = edited ? applyPlanChange(plan, edited, st.equipment, weights) : null;
+  if (!res?.touched) return false;
+  store.patchChange(updateId, changeId, { value: edited.value, to: edited.to, status: 'edited', undo: res.undo, suggested: c.suggested ?? c.to },
+    { plan: res.plan, weights: res.weights });
+  return true;
 }
 
 // ---------------------------------------------------------------- after a session
 
 const reviews = new Map();
 
-/** Compare a finished session with the plan and history; file the proposals. */
+/**
+ * A finished workout is compared with the plan and history, and the plan is
+ * updated at once. The training rules answer straight away; a connected model
+ * then reviews the same workout, and its changes and summary take the place of
+ * the rule-based ones unless the user has already undone or corrected any.
+ * With no connection the model's review waits and is asked for when the phone
+ * is back online.
+ */
 export function reviewSession(sessionId) {
   const st = store.getState();
   const session = store.sessionById(sessionId);
-  if (!session || session.status !== 'done' || !st.plan) return null;
+  if (!session || session.status !== 'done' || session.kind === 'activity' || !st.plan) return null;
   const existing = st.proposals.find((p) => p.mode === 'post_session' && p.sessionId === sessionId);
   if (existing) return existing;
   const rules = postSessionChanges(session, st.plan, st.sessions);
+  const done = applyAll(rules, st.plan, st.weights, st.equipment);
+  const message = ruleSummary(session, done.changes.filter(isApplied));
   const wantAi = aiReady();
+  const offline = wantAi && isOffline();
+  const update = store.addUpdate({
+    mode: 'post_session', source: 'rules', sessionId, message, changes: done.changes,
+    checking: wantAi && !offline ? aiSource() : false, pending: offline,
+  }, { plan: noted(done.plan, 'rules', message), weights: done.weights });
+  if (wantAi && !offline) askReview(update.id, session, st.plan);
+  return update;
+}
+
+// `planBefore` is the plan as the workout was done against it, before the rule-based changes.
+function askReview(updateId, session, planBefore) {
+  const st = store.getState();
   const src = aiSource();
-  const proposal = store.addProposal({ mode: 'post_session', source: 'rules', sessionId, changes: rules, checking: wantAi ? src : false });
-  if (wantAi) {
-    const ctl = new AbortController();
-    reviews.set(proposal.id, ctl);
-    ask(sessionRequest({ mode: 'after_session', profile: st.profile, equipment: st.equipment, plan: st.plan, session, past: st.sessions }), { signal: ctl.signal })
-      .then((out) => {
-        const now = store.getState();
-        const cur = now.proposals.find((p) => p.id === proposal.id);
-        if (!cur) return;
-        // The model's review replaces the rule-based one only while the user has not acted on it.
-        const untouched = cur.changes.every((c) => c.status === 'open');
-        const ai = fromAiChanges(out.changes, { plan: now.plan, equipment: now.equipment, mode: 'after_session' }).map((c) => ({ status: 'open', ...c }));
-        // The order of what is left and the rest days follow the results without asking; weights and reps stay proposals.
-        const sched = now.plan && !store.activeSession(now) && !runFinished(now.plan) ? withSchedule(now.plan, out.schedule, now.sessions) : null;
-        const plan = sched ? { ...sched.plan, lastUpdate: { at: Date.now(), by: src, text: sched.reason || 'The order of what is left was updated after your workout.' } } : now.plan;
-        store.set({
-          plan,
-          proposals: now.proposals.map((p) => (p.id !== proposal.id ? p : untouched
-            ? { ...p, source: src, changes: ai, message: out.message, checking: false }
-            : { ...p, checking: false })),
-        });
-      })
-      .catch(() => {
-        const now = store.getState();
-        store.set({ proposals: now.proposals.map((p) => (p.id === proposal.id ? { ...p, checking: false } : p)) });
-      })
-      .finally(() => reviews.delete(proposal.id));
+  const ctl = new AbortController();
+  reviews.set(updateId, ctl);
+  ask(sessionRequest({ mode: 'after_session', profile: st.profile, equipment: st.equipment, plan: planBefore, session, past: st.sessions }), { signal: ctl.signal })
+    .then((out) => {
+      const now = store.getState();
+      const cur = now.proposals.find((p) => p.id === updateId);
+      if (!cur || !now.plan) return;
+      let { plan, weights } = now;
+      let { changes, source } = cur;
+      // The model's changes replace the rule-based ones only while the user has left those alone.
+      const untouched = now.plan.id === planBefore.id && cur.changes.every((c) => c.status === 'applied' || c.status === 'stale');
+      if (untouched) {
+        const back = undoAll(cur, plan, weights);
+        const ai = fromAiChanges(out.changes, { plan: back.plan, equipment: now.equipment, mode: 'after_session' });
+        const made = applyAll(ai, back.plan, back.weights, now.equipment);
+        plan = made.plan; weights = made.weights; changes = made.changes; source = src;
+      }
+      // The order of what is left and the rest days follow the results too.
+      const sched = now.plan.id === planBefore.id && !store.activeSession(now) && !runFinished(plan) ? withSchedule(plan, out.schedule, now.sessions) : null;
+      if (sched) plan = sched.plan;
+      const message = out.message || cur.message;
+      store.patchUpdate(updateId, { source, changes, message, schedule: sched?.reason || '', checking: false, pending: false },
+        { plan: now.plan.id === planBefore.id ? noted(plan, src, message) : plan, weights });
+    })
+    .catch((e) => {
+      if (e?.code === 'cancelled') return;
+      // No connection: the rule-based update stands, and the review is asked for again later.
+      store.patchUpdate(updateId, { checking: false, pending: e?.code === 'offline' || isOffline() });
+    })
+    .finally(() => { if (reviews.get(updateId) === ctl) reviews.delete(updateId); });
+}
+
+/**
+ * Ask again for reviews that could not be had: the phone was offline, or the
+ * page was closed while waiting. Only the newest workout is sent; for older
+ * ones the plan has moved on, so their rule-based update stands.
+ */
+export function retryPending() {
+  const st = store.getState();
+  const waiting = st.proposals.filter((p) => p.mode === 'post_session' && (p.pending || (p.checking && !reviews.has(p.id))));
+  if (!waiting.length) return;
+  if (!aiReady()) { // nothing to ask any more
+    store.set({ proposals: st.proposals.map((p) => (waiting.includes(p) ? { ...p, pending: false, checking: false } : p)) });
+    return;
   }
-  return proposal;
+  if (isOffline()) {
+    if (waiting.some((p) => p.checking)) store.set({ proposals: st.proposals.map((p) => (waiting.includes(p) && p.checking ? { ...p, pending: true, checking: false } : p)) });
+    return;
+  }
+  const newest = waiting.reduce((a, b) => (b.createdAt > a.createdAt ? b : a));
+  const session = store.sessionById(newest.sessionId);
+  const last = store.doneWorkouts(st)[0];
+  const usable = session && last?.id === session.id && st.plan && session.planId === st.plan.id;
+  store.set({ proposals: st.proposals.map((p) => (!waiting.includes(p) ? p : { ...p, pending: false, checking: p === newest && usable ? aiSource() : false })) });
+  if (!usable) return;
+  // The plan as it was before the rule-based changes, when those are all still in place.
+  const intact = newest.changes.every((c) => c.status === 'applied' || c.status === 'stale');
+  askReview(newest.id, session, intact ? undoAll(newest, st.plan, st.weights).plan : st.plan);
+}
+
+/** True while a model's review of the last workout is waiting for a connection. */
+export const reviewWaiting = (st = store.getState()) => st.proposals.some((p) => p.pending);
+
+/**
+ * A set in a finished workout was corrected by hand. If it is the latest
+ * workout, its update is taken back and worked out again from the new numbers.
+ * For an older one the plan has moved on, so only the record changes.
+ * Returns 'redone', or 'old' when the plan was left alone.
+ */
+export function recomputeSession(sessionId) {
+  const st = store.getState();
+  const session = store.sessionById(sessionId);
+  if (!session || session.kind === 'activity' || !st.plan) return 'old';
+  const latest = store.doneWorkouts(st)[0];
+  if (latest?.id !== sessionId || session.planId !== st.plan.id) return 'old';
+  const update = st.proposals.find((p) => p.mode === 'post_session' && p.sessionId === sessionId);
+  if (update) {
+    reviews.get(update.id)?.abort();
+    reviews.delete(update.id);
+    const back = undoAll(update, st.plan, st.weights);
+    store.set({ plan: back.plan, weights: back.weights, proposals: st.proposals.filter((p) => p.id !== update.id) });
+  }
+  reviewSession(sessionId);
+  return 'redone';
+}
+
+/**
+ * Delete a workout or an activity from history. For the latest workout the
+ * changes it led to are taken back and its session is to do again.
+ */
+export function deleteWorkout(sessionId) {
+  const st = store.getState();
+  const session = store.sessionById(sessionId);
+  if (!session) return;
+  const latest = store.doneWorkouts(st)[0];
+  const update = st.proposals.find((p) => p.sessionId === sessionId);
+  if (update) { reviews.get(update.id)?.abort(); reviews.delete(update.id); }
+  if (session.kind !== 'activity' && st.plan && latest?.id === sessionId && session.planId === st.plan.id) {
+    const back = update ? undoAll(update, st.plan, st.weights) : { plan: st.plan, weights: st.weights };
+    const sameRun = (session.run || 1) === queueState(back.plan).run;
+    store.set({ plan: sameRun ? uncompleteDay(back.plan, session.dayId) : back.plan, weights: back.weights });
+  }
+  // A note on the plan that spoke of this entry goes with it.
+  const now = store.getState();
+  if (update?.message && now.plan?.lastUpdate?.text === update.message) store.set({ plan: { ...now.plan, lastUpdate: null } });
+  store.removeSession(sessionId);
 }
 
 // ---------------------------------------------------------------- during a session
@@ -512,19 +677,27 @@ export function reviewSession(sessionId) {
 let hintCtl = null;
 
 /**
- * After a set is saved: the rule-based hint shows at once; the model's, if it
- * arrives while the sets it talks about are still to come, replaces it.
+ * After a set is saved, or corrected during the rest: if the result calls for
+ * it, the sets still to come are changed at once, with the reason and an Undo
+ * on screen. The training rules answer straight away; a connected model's
+ * answer, if it arrives while those sets are still to come, replaces theirs.
  * Saving the set never waits for either.
+ * @param {object} sessionBefore the session the set belongs to
+ * @param {string|number} exRef the exercise, by key or by position
+ * @param {number} setIdx
  */
-export function afterSetSaved(sessionBefore, exIdx, setIdx) {
+export function afterSetSaved(sessionBefore, exRef, setIdx) {
   let session = store.activeSession();
   if (!session || session.id !== sessionBefore.id) return;
+  const exIdx = typeof exRef === 'string' ? session.exercises.findIndex((x) => x.key === exRef) : exRef;
+  const ex = session.exercises[exIdx];
+  if (!ex) return;
   const hint = inSessionHint(session, exIdx, setIdx);
-  if (hint) { session = setHint(session, hint); store.putSession(session); }
+  if (hint) { session = applyHint(session, hint); store.putSession(session); }
   hintCtl?.abort();
   hintCtl = null;
-  if (!aiReady()) return;
-  const st = session.exercises[exIdx]?.sets[setIdx];
+  if (!aiReady() || isOffline()) return;
+  const st = ex.sets[setIdx];
   if (!st?.actual) return;
   const off = st.actual.reps !== st.target.reps || st.actual.load !== st.target.load || (st.actual.rir != null && (st.actual.rir <= 0 || st.actual.rir >= 3));
   if (!off) return; // on target: nothing for the model to judge
@@ -533,30 +706,80 @@ export function afterSetSaved(sessionBefore, exIdx, setIdx) {
   hintCtl = ctl;
   const s0 = store.getState();
   ask(sessionRequest({
-    mode: 'in_session', profile: s0.profile, equipment: s0.equipment, plan: s0.plan, session, past: s0.sessions,
-    alreadyProposed: hint ? hint.changes : [],
+    mode: 'in_session', profile: s0.profile, equipment: s0.equipment, plan: s0.plan, session: withoutHint(session), past: s0.sessions,
+    alreadyApplied: hint ? hint.changes : [],
   }), { quick: true, signal: ctl.signal })
     .then((out) => {
       const live = store.activeSession();
-      if (!live || live.id !== session.id) return;
-      const changes = fromAiChanges(out.changes, { session: live, mode: 'in_session' });
+      // Late answers are dropped: the workout moved on, or the user undid the change for this set.
+      if (!live || live.id !== session.id || live.hintUndone) return;
+      if (!live.last || live.last.key !== ex.key || live.last.set !== setIdx) return;
+      const changes = fromAiChanges(out.changes, { session: withoutHint(live), mode: 'in_session' });
       if (!changes.length) return;
-      const aiHint = { id: store.newId('hint'), source: src, mode: 'in_session', sessionId: live.id, createdAt: Date.now(), changes };
-      // A late answer only shows if it is about sets that are still to come.
-      if (hintApplies(live, aiHint)) store.putSession(setHint(live, aiHint));
+      store.putSession(applyHint(live, { id: store.newId('hint'), source: src, mode: 'in_session', sessionId: live.id, createdAt: Date.now(), changes }));
     })
-    .catch(() => { /* keep going on the last approved plan */ });
+    .catch(() => { /* the rule-based change, if any, stands */ });
+}
+
+// ---------------------------------------------------------------- other activity
+
+const lowerList = (a) => { const l = a.map((x) => x.toLowerCase()); return l.length <= 1 ? l.join('') : `${l.slice(0, -1).join(', ')} and ${l[l.length - 1]}`; };
+
+/** What a logged activity means for the plan, in words, from the rules alone. */
+export function activityText(act) {
+  const groups = activityGroups(act);
+  const what = `${act.minutes} min ${act.title.toLowerCase()}, ${(EFFORTS[act.effort]?.label || 'moderate').toLowerCase()} effort`;
+  if (!groups.length) return `Logged: ${what}. Too light or too short to change the plan.`;
+  return `Logged: ${what}. It counts as work for ${lowerList(groups)}, so sessions that train ${groups.length > 1 ? 'them' : 'it'} hard wait about ${SCHEDULE.recoverHours} hours. The order of your plan follows.`;
+}
+
+/**
+ * Log a run, a ride or another activity done outside the plan. It is saved
+ * with the workouts and counts toward recovery at once (rule REC-4); a
+ * connected model then looks at the order and rests of what is left.
+ * @param {{type: string, minutes: number, effort: string, daysAgo?: number, note?: string}} input
+ */
+export function logActivity(input) {
+  const act = newActivity(input);
+  store.putSession(act);
+  const st = store.getState();
+  if (!st.plan) return act;
+  const message = activityText(act);
+  const wantAi = aiReady() && !isOffline() && !store.activeSession(st);
+  const update = store.addUpdate({ mode: 'activity', source: 'rules', sessionId: act.id, message, changes: [], checking: wantAi ? aiSource() : false },
+    { plan: noted(st.plan, 'rules', message) });
+  if (!wantAi) return act;
+  const src = aiSource();
+  const planId = st.plan.id;
+  ask(activityRequest({ profile: st.profile, plan: st.plan, sessions: st.sessions, activity: act }))
+    .then((out) => {
+      const now = store.getState();
+      if (!now.plan || now.plan.id !== planId || !now.proposals.some((p) => p.id === update.id)) return;
+      const sched = !store.activeSession(now) && !runFinished(now.plan) ? withSchedule(now.plan, out.schedule, now.sessions) : null;
+      const text = out.message || sched?.reason || message;
+      store.patchUpdate(update.id, { source: src, message: text, schedule: sched?.reason || '', checking: false }, { plan: noted(sched ? sched.plan : now.plan, src, text) });
+    })
+    .catch(() => store.patchUpdate(update.id, { checking: false }));
+  return act;
 }
 
 // ---------------------------------------------------------------- equipment and weights
 
-/** File swaps for plan exercises that lost their equipment. */
-export function reviewEquipment() {
+/**
+ * Swap plan exercises that lost their equipment for ones that can be done, at
+ * once. A swap the user has undone is not made again by itself; `force` (the
+ * "Swap them" button) makes it anyway.
+ */
+export function reviewEquipment({ force = false } = {}) {
   const st = store.getState();
-  if (!st.plan) return null;
-  const changes = equipmentChanges(st.plan, st.equipment, st.profile);
+  if (!st.plan || store.activeSession(st)) return null;
+  const undone = new Set(st.proposals.filter((p) => p.mode === 'equipment').flatMap((p) => p.changes.filter((c) => c.status === 'undone').map((c) => c.exerciseKey)));
+  const changes = equipmentChanges(st.plan, st.equipment, st.profile).filter((c) => force || !undone.has(c.exerciseKey));
   if (!changes.length) return null;
-  return store.addProposal({ mode: 'equipment', source: 'rules', sessionId: null, changes });
+  const swaps = changes.filter((c) => c.field === 'exercise').length;
+  const gone = changes.length - swaps;
+  const message = `Your equipment list changed. ${[swaps ? `${swaps} exercise${swaps === 1 ? '' : 's'} swapped for one${swaps === 1 ? '' : 's'} you can do` : '', gone ? `${gone} removed because nothing else trains that movement` : ''].filter(Boolean).join(', ')}.`;
+  return recordUpdate({ mode: 'equipment', source: 'rules', changes, message });
 }
 
 const strings = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()) : []);
@@ -633,6 +856,19 @@ export async function readEquipment(text, onStage = () => {}) {
     }
   }
   return { ...res.summary, described, via, note, changed, lookedUp, couldLookUp: canLookUp() };
+}
+
+/**
+ * Set by hand what the user lifts on an exercise: baseline before the first
+ * workout, or a correction later. Goes into the plan wherever the exercise is.
+ */
+export function setWeight(exerciseId, loadType, value, step) {
+  const st = store.getState();
+  const v = Math.max(0, Math.round(Number(value) * 100) / 100);
+  const stp = Number(step) > 0 ? Number(step) : 2.5;
+  const weights = { ...st.weights, [exerciseId]: { value: v, step: stp, type: loadType, at: Date.now(), by: 'hand' } };
+  const inPlan = st.plan?.days.some((d) => d.exercises.some((ex) => ex.exerciseId === exerciseId));
+  store.set({ weights, ...(inPlan ? { plan: setPlanLoad(st.plan, exerciseId, { value: v, step: stp }) } : {}) });
 }
 
 /** Remember a weight for an exercise and write it into the plan. */

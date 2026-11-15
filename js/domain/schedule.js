@@ -6,7 +6,7 @@
 //   - in what order, and with what rests, the rest of the list should follow.
 // Pure functions, no network.
 
-import { SCHEDULE } from './rules.js';
+import { SCHEDULE, ACTIVITIES, activityGroups } from './rules.js';
 import { GROUP_OF, MAIN_GROUPS } from './catalog.js';
 
 const HOUR = 3600e3;
@@ -69,20 +69,30 @@ export function doneGroups(session) {
   return g;
 }
 
-/** When each muscle group was last trained, and the last workout itself. */
+/**
+ * When each muscle group was last worked, and the last gym workout itself.
+ * Other activity (a run, a ride) counts for the muscles it loads (rule REC-4)
+ * but is not a workout: it does not move the day the next session is due.
+ * `by` names the activity when that, not a workout, was the last thing a group did.
+ */
 export function lastTrained(history, now) {
   const at = {};
+  const by = {};
   let last = null;
   let inWeek = 0;
   for (const s of history) {
     if (s.status !== 'done' || s.startedAt > now) continue;
+    if (s.kind === 'activity') {
+      for (const name of activityGroups(s)) if (!at[name] || s.endedAt > at[name]) { at[name] = Math.min(s.endedAt || s.startedAt, now); by[name] = (ACTIVITIES[s.activity]?.label || 'activity').toLowerCase(); }
+      continue;
+    }
     const g = doneGroups(s);
     if (!Object.keys(g).length) continue;
     if (!last || s.startedAt > last.startedAt) last = s;
     if (now - s.startedAt < 7 * DAY) inWeek++;
-    for (const name of Object.keys(g)) at[name] = Math.max(at[name] || 0, s.startedAt);
+    for (const name of Object.keys(g)) if (!at[name] || s.startedAt > at[name]) { at[name] = s.startedAt; delete by[name]; }
   }
-  return { at, last, inWeek };
+  return { at, last, inWeek, by };
 }
 
 // How much a session repeats muscle groups that have not had their rest.
@@ -144,7 +154,7 @@ export function recommend(plan, history = [], now = Date.now(), opts = {}) {
   const state = queueState(plan);
   // Everything done or skipped: the next run starts, in plan order.
   const queue = state.queue.length ? state.queue : plan.days;
-  const { at, last, inWeek } = lastTrained(history, now);
+  const { at, last, inWeek, by } = lastTrained(history, now);
   const since = last ? now - last.startedAt : null;
   // The day the next session is due: the last workout's day, its planned rest, then one more.
   const plannedRest = last ? (Number.isFinite(last.restAfter) ? last.restAfter : usualRest(plan)) : 0;
@@ -173,10 +183,14 @@ export function recommend(plan, history = [], now = Date.now(), opts = {}) {
   else if (chosen) reason = chosen.id === head.id ? 'Next in your plan.' : 'Your pick. The rest of the plan moves around it.';
   else if (flags.clash) {
     // Nothing coming up is fully rested: offer the least overlap, and say that resting is fine.
-    reason = `Your last workout was ${ago(since)}, and every session coming up repeats muscles from it. This one repeats the least. Resting today is also a good choice.`;
+    const recent = Math.max(...best.clash.groups.map((x) => at[x]));
+    const what = best.clash.groups.every((x) => by[x]) ? `Your ${by[best.clash.groups[0]]}` : 'Your last workout';
+    reason = `${what} was ${ago(now - recent)}, and every session coming up repeats muscles from it. This one repeats the least. Resting today is also a good choice.`;
   } else if (flags.moved) {
     const g = headClash.groups.map((x) => x.toLowerCase());
-    reason = `You trained ${joinAnd(g)} ${ago(now - Math.max(...headClash.groups.map((x) => at[x])))}. ${day.title} gives ${g.length > 1 ? 'them' : 'it'} time to recover, so it goes ahead of ${head.title}.`;
+    const when = ago(now - Math.max(...headClash.groups.map((x) => at[x])));
+    const lead = headClash.groups.every((x) => by[x]) ? `Your ${by[headClash.groups[0]]} ${when} worked ${joinAnd(g)}` : `You trained ${joinAnd(g)} ${when}`;
+    reason = `${lead}. ${day.title} gives ${g.length > 1 ? 'them' : 'it'} time to recover, so it goes ahead of ${head.title}.`;
   } else reason = 'Next in your plan.';
 
   if (flags.early && !flags.clash && !flags.moved) notes.push(`${days(-offBy)} earlier than planned. These muscles are rested, so it is fine if you feel up to it.`);
@@ -214,17 +228,24 @@ export function plannedNext(plan, history = [], now = Date.now()) {
 /**
  * The plan as a list to read: each session with the day it falls on and the
  * rest before it, if the user trains when planned from here on.
+ *
+ * The list always shows one full cycle. Sessions already done in this run come
+ * round again at the end, marked `again`, with whatever the plan now says for
+ * them, so a finished session does not vanish: it shows when it is next due.
  */
 export function timeline(plan, history = [], now = Date.now()) {
   const rec = plannedNext(plan, history, now);
   if (!rec) return [];
   const today = dayStart(now);
+  const state = queueState(plan);
+  // What comes round again once this run is through: the sessions done, in the order they were done, then the ones skipped.
+  const again = rec.flags.newRun ? [] : [...state.done, ...state.skipped].filter((id) => !rec.order.includes(id));
   let at = Math.max(rec.dueAt, today);
   let restBefore = null;
-  return rec.order.map((id, i) => {
+  return [...rec.order, ...again].map((id, i) => {
     const day = plan.days.find((d) => d.id === id);
     if (i > 0) at += (restBefore + 1) * DAY;
-    const item = { day, at, restBefore: i === 0 ? null : restBefore, inDays: daysBetween(today, at) };
+    const item = { day, at, restBefore: i === 0 ? null : restBefore, inDays: daysBetween(today, at), again: i >= rec.order.length, skipped: state.skipped.includes(id) && i >= rec.order.length };
     restBefore = day.restAfter ?? usualRest(plan);
     return item;
   });
@@ -256,6 +277,15 @@ export function completeDay(plan, dayId) {
   const next = clone(plan);
   const s = queueState(next);
   next.queue = { run: s.run, order: s.order, done: [...new Set([...s.done, dayId])], skipped: s.skipped.filter((id) => id !== dayId) };
+  return next;
+}
+
+/** A recorded workout was deleted: its session is to do again in this run. */
+export function uncompleteDay(plan, dayId) {
+  if (!plan.days.some((d) => d.id === dayId)) return plan;
+  const next = clone(plan);
+  const s = queueState(next);
+  next.queue = { run: s.run, order: s.order, done: s.done.filter((id) => id !== dayId), skipped: s.skipped };
   return next;
 }
 

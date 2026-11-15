@@ -3,7 +3,7 @@
 // path sees the same "model".
 // It must be self-contained: it is also injected into the page as text.
 export function canned(payload) {
-  const empty = { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [], equipment: null, schedule: null };
+  const empty = { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [], equipment: null, schedule: null, outlook: null };
   const mode = payload.mode;
   if (mode === 'interview') {
     const msg = String(payload.user_message || '');
@@ -60,6 +60,7 @@ export function canned(payload) {
       return {
         ...empty,
         message: 'Next run: pressing and rowing stay, legs get a new main lift.',
+        outlook: 'Test double: the next round keeps the presses and rows and rotates the leg work.',
         plan: {
           days: [
             day('Push', 1, ['db_bench_press', 'db_shoulder_press', 'db_lateral_raise']),
@@ -73,6 +74,7 @@ export function canned(payload) {
     return {
       ...empty,
       message: 'Your plan is set.',
+      outlook: 'Test double: eight weeks of steady pressing and pulling. Reps climb first, then the load.',
       plan: {
         days: [
           day('Upper body', 1, ['db_bench_press', 'db_row', 'ghost_lift', 'db_shoulder_press', 'pull_up']),
@@ -101,6 +103,10 @@ export function canned(payload) {
       },
       changes: [{ exercise_key: ex.exercise_key, field: 'rest', new_value: ex.rest_seconds + 30, new_exercise_id: null, reason: 'Test double: a little more rest on the first lift.' }],
     };
+  }
+  if (mode === 'activity') {
+    const a = payload.logged_activity;
+    return { ...empty, message: `Test double: ${a.minutes} minutes of ${a.activity.toLowerCase()} noted, so the legs wait.` };
   }
   if (mode === 'in_session') {
     const ex = payload.session.exercises.find((x) => x.sets.some((s) => s.status === 'done') && x.sets.some((s) => s.status === 'pending'))

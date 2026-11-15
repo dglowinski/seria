@@ -19,7 +19,7 @@ function Assumptions({ live }) {
     <dl class="facts">${rows.map((r) => html`<dt>${r.label}</dt><dd>${r.value}</dd>`)}</dl>
     ${live && ready && html`
       <button class="cta" data-testid="build-plan" disabled=${isBusy()} onClick=${() => buildPlan()}>${state.plan ? 'Rebuild my plan' : 'Build my plan'}</button>
-      <p class="small muted">Something off? Just tell me and I will update it first.${state.plan ? ' Rebuilding replaces the current week; your history stays.' : ''}</p>`}
+      <p class="small muted">Something off? Just tell me and I will update it first.${state.plan ? ' Rebuilding replaces the current plan; your history and your weights stay.' : ''}</p>`}
   </div>`;
 }
 
@@ -65,7 +65,7 @@ export function CoachScreen() {
           ${m.text && html`<p class=${`bubble ${m.role === 'user' ? 'reply' : ''} ${m.kind === 'notice' ? 'notice' : ''}`} data-role=${m.role}>${m.text}${m.via && m.via !== 'rules' ? html`<span class="via">${sourceName(m.via)}</span>` : ''}</p>`}
           ${m.kind === 'assumptions' && html`<${Assumptions} live=${m.id === lastAssumptions} />`}
           ${m.kind === 'plan' && html`<button class="cta card" data-testid="open-plan" onClick=${() => go('plan')}>Open my plan</button>`}
-          ${m.kind === 'proposal' && (state.proposals.find((p) => p.id === m.proposalId)?.changes || []).map((c) => html`<${ChangeCard} p=${{ id: m.proposalId }} c=${c} />`)}
+          ${m.kind === 'proposal' && (state.proposals.find((p) => p.id === m.proposalId)?.changes || []).map((c) => html`<${ChangeCard} key=${c.id} p=${{ id: m.proposalId }} c=${c} />`)}
         `)}
         ${busy && html`<p class="bubble" data-testid="thinking"><span class="dots"><span></span><span></span><span></span></span> Thinking…</p>`}
       </div>

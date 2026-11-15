@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-15T12:16:43.834Z",
+  "ranAt": "2026-11-15T17:27:10.593Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 184,
-  "passed": 184,
+  "total": 225,
+  "passed": 225,
   "failed": 0,
   "results": [
     {
@@ -67,7 +67,7 @@
     },
     {
       "part": "A built-in",
-      "name": "no cycles, weeks or weekdays to manage",
+      "name": "no numbered weeks or rounds to manage",
       "ok": true,
       "detail": ""
     },
@@ -98,6 +98,30 @@
     {
       "part": "A built-in",
       "name": "each session on the list shows what it is, when it falls and how long it takes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "the plan comes with the long view: how the training develops from here",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "every exercise in the plan can get its weight before the first workout",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a weight typed there goes into the plan wherever the exercise is",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "the smallest step can be any number",
       "ok": true,
       "detail": ""
     },
@@ -145,13 +169,25 @@
     },
     {
       "part": "A built-in",
-      "name": "lost equipment gives a swap with old value, new value and reason",
+      "name": "lost equipment: the plan swaps what can no longer be done at once, and says so",
       "ok": true,
       "detail": ""
     },
     {
       "part": "A built-in",
-      "name": "\"Keep plan\" leaves the plan alone",
+      "name": "each change shows the old value, the new value, the reason, and that it is in the plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Undo\" puts back what was there",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "an undone swap is not forced back in; the plan offers it instead",
       "ok": true,
       "detail": ""
     },
@@ -193,6 +229,12 @@
     },
     {
       "part": "A built-in",
+      "name": "before the set: what to aim for, in words",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
       "name": "\"Start set\" shows the active set",
       "ok": true,
       "detail": ""
@@ -205,37 +247,19 @@
     },
     {
       "part": "A built-in",
-      "name": "\"Finish set\" opens the result with the planned value",
+      "name": "reps can be nudged by one while the set runs",
       "ok": true,
       "detail": ""
     },
     {
       "part": "A built-in",
-      "name": "and while the result is entered",
+      "name": "one tap on \"Finish set\" saves the set and starts the rest",
       "ok": true,
       "detail": ""
     },
     {
       "part": "A built-in",
-      "name": "reps correct by ±1 and ±2",
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "part": "A built-in",
-      "name": "reps can be typed directly",
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "part": "A built-in",
-      "name": "saving starts the rest countdown at once",
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "part": "A built-in",
-      "name": "and during the rest",
+      "name": "the sketch stays during the rest too",
       "ok": true,
       "detail": ""
     },
@@ -247,7 +271,13 @@
     },
     {
       "part": "A built-in",
-      "name": "rule-based suggestion: change, reason, Apply / Keep plan",
+      "name": "the set just saved stays in reach: reps, weight, reps left, undo",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a missed set changes the sets to come at once, with the reason and an Undo",
       "ok": true,
       "detail": ""
     },
@@ -265,19 +295,49 @@
     },
     {
       "part": "A built-in",
-      "name": "applying the suggestion changes only the sets still to come",
+      "name": "\"Undo\" on the change puts the sets to come back to the plan",
       "ok": true,
       "detail": ""
     },
     {
       "part": "A built-in",
-      "name": "\"Skip rest\" goes straight to the next set",
+      "name": "during the rest the set just saved can still be nudged by a rep",
       "ok": true,
       "detail": ""
     },
     {
       "part": "A built-in",
-      "name": "weight can be changed in the result",
+      "name": "and the change for the sets to come is worked out again from the corrected set",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Undo\" opens the set again, as it was when it was finished",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "the main button during a rest starts the next set early",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "and doing so cuts the rest short",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a set started too early can be put down again",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "weight can be changed after the set",
       "ok": true,
       "detail": ""
     },
@@ -295,6 +355,24 @@
     },
     {
       "part": "A built-in",
+      "name": "when the rest runs out the next set starts by itself",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Start now\" resets the clock of a set that began before you did",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "every tap is written to the log with its time",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
       "name": "the next exercise comes with its own sketch",
       "ok": true,
       "detail": ""
@@ -307,13 +385,43 @@
     },
     {
       "part": "A built-in",
+      "name": "\"Machine busy? Not now\" offers to come back later, another exercise, or dropping it",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
       "name": "a busy station can be swapped for another exercise on available equipment",
       "ok": true,
       "detail": ""
     },
     {
       "part": "A built-in",
+      "name": "\"Come back to it later\" brings up the next exercise and keeps this one for the end",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "the header opens the whole workout: every exercise and where it stands",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "tapping an exercise there goes to it",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
       "name": "a set can be skipped",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Drop it for today\" leaves the exercise out",
       "ok": true,
       "detail": ""
     },
@@ -337,19 +445,55 @@
     },
     {
       "part": "A built-in",
-      "name": "after the session: proposals with change, reason and a choice",
+      "name": "the summary says in words how it went and what changes",
       "ok": true,
       "detail": ""
     },
     {
       "part": "A built-in",
-      "name": "\"Apply\" updates the plan and bumps its version",
+      "name": "the plan is already updated: each change is in, with its reason, and nothing waits to be accepted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "rests are compared with the plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "every step of the workout is kept, with its time",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Undo\" takes a change back out of the plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "and it can be made again",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Edit\" puts in a number typed by hand instead",
       "ok": true,
       "detail": ""
     },
     {
       "part": "A built-in",
       "name": "the stored session keeps the plan it was done against",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "every update to the plan is listed, with where it came from",
       "ok": true,
       "detail": ""
     },
@@ -367,7 +511,13 @@
     },
     {
       "part": "A built-in",
-      "name": "the finished session is off the list; the next one is planned after the rest day",
+      "name": "and for the latest workout the plan is worked out again from the corrected numbers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a full cycle stays on show: the finished session moves to the end, the next one is planned after the rest day",
       "ok": true,
       "detail": ""
     },
@@ -409,7 +559,37 @@
     },
     {
       "part": "A built-in",
-      "name": "a session can be skipped; it leaves the list and waits for the next run",
+      "name": "another activity is logged by what it was, how long and how hard; the sheet says what it means",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "it is kept with the workouts",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "the plan takes it into account at once: the legs wait, and the plan says why",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "history shows it next to the workouts, without counting it as one",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "deleting it puts the plan back in order",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a session can be skipped; it waits at the end for the next round",
       "ok": true,
       "detail": ""
     },
@@ -434,6 +614,24 @@
     {
       "part": "A built-in",
       "name": "session preview shows the recorded weight",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a weight in the plan can be set by hand from the session preview",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "settings: the next set can start by itself, and there is a word on signals with the screen off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "\"Test the signal\" plays it and says what to expect",
       "ok": true,
       "detail": ""
     },
@@ -619,19 +817,19 @@
     },
     {
       "part": "B Claude API",
-      "name": "the rule-based suggestion is there first",
+      "name": "the rule-based change is made first",
       "ok": true,
       "detail": ""
     },
     {
       "part": "B Claude API",
-      "name": "Claude's suggestion replaces it when it arrives in time",
+      "name": "Claude's change takes its place when it arrives in time",
       "ok": true,
       "detail": ""
     },
     {
       "part": "B Claude API",
-      "name": "\"Keep plan\" drops the suggestion",
+      "name": "\"Undo\" goes back to the plan, not to the change before",
       "ok": true,
       "detail": ""
     },
@@ -661,19 +859,37 @@
     },
     {
       "part": "B Claude API",
-      "name": "after the session Claude's review is shown with the app's own old value",
+      "name": "the summary is there at once from the rules, and says Claude is reading the workout",
       "ok": true,
       "detail": ""
     },
     {
       "part": "B Claude API",
-      "name": "after a workout the order and rest days of what is left are updated without asking",
+      "name": "Claude's review then takes the place of the rule-based one: its summary, and its changes with the app's own old value",
       "ok": true,
       "detail": ""
     },
     {
       "part": "B Claude API",
-      "name": "while the weight change still waits for a yes",
+      "name": "and the change is already in the plan, with nothing to accept",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "Claude gets the plan as the workout was done against it, with the timing of every set",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "after a workout the order and rest days of what is left are updated too",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "a full cycle stays on show after the update",
       "ok": true,
       "detail": ""
     },
@@ -709,7 +925,7 @@
     },
     {
       "part": "B Claude API",
-      "name": "a change Claude wants further on is filed as a proposal, not applied",
+      "name": "a change Claude makes further on goes in with the start, and is listed",
       "ok": true,
       "detail": ""
     },
@@ -733,13 +949,25 @@
     },
     {
       "part": "B Claude API",
-      "name": "asking the coach for a change gives a proposal to apply or keep",
+      "name": "Claude's own long view comes with the plan",
       "ok": true,
       "detail": ""
     },
     {
       "part": "B Claude API",
-      "name": "applied from the chat",
+      "name": "a logged activity goes to Claude with the plan, and its reading is shown",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "asking the coach for a change makes it at once and shows it in the chat",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "and it can be undone right there",
       "ok": true,
       "detail": ""
     },
@@ -752,6 +980,24 @@
     {
       "part": "B Claude API",
       "name": "gym text still gets saved when Claude fails",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "with no connection the workout is saved and the rules update the plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "the plan says it will be updated when the phone is online",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "back online, Claude reviews that workout and the notice goes",
       "ok": true,
       "detail": ""
     },
@@ -1027,19 +1273,19 @@
     },
     {
       "part": "F OpenAI API",
-      "name": "mid-workout the rule-based suggestion shows first",
+      "name": "mid-workout the rule-based change is made first",
       "ok": true,
       "detail": ""
     },
     {
       "part": "F OpenAI API",
-      "name": "then OpenAI's suggestion replaces it",
+      "name": "then OpenAI's change takes its place",
       "ok": true,
       "detail": ""
     },
     {
       "part": "F OpenAI API",
-      "name": "after the workout OpenAI's review is shown",
+      "name": "after the workout OpenAI's summary and changes are in",
       "ok": true,
       "detail": ""
     },

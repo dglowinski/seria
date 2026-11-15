@@ -84,7 +84,7 @@ try {
   check('with the network off it still starts and builds a plan: sessions with rest days, no fixed weekdays', made === '3/6/112112', made);
   check('the plan reads as a list with one "Train now" button', (await page.getByTestId('rest-gap').count()) === 5 && (await page.getByTestId('train-now').textContent()).trim() === 'Train now');
 
-  // One full set, still offline: starting weight, start, finish, save, rest timer.
+  // One full set, still offline: starting weight, start, one tap to finish, rest timer.
   await page.getByTestId('train-now').click();
   const main = page.getByTestId('main-action');
   await main.waitFor();
@@ -94,13 +94,15 @@ try {
     await page.waitForFunction((l) => document.querySelector('[data-testid=main-action]')?.textContent.trim() === l, label, { timeout: 5000 });
     await main.click();
   }
-  await page.waitForFunction(() => document.querySelector('[data-testid=main-action]')?.textContent.trim().startsWith('Save set'), null, { timeout: 5000 });
-  await main.click();
   check('the workout shows a sketch of the equipment for the first exercise', false || sketchSeen);
   await page.getByTestId('rest-timer').waitFor({ timeout: 5000 });
   await page.reload();
   await page.getByTestId('rest-timer').waitFor({ timeout: 15000 });
-  check('a set can be logged offline and survives a reload mid-rest', /^\d\d:\d\d$/.test((await page.getByTestId('rest-timer').textContent()).trim()));
+  check('a set can be logged offline with one tap and survives a reload mid-rest', /^\d\d:\d\d$/.test((await page.getByTestId('rest-timer').textContent()).trim()) && (await page.getByTestId('last-set').count()) === 1);
+  check('the new screens are in the release: weights, activities, the long view', await page.evaluate(async () => {
+    const [w, p] = await Promise.all([fetch('js/ui/weights.js').then((r) => r.text()), fetch('js/ui/plan.js').then((r) => r.text())]);
+    return w.includes('What you lift now') && p.includes('Log another activity') && p.includes('The long view');
+  }));
   await context.setOffline(false);
   check('no script errors', errors.length === 0, errors.join(' | '));
 } catch (e) {

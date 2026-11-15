@@ -1,6 +1,8 @@
-// The workout screen. One main action at the bottom, changing with the step:
-// Start set -> Finish set -> Save set and start rest -> Start set ...
-// Every tap is saved at once; a reload lands back on the same step.
+// The workout screen. One main action at the bottom, one tap per set:
+//   Start set -> Finish set -> (rest, then the next set starts by itself) -> Finish set ...
+// A finished set is saved as planned; it can be nudged by a rep before the tap
+// or during the rest, or undone. Every tap is saved at once and written to the
+// workout's log; a reload lands back on the same step.
 
 import { html, useState, useEffect, useRef, useStore, Sheet, Dock, Icon, clock, go, toast, NumberInput, restText, flags } from './kit.js';
 import * as store from '../store.js';
@@ -10,13 +12,14 @@ import { LOAD_TYPES, PROGRESSION } from '../domain/rules.js';
 import { substitutesFor, exerciseById, equipmentNames, zoneOf, machineForExercise, sketchForExercise } from '../domain/catalog.js';
 import { MachineInfo } from './equipment.js';
 import { Sketch, sketchNote } from './sketch.js';
+import { StepPicker, loadLabel } from './weights.js';
 import { describeChange } from '../domain/progression.js';
 import { afterSetSaved, afterWorkout, rememberWeight } from '../ai/coach.js';
 import { sourceName } from '../ai/ai.js';
-import { primeAudio, beep, buzz, keepAwake } from '../platform.js';
+import { primeAudio, buzz, keepAwake, keepAlive, scheduleBeep, cancelBeep, notify, clearNotifications } from '../platform.js';
 
 const RIR = [[0, '0'], [1, '1'], [2, '2'], [3, '3'], [4, '4+']];
-const STEPS = [1, 2, 2.5, 5, 10];
+const AUTO_START_WINDOW_MS = 120000;
 
 function setLine(ex, st) {
   if (st.status === 'skipped') return 'skipped';
@@ -38,32 +41,65 @@ function SetList({ ex, nowIdx, onEdit }) {
   </div>`;
 }
 
-function HintCard({ hint, onApply, onKeep }) {
+/** A change already made to the sets still to come, with its reason. One tap takes it back. */
+function HintCard({ hint, onUndo, onOk }) {
   const c = hint.changes[0];
   const d = describeChange(c);
   return html`<div class="change" data-testid="hint">
-    <div class="spread"><b>Check the change</b><span class="tag">From ${sourceName(hint.source)}</span></div>
+    <div class="spread"><b>Changed for the sets to come</b><span class="tag">From ${sourceName(hint.source)}</span></div>
     <div class="delta">${d.what}: ${d.text}</div>
     <p class="small muted">${c.reason}</p>
-    <div class="pair">
-      <button class="cta" onClick=${onApply}>Apply</button>
-      <button class="cta ghost" onClick=${onKeep}>Keep plan</button>
+    <div class="chips">
+      <button class="chip" data-testid="hint-undo" onClick=${onUndo}>Undo</button>
+      <button class="chip" onClick=${onOk}>OK</button>
     </div>
   </div>`;
 }
 
 function WeightPicker({ ex, reps, value, step, onValue, onStep, machine }) {
-  const plates = ex.loadType === 'machine' && machine?.loading === 'plate_loaded';
-  const type = plates ? { pick: 'Weight of the plates you load', unit: 'kg' } : LOAD_TYPES[ex.loadType];
+  const label = loadLabel(ex.loadType, machine);
   return html`<div class="note stack">
     <b>Choose your starting weight</b>
     <p class="small muted">There is no history for this exercise yet. Pick a weight you could lift for about ${reps + 2} reps with good form.</p>
-    <label class="field"><span>${type.pick}${type.unit ? ` (${type.unit})` : ''}</span>
-      <${NumberInput} id="start-weight" wide value=${value} onChange=${onValue} label="Starting weight" placeholder=${ex.loadType === 'machine' && !plates ? 'setting' : 'kg'} />
+    <label class="field"><span>${label.pick}${label.unit ? ` (${label.unit})` : ''}</span>
+      <${NumberInput} id="start-weight" wide value=${value} onChange=${onValue} label="Starting weight" placeholder=${label.hint} />
     </label>
-    <div class="field"><span>Smallest step you can add${ex.loadType === 'machine' && !plates ? ' (one pin hole)' : ' (kg)'}</span>
-      <div class="chips">${STEPS.map((v) => html`<button class=${`chip ${step === v ? 'on' : ''}`} onClick=${() => onStep(v)}>${num(v)}</button>`)}</div>
+    <div class="field"><span>Smallest step you can add</span><${StepPicker} value=${step} onChange=${onStep} id="start-step" /></div>
+  </div>`;
+}
+
+/** What to aim for on this set: stop at the target, or push on. */
+function EffortCue({ cue }) {
+  return html`<div class=${`note ${cue.push ? 'push' : ''}`} data-testid="effort"><b>${cue.title}</b><span class="small muted">${cue.text}</span></div>`;
+}
+
+/** The set just finished, during the rest: nudge the reps, change the weight, say how hard it was, or undo it. */
+function LastSet({ last, onAdjust, onUndo }) {
+  const [showWeight, setShowWeight] = useState(false);
+  const { ex, set, setIdx } = last;
+  const a = set.actual;
+  const step = ex.step || PROGRESSION.defaultStep[ex.loadType];
+  return html`<div class="note stack" data-testid="last-set">
+    <div class="spread"><b>Set ${setIdx + 1} saved</b><button class="chip" data-testid="undo" onClick=${onUndo}>Undo</button></div>
+    <div class="reps">
+      <button class="step" onClick=${() => onAdjust({ reps: a.reps - 1 })} aria-label="1 rep fewer">−1</button>
+      <span class="stack tight center grow"><strong class="big" data-testid="last-reps">${a.reps}</strong><small>reps${ex.loadType === 'bodyweight' ? (a.load ? ` + ${num(a.load)} kg` : '') : ` × ${fmtLoadShort(ex.loadType, a.load)}`}</small></span>
+      <button class="step" onClick=${() => onAdjust({ reps: a.reps + 1 })} aria-label="1 rep more">+1</button>
     </div>
+    <div class="chips" style="align-items:center">
+      <span class="small muted">Reps left in the tank</span>
+      ${RIR.map(([v, l]) => html`<button class=${`chip ${a.rir === v ? 'on' : ''}`} aria-pressed=${a.rir === v} aria-label=${`${l} reps left in the tank`}
+        onClick=${() => onAdjust({ rir: a.rir === v ? null : v })}>${l}</button>`)}
+    </div>
+    <div class="chips">
+      <button class=${`chip ${showWeight ? 'on' : ''}`} onClick=${() => setShowWeight(!showWeight)}>Change weight</button>
+    </div>
+    ${showWeight && html`<div class="reps">
+      <button class="step" onClick=${() => onAdjust({ load: Math.max(0, (a.load || 0) - step) })} aria-label="Less weight">−${num(step)}</button>
+      <${NumberInput} id="load-done" wide value=${a.load ?? 0} onChange=${(v) => onAdjust({ load: v })} label="Weight used" />
+      <button class="step" onClick=${() => onAdjust({ load: (a.load || 0) + step })} aria-label="More weight">+${num(step)}</button>
+    </div>
+    <p class="small muted">${LOAD_TYPES[ex.loadType].pick}. The new weight carries to the sets that follow.</p>`}
   </div>`;
 }
 
@@ -90,24 +126,54 @@ export function Workout() {
   const settings = store.getSettings();
   const [now, setNow] = useState(Date.now());
   const [sheet, setSheet] = useState(null);
-  const [showWeight, setShowWeight] = useState(false);
   const [pick, setPick] = useState({ key: null, value: null, step: null });
   const rang = useRef(0);
 
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(t); }, []);
   useEffect(() => { keepAwake(!!settings.keepAwake); return () => keepAwake(false); }, [settings.keepAwake]);
+  // While a rest runs, a tone too quiet to hear keeps the page going behind a dark screen, so the signal comes on time.
+  const restOn = !!session?.rest;
+  useEffect(() => { keepAlive(restOn && (settings.notify || settings.sound)); return () => keepAlive(false); }, [restOn, settings.notify, settings.sound]);
+  // Screen going off and on is part of the log: it explains long gaps.
+  useEffect(() => {
+    const on = () => { const s = store.activeSession(); if (s) store.putSession(S.logEvent(s, document.visibilityState === 'hidden' ? 'screen_off' : 'screen_on')); if (document.visibilityState === 'visible') clearNotifications(); };
+    document.addEventListener('visibilitychange', on);
+    return () => document.removeEventListener('visibilitychange', on);
+  }, []);
 
   // `now` only drives the re-render; the time itself is read fresh so it is never stale.
   const left = session ? S.restLeftMs(session, Math.max(now, Date.now())) : 0;
   const restEnd = session?.rest?.endsAt || 0;
+  // The "rest over" sound is put on the audio clock when the rest starts, so it comes on time even behind a dark screen.
   useEffect(() => {
-    if (!restEnd || left > 0 || rang.current === restEnd) return;
-    rang.current = restEnd;
-    if (Date.now() - restEnd < 2000) { // only when we watched it run out, not after a late reload
-      if (settings.sound) beep();
-      if (settings.vibrate) buzz();
+    if (!restEnd || !settings.sound) return undefined;
+    const secs = (restEnd - Date.now()) / 1000;
+    if (secs <= 0) return undefined;
+    return scheduleBeep(secs);
+  }, [restEnd, settings.sound]);
+  // The rest ran out. Called from a timer set when the rest starts, and again from the
+  // screen clock in case the timer was held back; it only ever acts once per rest.
+  const restOver = () => {
+    const live = store.activeSession();
+    const end = live?.rest?.endsAt;
+    if (!end || Date.now() < end || rang.current === end) return;
+    rang.current = end;
+    const prefs = store.getSettings();
+    // Coming back long after the rest ended (the app was closed), nothing starts by itself: that set is clearly not under way.
+    const auto = prefs.autoStart && !live.rest.betweenExercises && !S.needsWeight(live) && Date.now() - end < AUTO_START_WINDOW_MS;
+    if (Date.now() - end < 3000) { // we saw it run out: signal it
+      if (prefs.vibrate) buzz();
+      if (prefs.notify && document.visibilityState === 'hidden') notify('Rest over', live.rest.betweenExercises ? 'Time for the next exercise.' : auto ? 'Your next set has started.' : 'Time for your next set.');
     }
-  }, [left === 0, restEnd]);
+    // The next set of the same exercise starts by itself, from the moment the rest ended.
+    if (auto) store.putSession(S.beginSet(live, end, { auto: true }));
+  };
+  useEffect(() => {
+    if (!restEnd) return undefined;
+    const t = setTimeout(restOver, Math.max(0, restEnd - Date.now()) + 20);
+    return () => clearTimeout(t);
+  }, [restEnd]);
+  useEffect(() => { if (restEnd && left === 0) restOver(); }, [left === 0, restEnd]);
 
   if (!session) return null;
 
@@ -120,10 +186,12 @@ export function Workout() {
   const firstOfExercise = !ex.sets.some((st) => st.status !== 'pending');
   const lastSetOverall = c.total - c.done - c.skipped === 1;
   const picked = pick.key === ex.key ? pick : { key: ex.key, value: null, step: PROGRESSION.defaultStep[ex.loadType] };
-  const hint = session.hint && S.hintApplies(session, session.hint) ? session.hint : null;
+  const hint = session.hint?.applied && S.hintApplies(session, session.hint) ? session.hint : null;
+  const last = waiting ? S.lastSet(session) : null;
+  const cue = S.effortCue(ex, setIdx, state.plan?.level);
 
   const put = (next, extra) => store.putSession(next, extra);
-  const done = (s) => { afterWorkout(s); flags.justFinished = s.id; go('session', s.id, { replace: true }); };
+  const done = (s) => { cancelBeep(); afterWorkout(s); flags.justFinished = s.id; go('session', s.id, { replace: true }); };
 
   const onMain = () => {
     primeAudio();
@@ -132,20 +200,27 @@ export function Workout() {
       put(S.setStartingWeight(session, picked.value, picked.step), rememberWeight(ex.exerciseId, ex.loadType, picked.value, picked.step));
       return;
     }
-    if (waiting) { setShowWeight(false); put(S.beginSet(session)); return; }
-    if (phase === 'active') { put(S.finishSet(session)); return; }
-    if (phase === 'log') {
-      const next = S.saveSet(session);
-      const actual = next.exercises[exIdx].sets[setIdx].actual;
-      const extra = actual.load != null && ex.loadType !== 'bodyweight' ? rememberWeight(ex.exerciseId, ex.loadType, actual.load, ex.step) : {};
-      put(next, extra);
-      if (next.status === 'done') done(next); else afterSetSaved(session, exIdx, setIdx);
-    }
+    if (waiting) { cancelBeep(); put(S.beginSet(session)); return; }
+    // One tap: the set is saved as planned, or as nudged while it ran, and the rest starts.
+    const next = S.finishSet(session);
+    const actual = next.exercises.find((x) => x.key === ex.key).sets[setIdx].actual;
+    const extra = actual.load != null && ex.loadType !== 'bodyweight' ? rememberWeight(ex.exerciseId, ex.loadType, actual.load, ex.step) : {};
+    put(next, extra);
+    if (next.status === 'done') done(next); else afterSetSaved(session, ex.key, setIdx);
   };
 
-  const skip = (fn) => { const next = fn(session); put(next); if (next.status === 'done') done(next); };
+  // During the rest: correct the set just done. The suggestion for the next sets is worked out again.
+  const adjust = (patch) => {
+    const next = S.adjustLast(session, patch);
+    const L = S.lastSet(next);
+    const extra = patch.load != null && L && L.ex.loadType !== 'bodyweight' ? rememberWeight(L.ex.exerciseId, L.ex.loadType, L.set.actual.load, L.ex.step) : {};
+    put(next, extra);
+    if (L) afterSetSaved(next, L.ex.key, L.setIdx);
+  };
+
+  const move = (next) => { cancelBeep(); put(next); if (next.status === 'done') done(next); };
   const endNow = () => { const next = S.endSession(session); put(next); setSheet(null); done(next); };
-  const discard = () => { setSheet(null); store.removeSession(session.id); go('plan', '', { replace: true }); toast('Workout discarded'); };
+  const discard = () => { cancelBeep(); setSheet(null); store.removeSession(session.id); go('plan', '', { replace: true }); toast('Workout discarded'); };
 
   const swapTo = (cat) => {
     const known = state.weights[cat.id];
@@ -159,13 +234,11 @@ export function Workout() {
   };
 
   const mainLabel = waiting && needW ? 'Save starting weight'
-    : waiting ? 'Start set'
-      : phase === 'active' ? 'Finish set'
-        : lastSetOverall ? 'Save set and finish workout' : 'Save set and start rest';
+    : phase === 'active' ? (lastSetOverall ? 'Finish set and end workout' : 'Finish set')
+      : resting && !session.rest.betweenExercises && left > 0 ? 'Start next set now' : 'Start set';
 
   const draft = session.draft;
-  const loadStep = ex.step || PROGRESSION.defaultStep[ex.loadType];
-  const subs = sheet === 'swap' ? substitutesFor(state.equipment, (ex.swappedFrom || ex).exerciseId, {
+  const subs = sheet === 'busy' ? substitutesFor(state.equipment, (ex.swappedFrom || ex).exerciseId, {
     exclude: session.exercises.map((x) => x.exerciseId), avoid: state.profile.avoid, avoidTags: state.profile.avoidTags,
   }) : [];
   const editing = sheet?.edit != null ? ex.sets[sheet.edit] : null;
@@ -173,6 +246,7 @@ export function Workout() {
   const machine = machineForExercise(state.equipment, thisLift);
   const look = sketchForExercise(state.equipment, thisLift); // what the equipment looks like, for finding it
   const setElapsed = phase === 'active' && session.setStartedAt ? Math.max(now, Date.now()) - session.setStartedAt : 0;
+  const others = S.hasOthers(session);
 
   return html`
     <header class="top">
@@ -180,7 +254,7 @@ export function Workout() {
         <button class="icon-btn" aria-label="End workout" onClick=${() => setSheet('end')}><${Icon} name="close" /></button>
         <div class="stack tight"><b>${resting ? 'Rest' : 'Workout'}</b></div>
       </div>
-      <small data-testid="progress">${resting && !firstOfExercise ? `Set ${setIdx} saved` : `Exercise ${exIdx + 1} of ${session.exercises.length}`}</small>
+      <button class="chip" data-testid="progress" aria-label="See the whole workout" onClick=${() => setSheet('all')}>Exercise ${exIdx + 1} of ${session.exercises.length} ▾</button>
     </header>
     <main class="main with-dock" data-phase=${phase}>
       <div class="bar" aria-hidden="true"><i style=${`width:${Math.round(((c.done + c.skipped) / c.total) * 100)}%`}></i></div>
@@ -188,20 +262,22 @@ export function Workout() {
       ${resting && html`
         <div class="stack tight">
           <strong class=${`timer ${left > 0 ? 'accent' : 'over'}`} data-testid="rest-timer" aria-live="off">${clock(left)}</strong>
-          <p class="small muted">${left > 0 ? 'Rest' : 'Rest is over. Go when you are ready.'}</p>
+          <p class="small muted">${left > 0 ? (session.rest.betweenExercises ? 'Time to change station' : settings.autoStart ? 'Rest. The next set starts when it runs out.' : 'Rest') : 'Rest is over. Go when you are ready.'}</p>
         </div>
         <div class="chips">
           <button class="chip" onClick=${() => put(S.addRest(session, 15))}>+15 s</button>
-          <button class="chip" onClick=${() => put(S.skipRest(session))}>Skip rest</button>
+          <button class="chip" onClick=${() => put(S.addRest(session, 60))}>+1 min</button>
         </div>`}
+
+      ${last && html`<${LastSet} key=${`${last.ex.key}-${last.setIdx}`} last=${last} onAdjust=${adjust}
+        onUndo=${() => { cancelBeep(); put(S.undoFinish(session)); toast('Set is open again'); }} />`}
 
       <div class="spread" style="align-items:flex-start">
         <div class="stack tight grow">
           ${waiting && html`<p class="eyebrow">${firstOfExercise ? (c.done + c.skipped === 0 ? 'First exercise' : 'Next exercise') : 'Next set'}</p>`}
-          ${phase === 'log' && html`<p class="eyebrow">Set result</p>`}
-          ${phase === 'active' && html`<p class="eyebrow">Set in progress · ${clock(setElapsed)}</p>`}
+          ${phase === 'active' && html`<p class="eyebrow" data-testid="set-clock">Set in progress · ${clock(setElapsed)}${set.auto ? ' · started by itself' : ''}</p>`}
           <h3 data-testid="exercise-name">${ex.name}</h3>
-          <p class="muted small">${ex.zone} · set ${setIdx + 1} of ${ex.sets.length}${ex.swappedFrom ? ` · swapped in for ${ex.swappedFrom.name}` : ''}</p>
+          <p class="muted small">${ex.zone} · set ${setIdx + 1} of ${ex.sets.length}${ex.swappedFrom ? ` · swapped in for ${ex.swappedFrom.name}` : ''}${ex.postponed ? ' · put off earlier' : ''}</p>
           ${waiting && session.easePct > 0 && c.done + c.skipped === 0 && html`<p class="small muted" data-testid="eased">Loads are ${session.easePct}% lighter today to ease back in. The plan keeps its numbers.</p>`}
           ${waiting && firstOfExercise && html`<p class="muted small">${ex.equipment} · ${ex.sets.length} sets · rest ${restText(ex.restSec)}</p>`}
         </div>
@@ -209,56 +285,45 @@ export function Workout() {
       </div>
       ${waiting && firstOfExercise && look && html`<p class="small muted" data-testid="sketch-note">${sketchNote(look)}</p>`}
 
-      ${phase !== 'log' && !(waiting && needW) && html`
+      ${waiting && !needW && html`
         <div class="metrics">
           <div><strong data-testid="target-reps">${set.target.reps}</strong><small>reps in the plan</small></div>
           <div><strong data-testid="target-load">${ex.loadType === 'bodyweight' ? (set.target.load ? `+${num(set.target.load)} kg` : 'BW') : ex.loadType === 'machine' ? num(set.target.load) : `${num(set.target.load)} kg`}</strong>
             <small>${ex.loadType === 'bodyweight' ? (set.target.load ? 'added to bodyweight' : 'bodyweight') : LOAD_TYPES[ex.loadType].label}</small></div>
         </div>`}
 
-      ${(waiting || phase === 'active') && machine && (machine.how || machine.isolates) && html`<${MachineInfo} d=${machine} />`}
+      ${phase === 'active' && draft && html`
+        <div class="stack">
+          <div class="reps" data-testid="reps-now">
+            <button class="step" onClick=${() => put(S.editDraft(session, { reps: draft.reps - 1 }))} aria-label="1 rep fewer">−1</button>
+            <span class="stack tight center grow"><strong class="big" data-testid="draft-reps">${draft.reps}</strong>
+              <small>reps to record${ex.loadType === 'bodyweight' ? (draft.load ? ` + ${num(draft.load)} kg` : '') : ` × ${fmtLoad(ex.loadType, draft.load)}`}</small></span>
+            <button class="step" onClick=${() => put(S.editDraft(session, { reps: draft.reps + 1 }))} aria-label="1 rep more">+1</button>
+          </div>
+          <p class="small muted">"Finish set" saves this number. You can still nudge it by a rep during the rest.</p>
+        </div>`}
 
       ${waiting && needW && html`<${WeightPicker} ex=${ex} reps=${set.target.reps} machine=${machine} value=${picked.value} step=${picked.step}
         onValue=${(v) => setPick({ ...picked, value: v })} onStep=${(v) => setPick({ ...picked, step: v })} />`}
 
+      ${!(waiting && needW) && html`<${EffortCue} cue=${cue} />`}
+
       ${waiting && hint && html`<${HintCard} hint=${hint}
-        onApply=${() => { put(S.applyHint(session, hint)); toast('Applied to the sets to come'); }}
-        onKeep=${() => put(S.setHint(session, null))} />`}
+        onUndo=${() => { put(S.undoHint(session)); toast('Back to the plan for these sets'); }}
+        onOk=${() => put(S.setHint(session, null))} />`}
 
-      ${phase === 'log' && draft && html`
-        <div class="stack">
-          <p><b>Set result</b> · <span data-testid="result-line">${draft.reps} reps${ex.loadType === 'bodyweight' ? (draft.load ? ` + ${num(draft.load)} kg` : '') : ` × ${fmtLoad(ex.loadType, draft.load)}`}</span></p>
-          <div class="reps">
-            <button class="step" onClick=${() => put(S.editDraft(session, { reps: draft.reps - 2 }))} aria-label="2 reps fewer">−2</button>
-            <button class="step" onClick=${() => put(S.editDraft(session, { reps: draft.reps - 1 }))} aria-label="1 rep fewer">−1</button>
-            <${NumberInput} id="reps-done" value=${draft.reps} onChange=${(v) => put(S.editDraft(session, { reps: v }))} label="Reps done" />
-            <button class="step" onClick=${() => put(S.editDraft(session, { reps: draft.reps + 1 }))} aria-label="1 rep more">+1</button>
-            <button class="step" onClick=${() => put(S.editDraft(session, { reps: draft.reps + 2 }))} aria-label="2 reps more">+2</button>
-          </div>
-          <div class="chips">
-            <button class=${`chip ${showWeight ? 'on' : ''}`} onClick=${() => setShowWeight(!showWeight)}>Change weight</button>
-          </div>
-          ${showWeight && html`<div class="reps">
-            <button class="step" onClick=${() => put(S.editDraft(session, { load: Math.max(0, (draft.load || 0) - loadStep) }))} aria-label="Less weight">−${num(loadStep)}</button>
-            <${NumberInput} id="load-done" wide value=${draft.load ?? 0} onChange=${(v) => put(S.editDraft(session, { load: v }))} label="Weight used" />
-            <button class="step" onClick=${() => put(S.editDraft(session, { load: (draft.load || 0) + loadStep }))} aria-label="More weight">+${num(loadStep)}</button>
-          </div>
-          <p class="small muted">${LOAD_TYPES[ex.loadType].pick}. The new weight carries to the sets that follow.</p>`}
-          <div class="field"><span>Reps left in the tank (optional)</span>
-            <div class="chips">${RIR.map(([v, l]) => html`<button class=${`chip ${draft.rir === v ? 'on' : ''}`} aria-pressed=${draft.rir === v}
-              onClick=${() => put(S.editDraft(session, { rir: draft.rir === v ? null : v }))}>${l}</button>`)}</div>
-          </div>
-        </div>`}
+      ${(waiting || phase === 'active') && machine && (machine.how || machine.isolates) && html`<${MachineInfo} d=${machine} />`}
 
-      ${(waiting || phase === 'active') && html`<${SetList} ex=${ex} nowIdx=${setIdx} onEdit=${(i) => setSheet({ edit: i })} />`}
+      <${SetList} ex=${ex} nowIdx=${setIdx} onEdit=${(i) => setSheet({ edit: i })} />
 
       ${waiting && html`<div class="chips">
-        <button class="chip" onClick=${() => setSheet('swap')}>Machine busy? Swap</button>
-        <button class="chip" onClick=${() => skip(S.skipSet)}>Skip set</button>
-        <button class="chip" onClick=${() => skip(S.skipExercise)}>Skip exercise</button>
+        <button class="chip" data-testid="busy" onClick=${() => setSheet('busy')}>Machine busy? Not now</button>
+        <button class="chip" onClick=${() => move(S.skipSet(session))}>Skip set</button>
       </div>`}
-      ${phase === 'active' && html`<div class="chips"><button class="chip" onClick=${() => put(S.cancelSet(session))}>Not started yet</button></div>`}
-      ${phase === 'log' && html`<div class="chips"><button class="chip" onClick=${() => put(S.beginSet({ ...session, phase: 'ready' }, session.setStartedAt || Date.now()))}>Back to the set</button></div>`}
+      ${phase === 'active' && html`<div class="chips">
+        <button class="chip accent" data-testid="start-now" onClick=${() => { put(S.restartSet(session)); toast('Clock reset: the set starts now'); }}>Start now</button>
+        <button class="chip" onClick=${() => put(S.cancelSet(session))}>Not doing it yet</button>
+      </div>`}
     </main>
 
     <${Dock}>
@@ -272,19 +337,48 @@ export function Workout() {
       <button class="cta ghost" onClick=${() => setSheet(null)}>Keep going</button>
     <//>`}
 
-    ${sheet === 'swap' && html`<${Sheet} title="Swap this exercise" onClose=${() => setSheet(null)}>
-      <p class="muted small">Same movement, on equipment you marked available. The swap is for today only.</p>
-      ${subs.length ? subs.map((cat) => html`
-        <button class="row" onClick=${() => swapTo(cat)}>
-          <${Sketch} small id=${sketchForExercise(state.equipment, cat)?.id} loading=${sketchForExercise(state.equipment, cat)?.loading} />
-          <span class="stack tight grow"><b>${cat.name}</b><span class="sub">${equipmentNames(state.equipment, cat)}</span></span>
-          <span class="accent">Use</span>
-        </button>`) : html`<p class="note">Nothing else on your equipment list trains this movement. You can skip it, or add machines on the Equipment tab.</p>`}
+    ${sheet === 'busy' && html`<${Sheet} title="Machine busy, or not now?" onClose=${() => setSheet(null)}>
+      <button class="cta" data-testid="later" disabled=${!others} onClick=${() => { move(S.postponeExercise(session)); setSheet(null); toast(`${ex.name} comes back at the end`); }}>Come back to it later</button>
+      ${!others && html`<p class="small muted">This is the last exercise left, so there is nothing to do first.</p>`}
+      <div class="stack">
+        <p class="small muted">Or do something else instead, for today only:</p>
+        ${subs.filter((x) => x.close).length > 0 && html`<p class="eyebrow">Same movement</p>`}
+        ${subs.filter((x) => x.close).map((cat) => html`<${SubRow} cat=${cat} eq=${state.equipment} onUse=${() => swapTo(cat)} />`)}
+        ${subs.filter((x) => !x.close).length > 0 && html`<p class="eyebrow">Same muscles, another movement</p>`}
+        ${subs.filter((x) => !x.close).slice(0, 6).map((cat) => html`<${SubRow} cat=${cat} eq=${state.equipment} onUse=${() => swapTo(cat)} />`)}
+        ${!subs.length && html`<p class="note">Nothing else on your equipment list trains these muscles. Add machines on the Equipment tab, or come back to it later.</p>`}
+      </div>
+      <button class="cta danger" data-testid="drop" onClick=${() => { setSheet(null); move(S.dropExercise(session)); toast(`${ex.name} dropped for today`); }}>Drop it for today</button>
+    <//>`}
+
+    ${sheet === 'all' && html`<${Sheet} title="This workout" onClose=${() => setSheet(null)}>
+      <p class="small muted">${c.done} of ${c.total} sets done. Tap an exercise to go to it.</p>
+      <div class="stack" data-testid="overview">
+        ${session.exercises.map((x, i) => {
+          const d = x.sets.filter((st) => st.status === 'done').length;
+          const pending = x.sets.some((st) => st.status === 'pending');
+          const status = i === exIdx ? 'Now' : x.dropped ? 'Dropped' : !pending ? 'Done' : x.postponed ? 'Later' : 'To do';
+          return html`<button class=${`row ${i === exIdx ? 'on' : ''}`} disabled=${!pending || i === exIdx}
+            onClick=${() => { cancelBeep(); put(S.goToExercise(session, i)); setSheet(null); }}>
+            <span class="stack tight grow"><b>${i + 1}. ${x.name}</b><span class="sub">${d} of ${x.sets.length} sets done${x.swappedFrom ? ` · swapped in for ${x.swappedFrom.name}` : ''}</span></span>
+            <span class=${`tag ${status === 'Now' || status === 'Done' ? 'good' : ''}`}>${status}</span>
+          </button>`;
+        })}
+      </div>
     <//>`}
 
     ${editing?.actual && html`<${EditSet} ex=${ex} st=${editing} index=${sheet.edit} onClose=${() => setSheet(null)}
       onSave=${(a) => { put(S.editSet(session, exIdx, sheet.edit, a)); setSheet(null); toast('Set corrected'); }} />`}
   `;
+}
+
+function SubRow({ cat, eq, onUse }) {
+  const look = sketchForExercise(eq, cat);
+  return html`<button class="row" onClick=${onUse}>
+    ${look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}
+    <span class="stack tight grow"><b>${cat.name}</b><span class="sub">${equipmentNames(eq, cat)}</span></span>
+    <span class="accent">Use</span>
+  </button>`;
 }
 
 export { exerciseById };

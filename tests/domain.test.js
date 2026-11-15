@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RULES, SOURCES, PRESCRIPTION, prescribe, levelFor, rulesAsText, RULES_VERSION } from '../js/domain/rules.js';
+import { RULES, SOURCES, PRESCRIPTION, prescribe, levelFor, rulesAsText, RULES_VERSION, activityGroups } from '../js/domain/rules.js';
 import { emptyEquipment, isAvailable, substitutesFor, allExercises, EXERCISES, EQUIPMENT, canDo } from '../js/domain/catalog.js';
-import { generatePlan, emptyProfile, missingFields, dayMinutes, buildAssumptions, normalizePlan, brokenExercises, weeklySets, upgradePlan } from '../js/domain/planner.js';
+import { generatePlan, emptyProfile, missingFields, dayMinutes, buildAssumptions, normalizePlan, brokenExercises, weeklySets, upgradePlan, buildOutlook } from '../js/domain/planner.js';
 import * as K from '../js/domain/schedule.js';
 import * as S from '../js/domain/session.js';
-import { inSessionHint, postSessionChanges, applyPlanChange, lowerLoad, equipmentChanges, fromAiChanges } from '../js/domain/progression.js';
+import { inSessionHint, postSessionChanges, applyPlanChange, undoPlanChange, canUndo, withValue, ruleSummary, lowerLoad, equipmentChanges, fromAiChanges } from '../js/domain/progression.js';
 
 const profile = (over = {}) => ({ ...emptyProfile(), goal: 'strength', months: 12, daysPerWeek: 3, days: ['mon', 'wed', 'fri'], minutes: 50, ...over });
 const T0 = Date.UTC(2026, 10, 9, 17, 0, 0); // a Monday
@@ -111,7 +111,7 @@ function runTo(plan) {
   return s;
 }
 
-test('session: ready -> set -> log -> rest -> next, with starting weight and restore', () => {
+test('session: ready -> set -> one tap to finish -> rest -> next, with starting weight and restore', () => {
   const plan = generatePlan(profile(), emptyEquipment(), {}, T0);
   let s = runTo(plan);
   assert.equal(s.phase, 'ready');
@@ -121,25 +121,101 @@ test('session: ready -> set -> log -> rest -> next, with starting weight and res
   assert.ok(!S.needsWeight(s));
   s = S.beginSet(s, T0 + 1000);
   assert.equal(s.phase, 'active');
-  s = S.finishSet(s, T0 + 41000);
-  assert.equal(s.phase, 'log');
   const planned = S.current(s).set.target.reps;
-  assert.equal(s.draft.reps, planned, 'result starts from the planned value');
-  s = S.editDraft(s, { reps: s.draft.reps - 1, rir: 0 });
-  s = S.saveSet(s, T0 + 45000);
-  assert.equal(s.phase, 'rest');
-  assert.equal(s.exercises[0].sets[0].actual.reps, planned - 1);
-  assert.equal(s.exercises[0].sets[0].actual.seconds, 40);
+  assert.equal(s.draft.reps, planned, 'the set will be saved as planned unless changed');
+  s = S.finishSet(s, T0 + 41000);
+  assert.equal(s.phase, 'rest', 'one tap: saved and resting');
+  assert.deepEqual([s.exercises[0].sets[0].actual.reps, s.exercises[0].sets[0].actual.load, s.exercises[0].sets[0].actual.seconds], [planned, 20, 40]);
   assert.deepEqual(s.cursor, { ex: 0, set: 1 });
+  // During the rest the set just done can be corrected: one rep fewer, nothing left in the tank.
+  s = S.adjustLast(s, { reps: planned - 1, rir: 0 }, T0 + 45000);
+  assert.equal(s.exercises[0].sets[0].actual.reps, planned - 1); assert.equal(s.exercises[0].sets[0].actual.rir, 0);
+  assert.ok(!s.exercises[0].sets[0].actual.edited, 'adjusting right away is not a later correction');
   // Reload: the remaining rest comes from the stored end time.
   const restored = JSON.parse(JSON.stringify(s));
   const restSec = s.exercises[0].restSec;
-  assert.equal(S.restLeftMs(restored, T0 + 45000 + 30000), (restSec - 30) * 1000);
-  assert.equal(S.restLeftMs(restored, T0 + 45000 + 9999999), 0);
+  assert.equal(S.restLeftMs(restored, T0 + 41000 + 30000), (restSec - 30) * 1000);
+  assert.equal(S.restLeftMs(restored, T0 + 41000 + 9999999), 0);
   s = S.addRest(s, 15, T0 + 46000);
-  assert.equal(S.restLeftMs(s, T0 + 46000), (restSec + 15 - 1) * 1000);
+  assert.equal(S.restLeftMs(s, T0 + 46000), (restSec + 15 - 5) * 1000);
   s = S.skipRest(s, T0 + 47000);
   assert.equal(s.phase, 'ready');
+});
+
+test('session: adjust before finishing, undo, auto-start and "start now"', () => {
+  const plan = generatePlan(profile(), emptyEquipment(), { db_bench_press: { value: 20, step: 2 } }, T0);
+  let s = S.startSession(plan, 'd1', T0);
+  const target = S.current(s).set.target.reps;
+  s = S.beginSet(s, T0 + 1000);
+  s = S.editDraft(s, { reps: target + 1 }, T0 + 20000); // +1 while the set is still running
+  s = S.finishSet(s, T0 + 31000);
+  assert.equal(s.exercises[0].sets[0].actual.reps, target + 1);
+  // Finished by mistake: undo opens the set again, clock still running from its start.
+  const undone = S.undoFinish(s, T0 + 33000);
+  assert.equal(undone.phase, 'active'); assert.deepEqual(undone.cursor, { ex: 0, set: 0 });
+  assert.equal(undone.exercises[0].sets[0].status, 'pending'); assert.equal(undone.exercises[0].sets[0].actual, null);
+  assert.equal(undone.setStartedAt, T0 + 1000); assert.equal(undone.draft.reps, target + 1, 'what was entered is kept');
+  assert.equal(S.undoFinish(undone, T0 + 34000), undone, 'nothing to undo while a set is running');
+  s = S.finishSet(undone, T0 + 40000);
+  // The rest runs out and the next set starts by itself at that moment.
+  const restEnds = s.rest.endsAt;
+  s = S.beginSet(s, restEnds, { auto: true });
+  assert.ok(s.exercises[0].sets[1].auto); assert.equal(s.exercises[0].sets[1].restBeforeSec, s.exercises[0].restSec, 'the rest really taken is recorded');
+  // The user only starts 20 s later: "Start now" resets the clock and the rest taken.
+  s = S.restartSet(s, restEnds + 20000);
+  assert.equal(s.setStartedAt, restEnds + 20000); assert.ok(!s.exercises[0].sets[1].auto);
+  assert.equal(s.exercises[0].sets[1].restBeforeSec, s.exercises[0].restSec + 20);
+  s = S.finishSet(s, restEnds + 50000);
+  assert.equal(s.exercises[0].sets[1].actual.seconds, 30);
+  // A new weight entered after the set carries to the sets still to come.
+  s = S.adjustLast(s, { load: 18 }, restEnds + 52000);
+  assert.equal(s.exercises[0].sets[1].actual.load, 18); assert.equal(s.exercises[0].sets[2].target.load, 18);
+  assert.deepEqual(S.restStats(s), { count: 1, planned: s.exercises[0].restSec, actual: s.exercises[0].restSec + 20 });
+  // Everything is in the log, with its time in seconds from the start.
+  const types = s.log.map((e) => e[1]);
+  for (const t of ['start', 'set_start', 'adjust', 'set_finish', 'rest_start', 'undo', 'set_restart']) assert.ok(types.includes(t), `log has ${t}`);
+  assert.deepEqual(s.log.find((e) => e[1] === 'adjust'), [20, 'adjust', 0, 0, 'reps', target, target + 1, 'before_finish']);
+  assert.deepEqual(s.log.filter((e) => e[1] === 'set_start').map((e) => e[4]), ['tap', 'auto']);
+  assert.ok(s.log.every((e, i) => i === 0 || e[0] >= s.log[i - 1][0]), 'in order of time');
+  assert.ok(s.log.some((e) => e[1] === 'adjust' && e[7] === 'after_finish'));
+});
+
+test('session: machine busy - come back later, drop for today, jump between exercises', () => {
+  const plan = generatePlan(profile(), emptyEquipment(), { db_bench_press: { value: 20, step: 2 } }, T0);
+  let s = S.startSession(plan, 'd1', T0);
+  const order = () => s.exercises.map((x) => x.exerciseId);
+  const first = order()[0]; const second = order()[1];
+  s = S.postponeExercise(s, T0 + 1000);
+  assert.equal(order()[0], second, 'the next exercise comes up'); assert.equal(order()[order().length - 1], first, 'the busy one waits at the end');
+  assert.equal(s.exercises[s.exercises.length - 1].postponed, 1); assert.equal(s.phase, 'ready'); assert.deepEqual(s.cursor, { ex: 0, set: 0 });
+  assert.ok(s.exercises[s.exercises.length - 1].sets.every((x) => x.status === 'pending'), 'nothing is lost');
+  // Jump straight to the last exercise and back.
+  s = S.goToExercise(s, s.exercises.length - 1, T0 + 2000);
+  assert.equal(S.current(s).ex.exerciseId, first);
+  s = S.goToExercise(s, 0, T0 + 3000);
+  assert.equal(S.current(s).ex.exerciseId, second);
+  // Drop it for today: its sets are saved as skipped and it does not come back.
+  s = S.dropExercise(s, T0 + 4000);
+  const dropped = s.exercises.find((x) => x.exerciseId === second);
+  assert.ok(dropped.dropped && dropped.sets.every((x) => x.status === 'skipped'));
+  assert.notEqual(S.current(s).ex.exerciseId, second);
+  // When only one exercise is left, there is nothing to put it behind.
+  let one = s;
+  while (S.hasOthers(one)) one = S.dropExercise(one, T0 + 5000);
+  assert.equal(S.postponeExercise(one, T0 + 6000), one);
+  assert.equal(S.goToExercise(one, 99, T0), one);
+  for (const t of ['later', 'jump', 'drop']) assert.ok(s.log.some((e) => e[1] === t), `log has ${t}`);
+});
+
+test('effort: sets before the last stop at the target; the last one may go on', () => {
+  const plan = generatePlan(profile(), emptyEquipment(), { db_bench_press: { value: 20, step: 2 } }, T0);
+  const s = S.startSession(plan, 'd1', T0);
+  const ex = s.exercises[0];
+  const firstCue = S.effortCue(ex, 0, 'intermediate');
+  assert.ok(!firstCue.push); assert.match(firstCue.title, /^Stop at \d+$/); assert.match(firstCue.text, /Leave 1-3 in the tank/);
+  const lastCue = S.effortCue(ex, ex.sets.length - 1, 'intermediate');
+  assert.ok(lastCue.push); assert.match(lastCue.title, /^Last set: \d+ or more$/); assert.match(lastCue.text, /stop 1 short of failure/);
+  assert.match(S.effortCue(ex, ex.sets.length - 1, 'novice').text, /stop 2 short of failure/, 'novices keep more in hand on the main lifts');
 });
 
 test('session: last set of an exercise moves to the next one; finishing gives a summary', () => {
@@ -151,8 +227,7 @@ test('session: last set of an exercise moves to the next one; finishing gives a 
     if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t);
     const before = { ...s.cursor };
     s = S.beginSet(s, t += 1000);
-    s = S.finishSet(s, t += 30000);
-    s = S.saveSet(s, t += 2000);
+    s = S.finishSet(s, t += 2000);
     if (s.status === 'active' && s.cursor.ex !== before.ex) assert.ok(s.rest.betweenExercises);
   }
   assert.equal(s.status, 'done'); assert.equal(s.phase, 'summary');
@@ -165,7 +240,7 @@ test('session: skip, substitute, edit and end early are recorded', () => {
   const eq = emptyEquipment(); eq.items.leg_press = true;
   const plan = generatePlan(profile(), eq, { db_bench_press: { value: 20, step: 2 } }, T0);
   let s = S.startSession(plan, 'd1', T0);
-  s = S.beginSet(s, T0); s = S.finishSet(s, T0 + 30000); s = S.saveSet(s, T0 + 31000);
+  s = S.beginSet(s, T0); s = S.finishSet(s, T0 + 31000);
   s = S.skipSet(s, T0 + 32000);
   assert.equal(s.exercises[0].sets[1].status, 'skipped');
   s = S.editSet(s, 0, 0, { reps: 5, load: 18, rir: 2 }, T0 + 33000);
@@ -187,7 +262,7 @@ test('session: skip, substitute, edit and end early are recorded', () => {
 test('history: a later plan change does not alter a stored session', () => {
   const plan = generatePlan(profile(), emptyEquipment(), { db_bench_press: { value: 20, step: 2 } }, T0);
   let s = S.startSession(plan, 'd1', T0);
-  s = S.beginSet(s, T0); s = S.finishSet(s, T0 + 1); s = S.saveSet(s, T0 + 2);
+  s = S.beginSet(s, T0); s = S.finishSet(s, T0 + 2);
   const frozen = JSON.stringify(s);
   const { plan: p2 } = applyPlanChange(plan, { exerciseId: 'db_bench_press', field: 'load', value: 22 }, emptyEquipment(), {});
   assert.equal(p2.version, plan.version + 1);
@@ -200,25 +275,42 @@ test('progression: in-session hints follow the rules and only target sets not do
   const plan = generatePlan(profile(), emptyEquipment(), { db_bench_press: { value: 20, step: 2 } }, T0);
   let s = S.startSession(plan, 'd1', T0);
   const target = S.current(s).set.target.reps;
-  s = S.beginSet(s, T0); s = S.finishSet(s, T0 + 1); s = S.editDraft(s, { reps: target - 1 }); s = S.saveSet(s, T0 + 2);
+  s = S.beginSet(s, T0); s = S.editDraft(s, { reps: target - 1 }); s = S.finishSet(s, T0 + 2);
   let h = inSessionHint(s, 0, 0);
   assert.ok(h, 'one rep short gives a hint');
   assert.equal(h.changes[0].field, 'load'); assert.equal(h.changes[0].value, 18);
   assert.match(h.changes[0].reason, /if that set was close to failure/);
   assert.ok(S.hintApplies(s, h));
+  // The change is made at once, stays on screen, and one tap takes it back.
   const applied = S.applyHint(s, h, T0 + 3);
   assert.equal(applied.exercises[0].sets[1].target.load, 18);
   assert.equal(applied.exercises[0].sets[0].actual.load, 20, 'done sets are not touched');
+  assert.ok(applied.hint.applied && S.hintApplies(applied, applied.hint));
+  const undone = S.undoHint(applied, T0 + 4);
+  assert.equal(undone.exercises[0].sets[1].target.load, 20); assert.equal(undone.hint, null); assert.ok(undone.hintUndone, 'not made again for this set');
+  assert.equal(S.withoutHint(applied).exercises[0].sets[1].target.load, 20);
+  // Correcting the set during the rest takes the change back first: it was built on the old numbers.
+  const fixed = S.adjustLast(applied, { reps: target }, T0 + 5);
+  assert.equal(fixed.exercises[0].sets[1].target.load, 20); assert.equal(fixed.hint, null);
+  assert.equal(inSessionHint(fixed, 0, 0), null, 'on target after the correction: nothing to change');
+  // A newer change replaces the one before instead of stacking on it.
+  const again = S.applyHint(applied, { ...h, changes: [{ ...h.changes[0], value: 16 }] }, T0 + 6);
+  assert.equal(again.exercises[0].sets[1].target.load, 16);
+  assert.equal(S.undoHint(again).exercises[0].sets[1].target.load, 20, 'undo goes back to the plan, not to the change before');
+  // Finishing the next set keeps the changed targets and clears the card.
+  const next = S.finishSet(S.beginSet(applied, T0 + 10), T0 + 12);
+  assert.equal(next.hint, null); assert.equal(next.exercises[0].sets[1].actual.load, 18);
+  assert.ok(next.log.some((e) => e[1] === 'hint_apply'));
   // Hint that arrives late: all its sets are done by then.
   let late = s;
-  while (late.cursor.ex === 0 && late.status === 'active') { late = S.beginSet(late, T0 + 10); late = S.finishSet(late, T0 + 11); late = S.saveSet(late, T0 + 12); }
+  while (late.cursor.ex === 0 && late.status === 'active') { late = S.beginSet(late, T0 + 10); late = S.finishSet(late, T0 + 12); }
   assert.ok(!S.hintApplies(late, h), 'a late hint for finished sets is not shown');
   // On target with lots in reserve -> go up. On target with 2 in reserve -> nothing.
   let s2 = S.startSession(plan, 'd1', T0);
-  s2 = S.beginSet(s2, T0); s2 = S.finishSet(s2, T0 + 1); s2 = S.editDraft(s2, { rir: 4 }); s2 = S.saveSet(s2, T0 + 2);
+  s2 = S.beginSet(s2, T0); s2 = S.editDraft(s2, { rir: 4 }); s2 = S.finishSet(s2, T0 + 2);
   assert.equal(inSessionHint(s2, 0, 0).changes[0].value, 22);
   let s3 = S.startSession(plan, 'd1', T0);
-  s3 = S.beginSet(s3, T0); s3 = S.finishSet(s3, T0 + 1); s3 = S.editDraft(s3, { rir: 2 }); s3 = S.saveSet(s3, T0 + 2);
+  s3 = S.beginSet(s3, T0); s3 = S.editDraft(s3, { rir: 2 }); s3 = S.finishSet(s3, T0 + 2);
   assert.equal(inSessionHint(s3, 0, 0), null);
   assert.equal(lowerLoad(40, 5, 5), 35); assert.equal(lowerLoad(100, 10, 2.5), 90);
 });
@@ -228,9 +320,8 @@ function doSession(plan, dayId, start, repsFor) {
   while (s.status === 'active') {
     if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t);
     const { ex, set, setIdx } = S.current(s);
-    s = S.beginSet(s, t += 1000); s = S.finishSet(s, t += 1000);
-    const r = repsFor(ex, set, setIdx); if (r != null) s = S.editDraft(s, { reps: r });
-    s = S.saveSet(s, t += 1000);
+    s = S.beginSet(s, t += 1000); const r = repsFor(ex, set, setIdx); if (r != null) s = S.editDraft(s, { reps: r });
+    s = S.finishSet(s, t += 1000);
   }
   return s;
 }
@@ -255,6 +346,14 @@ test('progression: after a session - reps up, load up at top of range, deload on
   ch = postSessionChanges(shortB, plan, [shortA]).filter((c) => c.exerciseId === 'db_bench_press');
   assert.equal(ch.length, 1); assert.equal(ch[0].field, 'load'); assert.equal(ch[0].value, 18);
   assert.match(ch[0].reason, /Second session in a row/);
+  // A weight chosen in the session and then lowered part-way is not a reason to add a rep at the heavier one.
+  const blank = generatePlan(profile(), emptyEquipment(), {}, T0);
+  let s = S.startSession(blank, 'd1', T0);
+  s = S.setStartingWeight(s, 20, 2, T0);
+  s = S.finishSet(S.beginSet(s, T0 + 1000), T0 + 2000);
+  while (s.cursor.ex === 0 && s.status === 'active') { s = S.beginSet(s, T0 + 3000); s = S.editDraft(s, { load: 18 }); s = S.finishSet(s, T0 + 4000); }
+  const set = { ...blank, days: blank.days.map((d) => ({ ...d, exercises: d.exercises.map((x) => (x.exerciseId === 'db_bench_press' ? { ...x, load: { value: 20, step: 2 } } : x)) })) };
+  assert.equal(postSessionChanges(S.endSession(s, T0 + 5000), set, []).filter((c) => c.exerciseId === 'db_bench_press').length, 0);
 });
 
 test('equipment change: broken exercises get a same-movement swap', () => {
@@ -277,6 +376,75 @@ test('plan changes: removing exercises drops empty days but never the whole plan
   assert.equal(plan.days[0].exercises.length, 1);
   const last = applyPlanChange(plan, { exerciseKey: keys[keys.length - 1], field: 'remove' }, emptyEquipment(), {});
   assert.equal(last.touched, 0); assert.equal(last.plan.days.length, 1, 'the last exercise stays');
+});
+
+test('plan changes: each one can be undone, but only where its value still stands', () => {
+  const eq = emptyEquipment();
+  const w0 = { db_bench_press: { value: 20, step: 2 } };
+  const plan = generatePlan(profile(), eq, w0, T0);
+  const bench = plan.days.flatMap((d) => d.exercises).filter((x) => x.exerciseId === 'db_bench_press');
+  assert.ok(bench.length >= 2, 'the main lift comes back every week');
+  // Load: goes everywhere the exercise is, and comes back everywhere.
+  const c1 = { id: 'c1', exerciseId: 'db_bench_press', field: 'load', value: 22, reps: bench[0].repLo, status: 'applied' };
+  const r1 = applyPlanChange(plan, c1, eq, w0);
+  assert.equal(r1.touched, bench.length); assert.equal(r1.weights.db_bench_press.value, 22);
+  c1.undo = r1.undo;
+  assert.ok(canUndo(r1.plan, c1)); assert.ok(!canUndo({ ...r1.plan, id: 'another' }, c1), 'not on a rebuilt plan');
+  const u1 = undoPlanChange(r1.plan, c1, r1.weights);
+  assert.equal(u1.touched, bench.length);
+  for (const d of u1.plan.days) for (const ex of d.exercises) if (ex.exerciseId === 'db_bench_press') { assert.equal(ex.load.value, 20); assert.equal(ex.reps, bench[0].reps); }
+  assert.equal(u1.weights.db_bench_press.value, 20);
+  // Changed again by hand since: the newer value is left alone.
+  const moved = JSON.parse(JSON.stringify(r1.plan));
+  for (const d of moved.days) for (const ex of d.exercises) if (ex.exerciseId === 'db_bench_press') ex.load.value = 24;
+  assert.equal(undoPlanChange(moved, c1, { db_bench_press: { value: 24, step: 2 } }).touched, 0);
+  // Reps, sets and rest.
+  const key = bench[0].key;
+  for (const [field, value, read] of [['reps', bench[0].reps + 1, (x) => x.reps], ['sets', 2, (x) => x.sets], ['rest', 95, (x) => x.restSec]]) {
+    const c = { exerciseKey: key, field, value, status: 'applied' };
+    const r = applyPlanChange(plan, c, eq, w0); c.undo = r.undo;
+    assert.equal(read(r.plan.days[0].exercises[0]), value);
+    assert.equal(read(undoPlanChange(r.plan, c, r.weights).plan.days[0].exercises[0]), read(bench[0]), field);
+  }
+  // A swap and a removal come back whole, in the same place.
+  const sub = substitutesFor(eq, 'db_bench_press', {})[0];
+  const c2 = { exerciseKey: key, field: 'exercise', value: sub.id, status: 'applied' };
+  const r2 = applyPlanChange(plan, c2, eq, w0); c2.undo = r2.undo;
+  assert.equal(r2.plan.days[0].exercises[0].exerciseId, sub.id);
+  assert.deepEqual(undoPlanChange(r2.plan, c2, r2.weights).plan.days[0].exercises[0], plan.days[0].exercises[0]);
+  const c3 = { exerciseKey: plan.days[0].exercises[1].key, field: 'remove', status: 'applied' };
+  const r3 = applyPlanChange(plan, c3, eq, w0); c3.undo = r3.undo;
+  assert.equal(r3.plan.days[0].exercises.length, plan.days[0].exercises.length - 1);
+  assert.deepEqual(undoPlanChange(r3.plan, c3, r3.weights).plan.days[0].exercises.map((x) => x.key), plan.days[0].exercises.map((x) => x.key));
+  // A session emptied by a removal comes back with its exercise.
+  let one = generatePlan(profile({ daysPerWeek: 2, days: [], cycleWeeks: 1 }), eq, {}, T0);
+  for (const k of one.days[1].exercises.map((x) => x.key).slice(1)) one = applyPlanChange(one, { exerciseKey: k, field: 'remove' }, eq, {}).plan;
+  const c4 = { exerciseKey: one.days[1].exercises[0].key, field: 'remove', status: 'applied' };
+  const r4 = applyPlanChange(one, c4, eq, {}); c4.undo = r4.undo;
+  assert.equal(r4.plan.days.length, 1);
+  assert.deepEqual(undoPlanChange(r4.plan, c4, {}).plan.days.map((d) => d.id), one.days.map((d) => d.id));
+  // Correcting by hand: the same change with the user's number.
+  const e = withValue(plan, { ...c1, to: '22 kg' }, 21);
+  assert.equal(e.value, 21); assert.match(e.to, /21/);
+  assert.equal(withValue(plan, c2, 3), null, 'a swap has no number to correct');
+  assert.equal(withValue(plan, { exerciseKey: key, field: 'sets', value: 3 }, 40).value, 6, 'kept within sane limits');
+});
+
+test('summary in words: what was done, what stood out, what changes', () => {
+  const plan = generatePlan(profile(), emptyEquipment(), { db_bench_press: { value: 20, step: 2 } }, T0);
+  const ok = doSession(plan, 'd1', T0, () => null);
+  const changes = postSessionChanges(ok, plan, []);
+  const text = ruleSummary(ok, changes);
+  assert.match(text, /^All \d+ sets done in \d+ min\. Everything went to plan\./);
+  assert.match(text, /Changed for next time: /);
+  const short = doSession(plan, 'd1', T0, (ex, set) => (ex.exerciseId === 'db_bench_press' ? set.target.reps - 2 : null));
+  assert.match(ruleSummary(short, []), /under plan.*Nothing in the plan needs to change yet\./);
+  const eased = S.startSession(plan, 'd1', T0, { easePct: 10 });
+  assert.match(ruleSummary(S.endSession(S.finishSet(S.beginSet(eased, T0), T0 + 5), T0 + 9), []), /lighter session to ease back in/);
+  // The saved log reads back as plain lines.
+  const lines = S.readLog(ok);
+  assert.equal(lines[0].text, 'Workout started'); assert.equal(lines[lines.length - 1].text, 'Workout ended');
+  assert.ok(lines.some((l) => /set 1 finished: \d+ reps/.test(l.text)) && lines.some((l) => /^Rest of /.test(l.text)));
 });
 
 test('claude output: plans and changes are checked against the catalog and records', () => {
@@ -327,7 +495,7 @@ function did(plan, dayId, when) {
   let s = S.startSession(plan, dayId, when); let t = when;
   while (s.status === 'active') {
     if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t);
-    s = S.beginSet(s, t += 1000); s = S.finishSet(s, t += 1000); s = S.saveSet(s, t += 1000);
+    s = S.beginSet(s, t += 1000); s = S.finishSet(s, t += 1000);
   }
   return s;
 }
@@ -340,6 +508,68 @@ test('timeline: the plan reads as train, rest, train, starting today', () => {
   assert.deepEqual(line.map((x) => x.restBefore), [null, 1, 1, 2, 1, 1]);
   const first = K.recommend(plan, [], at(0));
   assert.ok(first.onSchedule && first.flags.first); assert.equal(first.dayId, 'd1'); assert.equal(first.easePct, 0);
+});
+
+test('timeline: a full cycle is always on show; what is done comes round again at the end', () => {
+  let plan = generatePlan(profile(), emptyEquipment(), { db_bench_press: { value: 20, step: 2 } }, T0);
+  const w1 = doSession(plan, 'd1', at(0), () => null);
+  plan = K.completeDay(plan, 'd1');
+  plan = K.skipDay(plan, 'd3');
+  const line = K.timeline(plan, [w1], at(0, 20));
+  assert.equal(line.length, plan.days.length, 'nothing drops off the list');
+  assert.deepEqual(line.map((x) => x.day.id), ['d2', 'd4', 'd5', 'd6', 'd1', 'd3']);
+  assert.deepEqual(line.map((x) => x.again), [false, false, false, false, true, true]);
+  assert.ok(line[5].skipped && !line[4].skipped);
+  for (let i = 1; i < line.length; i++) assert.ok(line[i].inDays > line[i - 1].inDays, 'dates keep running');
+  // The session that comes round again shows what the plan now says for it.
+  const up = applyPlanChange(plan, { exerciseId: 'db_bench_press', field: 'load', value: 22 }, emptyEquipment(), {}).plan;
+  assert.equal(K.timeline(up, [w1], at(0, 20))[4].day.exercises.find((x) => x.exerciseId === 'db_bench_press').load.value, 22);
+  // Everything done: the next round is the whole list, none marked.
+  let all = plan; for (const d of plan.days) all = K.completeDay(all, d.id);
+  assert.ok(K.timeline(all, [w1], at(1)).every((x) => !x.again)); assert.equal(K.timeline(all, [w1], at(1)).length, plan.days.length);
+  // Deleting a workout puts its session back on the list.
+  assert.deepEqual(K.queueState(K.uncompleteDay(plan, 'd1')).queue.map((d) => d.id), ['d1', 'd2', 'd4', 'd5', 'd6']);
+});
+
+test('other activity: a hard or long run counts as leg work; a short easy one changes nothing', () => {
+  assert.deepEqual(activityGroups({ activity: 'run', minutes: 45, effort: 'hard' }), ['Quads', 'Hamstrings and glutes', 'Calves']);
+  assert.deepEqual(activityGroups({ activity: 'run', minutes: 20, effort: 'hard' }), ['Quads', 'Hamstrings and glutes', 'Calves'], '20 hard minutes count');
+  assert.deepEqual(activityGroups({ activity: 'bike', minutes: 25, effort: 'moderate' }), []);
+  assert.deepEqual(activityGroups({ activity: 'hike', minutes: 50, effort: 'easy' }), []);
+  assert.deepEqual(activityGroups({ activity: 'swim', minutes: 40, effort: 'moderate' }), ['Back', 'Shoulders']);
+  assert.deepEqual(activityGroups({ activity: 'other', minutes: 120, effort: 'hard' }), []);
+  let plan = generatePlan(profile(), emptyEquipment(), { db_bench_press: { value: 20, step: 2 } }, T0);
+  const w1 = doSession(plan, 'd1', at(0), () => null); // upper body, Monday
+  plan = K.completeDay(plan, 'd1');
+  // Wednesday: lower body is due. A hard run on Tuesday evening moves it back.
+  const base = K.recommend(plan, [w1], at(2));
+  assert.equal(base.dayId, 'd2'); assert.ok(base.onSchedule);
+  const run = S.newActivity({ type: 'run', minutes: 45, effort: 'hard' }, at(1, 19));
+  assert.equal(run.kind, 'activity'); assert.equal(run.status, 'done'); assert.deepEqual(run.exercises, []); assert.equal(run.endedAt - run.startedAt, 45 * 60000);
+  const after = K.recommend(plan, [w1, run], at(2));
+  assert.notEqual(after.dayId, 'd2', 'legs get their rest');
+  assert.match(after.reason, /Your run .* worked quads/);
+  assert.equal(after.dueAt, base.dueAt, 'an activity is not a workout: the due day does not move');
+  assert.equal(K.lastTrained([w1, run], at(2)).last.id, w1.id);
+  // Three days later the legs are rested and the plan is back in order.
+  assert.equal(K.recommend(plan, [w1, run], at(4)).dayId, 'd2');
+  // An easy half hour changes nothing.
+  const walk = S.newActivity({ type: 'hike', minutes: 30, effort: 'easy' }, at(1, 19));
+  assert.equal(K.recommend(plan, [w1, walk], at(2)).dayId, 'd2');
+  // Logged for yesterday: it lands on yesterday.
+  const y = S.newActivity({ type: 'bike', minutes: 60, effort: 'moderate', daysAgo: 1 }, at(2));
+  assert.equal(K.daysBetween(y.startedAt, at(2)), 1);
+});
+
+test('the long view: built from the plan and the rules, in words', () => {
+  const plan = generatePlan(profile(), emptyEquipment(), {}, T0);
+  const out = buildOutlook(plan);
+  assert.deepEqual(out.map((o) => o.title), ['This round', 'How it gets harder', 'Round after round', 'When it stalls', 'Room to add']);
+  assert.match(out[0].text, /6 sessions over about 2 weeks, 3 a week/);
+  assert.ok(out[0].text.includes(plan.days[0].exercises[0].name), 'names the main lifts');
+  assert.match(out[3].text, /10%/);
+  for (const o of out) assert.ok(o.text.length > 40 && !/undefined|NaN/.test(o.text), o.title);
+  assert.deepEqual(buildOutlook(null), []);
 });
 
 const late_notes = (plan, w1) => K.recommend(plan, [w1], at(5)).notes;
@@ -420,7 +650,7 @@ test('easing back in: today is lighter, the plan keeps its numbers, and no concl
   assert.equal(s.exercises[0].sets[0].planned.load, 20); assert.equal(s.exercises[0].sets[0].target.load, 18, '10% off, rounded to the 2 kg step');
   assert.equal(s.exercises[1].sets[0].target.load, 37.5, '42.5 less 10%, rounded to the 2.5 kg step');
   assert.match(s.exercises[0].sets[0].note, /Eased by 10%/);
-  while (s.status === 'active') { if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, T0); s = S.beginSet(s, T0); s = S.finishSet(s, T0 + 1); s = S.saveSet(s, T0 + 2); }
+  while (s.status === 'active') { if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, T0); s = S.beginSet(s, T0); s = S.finishSet(s, T0 + 2); }
   assert.deepEqual(postSessionChanges(s, plan, []), [], 'a lighter comeback session proposes nothing');
   assert.equal(S.startSession(plan, 'd1', T0).exercises[0].sets[0].target.load, 20);
 });

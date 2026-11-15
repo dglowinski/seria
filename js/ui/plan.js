@@ -1,17 +1,19 @@
 // Plan tab: the plan as a list you can browse (train this, rest, train that),
-// one "Train now" button, a session in detail, and the proposed changes.
+// one "Train now" button, a session in detail, other activity, the long view,
+// and the list of what was changed in the plan and why.
 
-import { html, useState, useEffect, useStore, Sheet, Dock, go, toast, restText, dateText, plural } from './kit.js';
+import { html, useState, useEffect, useStore, Sheet, Dock, NumberInput, go, toast, restText, dateText, plural } from './kit.js';
 import * as store from '../store.js';
-import { fmtLoad, loadMethod, timeBreakdown, brokenExercises, weeklySets } from '../domain/planner.js';
-import { recommend, plannedNext, timeline, queueState, dayStatus, skipDay, unskipDay } from '../domain/schedule.js';
-import { describeChange } from '../domain/progression.js';
+import { fmtLoad, loadMethod, timeBreakdown, brokenExercises, weeklySets, buildOutlook, num } from '../domain/planner.js';
+import { recommend, plannedNext, timeline, queueState, dayStatus, skipDay, unskipDay, daysBetween } from '../domain/schedule.js';
+import { describeChange, canUndo, isApplied, EDITABLE } from '../domain/progression.js';
 import { exerciseById, machineForExercise, machineLabel, sketchForExercise } from '../domain/catalog.js';
 import { Sketch } from './sketch.js';
-import { RULES_VERSION } from '../domain/rules.js';
-import { applyChange, keepPlan, reviewEquipment, startTraining, reviewToday } from '../ai/coach.js';
+import { RULES_VERSION, ACTIVITIES, EFFORTS, SCHEDULE, activityGroups } from '../domain/rules.js';
+import { undoChange, redoChange, editChange, recordUpdate, reviewEquipment, startTraining, reviewToday, logActivity, reviewWaiting } from '../ai/coach.js';
 import { sourceName, aiReady, aiName } from '../ai/ai.js';
 import { primeAudio } from '../platform.js';
+import { WeightSheet } from './weights.js';
 
 /** Start a session and open the workout screen. */
 function begin(dayId, opts) {
@@ -52,7 +54,8 @@ function TrainNow({ plan, sessions, prefer, onClose }) {
   const q = queueState(plan);
   const queue = q.queue.length ? q.queue : plan.days;
   const start = (pick) => {
-    if (ai.pick && pick === ai.pick && ai.pick.changes.length) store.addProposal({ mode: 'coach', source: ai.pick.via, sessionId: null, changes: ai.pick.changes });
+    // Changes the model made to later sessions go in with the start, and show in the list of changes.
+    if (ai.pick && pick === ai.pick && ai.pick.changes.length) recordUpdate({ mode: 'coach', source: ai.pick.via, changes: ai.pick.changes, message: `Changed when you started ${pick.title}.` });
     onClose();
     begin(pick.dayId, { order: pick.order, rests: pick.rests, easePct: lighter ? pick.easePct : 0, why: pick.reason });
   };
@@ -69,7 +72,7 @@ function TrainNow({ plan, sessions, prefer, onClose }) {
     ${ai.state === 'busy' && html`<p class="small muted" data-testid="today-checking">${aiName()} is checking this against your history. You can start now or wait a moment.</p>`}
     ${ai.state === 'done' && ai.pick.same && !plain && html`<p class="small muted">${sourceName(ai.pick.via)} looked at your history and agrees.</p>`}
     ${ai.state === 'done' && !ai.pick.same && html`<div class="chips"><button class="chip" onClick=${() => setPlain(!plain)}>${plain ? `Use ${sourceName(ai.pick.via)}'s pick: ${ai.pick.title}` : `Use the rule-based pick instead: ${rec.title}`}</button></div>`}
-    ${use === ai.pick && ai.pick.changes.length > 0 && html`<p class="small muted">${sourceName(ai.pick.via)} also proposes ${plural(ai.pick.changes.length, 'change')} to later sessions. You will find ${ai.pick.changes.length === 1 ? 'it' : 'them'} under proposed changes; nothing there changes until you apply it.</p>`}
+    ${use === ai.pick && ai.pick.changes.length > 0 && html`<p class="small muted">${sourceName(ai.pick.via)} also makes ${plural(ai.pick.changes.length, 'change')} to later sessions when you start. You can see and undo ${ai.pick.changes.length === 1 ? 'it' : 'them'} under "What changed".</p>`}
     ${use.order.length > 1 && html`<div class="stack tight" data-testid="today-then">
       <p class="small muted">The plan from here:</p>
       <p class="small">${use.order.slice(1, 6).map((id, i) => `${restText1(restOf(use.order[i]))}, then ${byId(id)?.title}`).join(' · ')}${use.order.length > 6 ? ' …' : ''}</p>
@@ -85,10 +88,49 @@ function TrainNow({ plan, sessions, prefer, onClose }) {
   <//>`;
 }
 
+const agoText = (ts, now) => { const d = daysBetween(ts, now); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`; };
+const lowerList = (a) => { const l = a.map((x) => x.toLowerCase()); return l.length <= 1 ? l.join('') : `${l.slice(0, -1).join(', ')} and ${l[l.length - 1]}`; };
+
+/** Log a run, a ride or anything else done outside the plan: what, how long, how hard. */
+function ActivitySheet({ onClose }) {
+  const [type, setType] = useState('run');
+  const [minutes, setMinutes] = useState(30);
+  const [effort, setEffort] = useState('moderate');
+  const [daysAgo, setDaysAgo] = useState(0);
+  const groups = activityGroups({ activity: type, minutes, effort });
+  const save = () => {
+    if (!(minutes > 0)) { toast('Enter how long it took'); return; }
+    logActivity({ type, minutes, effort, daysAgo });
+    onClose();
+    toast('Activity logged');
+  };
+  return html`<${Sheet} title="Log another activity" onClose=${onClose}>
+    <div class="field"><span>What was it</span>
+      <div class="chips" role="radiogroup" aria-label="Activity">${Object.entries(ACTIVITIES).map(([id, a]) => html`
+        <button class=${`chip ${type === id ? 'on' : ''}`} role="radio" aria-checked=${type === id} data-testid=${`act-${id}`} onClick=${() => setType(id)}>${a.label}</button>`)}</div>
+    </div>
+    <label class="field"><span>How long, in minutes</span>
+      <${NumberInput} id="act-minutes" wide value=${minutes} min=${1} onChange=${(v) => setMinutes(Math.round(v))} label="Minutes" /></label>
+    <div class="chips">${[20, 30, 45, 60, 90].map((m) => html`<button class=${`chip ${minutes === m ? 'on' : ''}`} onClick=${() => setMinutes(m)}>${m} min</button>`)}</div>
+    <div class="field"><span>How hard</span>
+      <div class="chips" role="radiogroup" aria-label="Effort">${Object.entries(EFFORTS).map(([id, e]) => html`
+        <button class=${`chip ${effort === id ? 'on' : ''}`} role="radio" aria-checked=${effort === id} data-testid=${`effort-${id}`} onClick=${() => setEffort(id)}>${e.label}</button>`)}</div>
+    </div>
+    <div class="field"><span>When</span>
+      <div class="chips" role="radiogroup" aria-label="When">${['Today', 'Yesterday', '2 days ago'].map((l, i) => html`
+        <button class=${`chip ${daysAgo === i ? 'on' : ''}`} role="radio" aria-checked=${daysAgo === i} onClick=${() => setDaysAgo(i)}>${l}</button>`)}</div>
+    </div>
+    <p class="note small" data-testid="act-effect">${groups.length
+      ? `Counts as work for ${lowerList(groups)}. Sessions that train ${groups.length > 1 ? 'them' : 'it'} hard wait about ${SCHEDULE.recoverHours} hours, and the plan order follows.`
+      : 'Too light or too short to change the plan. It is still kept in your history.'}</p>
+    <button class="cta" data-testid="act-save" onClick=${save}>Save activity</button>
+  <//>`;
+}
+
 export function PlanScreen() {
   const state = useStore();
   const { plan } = state;
-  const [sheet, setSheet] = useState(false);
+  const [sheet, setSheet] = useState(null);
   const active = store.activeSession(state);
   if (!plan) {
     return html`
@@ -99,6 +141,7 @@ export function PlanScreen() {
           <p class="muted">Tell the coach how you want to train. You get a plan built around your goal, your time and the equipment in your gym: train this, rest, train that. Train on any day you like; the app walks you through every set and keeps the plan up to date.</p>
           <button class="cta" onClick=${() => go('coach')}>Talk to the coach</button>
           <button class="cta ghost" onClick=${() => go('equipment')}>Set up my gym first</button>
+          <button class="cta ghost" onClick=${() => go('weights')}>Enter the weights I lift</button>
         </div>
       </main>`;
   }
@@ -106,17 +149,19 @@ export function PlanScreen() {
   const rec = recommend(plan, state.sessions, now); // if you trained this minute
   const planned = plannedNext(plan, state.sessions, now); // what the plan has next, and when
   const line = timeline(plan, state.sessions, now);
-  const q = queueState(plan);
   const broken = brokenExercises(plan, state.equipment);
-  const open = store.openChanges(state);
   const volume = weeklySets(plan);
-  const skipped = q.queue.length ? q.skipped.map((id) => plan.days.find((d) => d.id === id)).filter(Boolean) : [];
   const dueIn = line[0]?.inDays ?? 0;
+  const firstAgain = line.findIndex((x) => x.again);
+  const blank = new Set(plan.days.flatMap((d) => d.exercises).filter((ex) => ex.loadType !== 'bodyweight' && !ex.load).map((ex) => ex.exerciseId)).size;
+  const recent = state.sessions.filter((x) => x.kind === 'activity' && now - x.startedAt < 3 * 864e5).sort((a, b) => b.startedAt - a.startedAt);
+  const waiting = reviewWaiting(state);
+  const outlook = buildOutlook(plan);
 
   const trainNow = () => {
     if (active) { go('workout'); return; }
     // On the planned day there is nothing to discuss: start. On any other day, show what makes sense now.
-    if (rec.onSchedule) begin(rec.dayId, { order: rec.order, why: rec.reason }); else setSheet(true);
+    if (rec.onSchedule) begin(rec.dayId, { order: rec.order, why: rec.reason }); else setSheet('train');
   };
 
   return html`
@@ -125,34 +170,47 @@ export function PlanScreen() {
         <div class="stack tight"><p class="eyebrow">Plan</p><h2>Your plan</h2></div>
         <small class="right" data-testid="plan-shape">${plan.perWeek} a week · any days</small>
       </div>
-      ${open.length > 0 && html`<button class="row on" onClick=${() => go('review')}>
-        <span class="stack tight"><b>${plural(open.length, 'proposed change')}</b><span class="sub">See what would change and why</span></span><span class="accent">Review</span>
-      </button>`}
-      ${broken.length > 0 && !open.some(({ p }) => p.mode === 'equipment') && html`<div class="note warn">
+      ${waiting && html`<p class="note warn small" data-testid="plan-pending"><b>The plan will be updated when you are online</b>Your last workout is saved and the training rules have updated the plan. ${aiName()} reviews it as soon as there is a connection.</p>`}
+      ${plan.lastUpdate && now - plan.lastUpdate.at < 14 * 864e5 && html`<div class="note small" data-testid="last-update"><b>Updated ${dateText(plan.lastUpdate.at)} by ${sourceName(plan.lastUpdate.by)}</b>${plan.lastUpdate.text}
+        ${state.proposals.length > 0 && html`<div class="chips" style="margin-top:8px"><button class="chip" data-testid="see-changes" onClick=${() => go('review')}>What changed</button></div>`}</div>`}
+      ${broken.length > 0 && html`<div class="note warn">
         <b>${plural(broken.length, 'exercise')} need${broken.length === 1 ? 's' : ''} equipment you no longer have</b>
         <span class="muted small">${[...new Set(broken.map((b) => b.name))].join(', ')}</span>
-        <div class="chips" style="margin-top:8px"><button class="chip accent" onClick=${() => { reviewEquipment(); go('review'); }}>See the swaps</button></div>
+        <div class="chips" style="margin-top:8px"><button class="chip accent" data-testid="swap-broken" onClick=${() => { if (reviewEquipment({ force: true })) { toast('Plan updated'); go('review'); } }}>Swap them</button></div>
       </div>`}
-      ${plan.lastUpdate && now - plan.lastUpdate.at < 14 * 864e5 && html`<p class="note small" data-testid="last-update"><b>Updated ${dateText(plan.lastUpdate.at)} by ${sourceName(plan.lastUpdate.by)}</b>${plan.lastUpdate.text}</p>`}
 
       <ol class="stack" data-testid="timeline">
         ${line.map((item, i) => html`
+          ${i === firstAgain && i > 0 && html`<li class="small muted center" data-testid="next-round">Then the cycle comes round again${aiReady() ? `, planned by ${aiName()} from your results` : ''}</li>`}
           ${item.restBefore != null && html`<li class="small muted center" data-testid="rest-gap" aria-label=${restText1(item.restBefore)}>${item.restBefore === 0 ? 'the day after' : `· ${restText1(item.restBefore)} ·`}</li>`}
-          <li><button class=${i === 0 ? 'change' : 'row'} style="text-align:left;width:100%" data-testid="plan-session" onClick=${() => go('day', item.day.id)}>
+          <li><button class=${i === 0 ? 'change' : 'row'} style=${`text-align:left;width:100%${item.again ? ';opacity:.72' : ''}`} data-testid="plan-session" data-again=${item.again ? '1' : '0'} onClick=${() => go('day', item.day.id)}>
             ${i === 0 ? html`
               <div class="spread"><span class="eyebrow">${dueIn <= 0 ? 'Up next · today' : `Up next · planned for ${whenText(item.inDays, item.at).toLowerCase()}`}</span><span class="small muted">${item.day.estMinutes} min</span></div>
               <h3>${item.day.title}</h3>
               <p class="small muted">${item.day.exercises.map((x) => x.name).join(', ')}</p>
               <p class="small muted" data-testid="up-next-reason">${planned.reason}${planned.notes.length ? ` ${planned.notes.join(' ')}` : ''}</p>` : html`
               <span class="stack tight"><b>${item.day.title}</b><span class="sub">${item.day.exercises.slice(0, 2).map((x) => x.name).join(', ')}${item.day.exercises.length > 2 ? ` +${item.day.exercises.length - 2}` : ''}</span></span>
-              <span class="stack tight right"><span class="sub">${whenText(item.inDays, item.at)}</span><span class="sub">${item.day.estMinutes} min</span></span>`}
+              <span class="stack tight right"><span class="sub">${whenText(item.inDays, item.at)}</span><span class="sub">${item.again ? (item.skipped ? 'skipped this round' : 'done this round') : `${item.day.estMinutes} min`}</span></span>`}
           </button></li>`)}
       </ol>
-      <p class="muted small" data-testid="plan-note">The days are a guide. Train whenever you can: on another day, "Train now" shows what makes sense and moves the rest of the plan. After the last session here, the coach plans the next run from your results.</p>
-      ${skipped.length > 0 && html`<div class="stack tight" data-testid="skipped">
-        <p class="small muted">Skipped for now. They come back in the next run.</p>
-        ${skipped.map((d) => html`<button class="row" onClick=${() => go('day', d.id)}><b>${d.title}</b><span class="sub">Skipped</span></button>`)}
-      </div>`}
+      <p class="muted small" data-testid="plan-note">The days are a guide. Train whenever you can: on another day, "Train now" shows what makes sense and moves the rest of the plan. The list always shows a full cycle: a session you finish moves to the end, with its numbers updated from your results.</p>
+
+      <div class="stack tight">
+        ${recent.map((a) => html`<p class="small muted" data-testid="recent-activity">${a.title} ${agoText(a.startedAt, now)}: ${a.minutes} min, ${(EFFORTS[a.effort]?.label || '').toLowerCase()}${activityGroups(a).length ? '. Counted toward recovery.' : '.'}</p>`)}
+        <button class="row" data-testid="log-activity" onClick=${() => setSheet('activity')}>
+          <span class="stack tight"><b>Did something else?</b><span class="sub">Log a run, a ride or a game. The plan takes it into account.</span></span><span class="accent">Log</span></button>
+        <button class="row" data-testid="weights-link" onClick=${() => go('weights')}>
+          <span class="stack tight"><b>Weights</b><span class="sub">${blank ? `${plural(blank, 'exercise')} in the plan ${blank === 1 ? 'has' : 'have'} no weight yet. Enter ${blank === 1 ? 'it' : 'them'} now, or when ${blank === 1 ? 'it comes' : 'they come'} up.` : 'What you lift on every exercise, and the step sizes'}</span></span><span class="accent">Open</span></button>
+        ${state.proposals.length > 0 && html`<button class="row" onClick=${() => go('review')}>
+          <span class="stack tight"><b>What changed</b><span class="sub">Every update to the plan, with the reason. Undo or correct any of them.</span></span><span class="accent">Open</span></button>`}
+      </div>
+
+      <details class="note" data-testid="outlook"><summary>The long view: how this training develops</summary>
+        <div class="stack small" style="margin-top:8px">
+          ${plan.outlook?.text && html`<p data-testid="outlook-ai">${plan.outlook.text} <span class="muted">(${sourceName(plan.outlook.by)})</span></p>`}
+          ${outlook.map((o) => html`<p><b>${o.title}</b><span class="muted">${o.text}</span></p>`)}
+        </div>
+      </details>
       ${plan.notes?.length > 0 && html`<details class="note"><summary>What did not fit your time</summary>
         <ul class="stack tight small muted" style="margin-top:8px">${plan.notes.map((n) => html`<li>${n}</li>`)}</ul></details>`}
       <details class="note" data-testid="volume"><summary>Weekly sets by muscle group</summary>
@@ -167,12 +225,14 @@ export function PlanScreen() {
     <${Dock} aboveTabs>
       <button class="cta" data-testid="train-now" onClick=${trainNow}>${active ? 'Resume workout' : 'Train now'}</button>
     <//>
-    ${sheet && html`<${TrainNow} plan=${plan} sessions=${state.sessions} onClose=${() => setSheet(false)} />`}`;
+    ${sheet === 'train' && html`<${TrainNow} plan=${plan} sessions=${state.sessions} onClose=${() => setSheet(null)} />`}
+    ${sheet === 'activity' && html`<${ActivitySheet} onClose=${() => setSheet(null)} />`}`;
 }
 
 export function DayScreen({ dayId }) {
   const state = useStore();
   const [sheet, setSheet] = useState(false);
+  const [weightFor, setWeightFor] = useState(null);
   const { plan } = state;
   const day = plan?.days.find((d) => d.id === dayId);
   const active = store.activeSession(state);
@@ -207,7 +267,8 @@ export function DayScreen({ dayId }) {
             <div class="spread" style="align-items:flex-start"><p class="small muted grow">${ex.equipment} · ${ex.zone}</p>${look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}</div>
             ${m && html`<p class="small muted" data-testid="day-machine">${machineLabel(m) || m.name}${m.isolates ? ` · isolates ${m.isolates.replace(/\.$/, '').toLowerCase()}` : ''}</p>`}
             <p><b>${ex.sets} × ${ex.reps} reps</b> <span class="muted small">(range ${ex.repLo}-${ex.repHi}) · rest ${restText(ex.restSec)}</span></p>
-            <p class="small">${ex.load ? html`<b>${fmtLoad(ex.loadType, ex.load.value)}</b>` : html`<span class="muted">Weight: ${loadMethod(ex)}</span>`}</p>
+            <div class="spread"><p class="small grow">${ex.load ? html`<b>${fmtLoad(ex.loadType, ex.load.value)}</b> <span class="muted">· step ${num(ex.load.step)}</span>` : html`<span class="muted">Weight: ${loadMethod(ex)}</span>`}</p>
+              <button class="chip" data-testid="edit-weight" aria-label=${`Set the weight for ${ex.name}`} onClick=${() => setWeightFor(ex.exerciseId)}>${ex.load ? 'Change' : 'Set weight'}</button></div>
           </li>`;
         })}
       </ol>
@@ -217,46 +278,75 @@ export function DayScreen({ dayId }) {
         ${active ? 'Resume the workout in progress' : 'Start this session'}
       </button>
     <//>
-    ${sheet && html`<${TrainNow} plan=${plan} sessions=${state.sessions} prefer=${day.id} onClose=${() => setSheet(false)} />`}`;
+    ${sheet && html`<${TrainNow} plan=${plan} sessions=${state.sessions} prefer=${day.id} onClose=${() => setSheet(false)} />`}
+    ${weightFor && html`<${WeightSheet} exerciseId=${weightFor} onClose=${() => setWeightFor(null)} />`}`;
 }
 
-const MODE_TITLE = { post_session: 'After your workout', equipment: 'Your equipment changed', coach: 'From your chat with the coach' };
+const MODE_TITLE = { post_session: 'After your workout', equipment: 'Your equipment changed', coach: 'From the coach', activity: 'After another activity' };
+const STATUS = { applied: 'In the plan', edited: 'Corrected by you', undone: 'Undone', stale: 'No longer fits', kept: 'Not applied', open: 'Not applied' };
+const EDIT_LABEL = { load: 'Weight', reps: 'Reps', sets: 'Sets', rest: 'Rest in seconds' };
 
+/**
+ * One change to the plan, already made, with its reason. "Undo" puts back what
+ * was there, "Edit" swaps in a value typed by hand. A change that was undone
+ * can be made again.
+ */
 export function ChangeCard({ p, c }) {
+  const plan = store.getState().plan;
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(c.value);
   const d = describeChange(c);
-  const decided = c.status !== 'open';
-  return html`<div class=${`change ${decided ? 'done' : ''}`} data-testid="change">
-    <div class="spread"><h4>${c.exerciseName}</h4>
-      ${decided && html`<span class=${`tag ${c.status === 'applied' ? 'good' : ''}`}>${c.status === 'applied' ? 'Applied' : c.status === 'kept' ? 'Plan kept' : 'No longer fits'}</span>`}</div>
+  const live = isApplied(c);
+  const undoable = canUndo(plan, c);
+  const samePlan = !c.undo || c.undo.planId === plan?.id;
+  const redoable = !live && c.status !== 'stale' && !!plan && samePlan;
+  const editable = EDITABLE.includes(c.field) && (undoable || redoable);
+  const save = () => {
+    if (value == null) { toast('Enter a number first'); return; }
+    if (editChange(p.id, c.id, value)) { toast('Plan corrected'); setEditing(false); } else toast('That exercise is no longer in the plan');
+  };
+  return html`<div class=${`change ${live ? '' : 'done'}`} data-testid="change" data-status=${c.status}>
+    <div class="spread"><h4>${c.exerciseName}</h4><span class=${`tag ${live ? 'good' : ''}`}>${STATUS[c.status] || ''}</span></div>
     <div class="delta">${d.what}: ${d.text}</div>
+    ${c.status === 'edited' && c.suggested && html`<p class="small muted">The update set ${c.suggested}.</p>`}
     <p class="small muted">${c.reason}</p>
-    ${!decided && html`<div class="pair">
-      <button class="cta" onClick=${() => { if (applyChange(p.id, c.id)) toast('Plan updated'); else toast('That exercise is no longer in the plan'); }}>Apply</button>
-      <button class="cta ghost" onClick=${() => keepPlan(p.id, c.id)}>Keep plan</button>
+    ${editing && html`<div class="stack tight">
+      <label class="field"><span>${EDIT_LABEL[c.field]}</span><${NumberInput} id="change-value" wide value=${value} onChange=${setValue} label=${EDIT_LABEL[c.field]} /></label>
+      <div class="pair"><button class="cta" data-testid="change-save" onClick=${save}>Save</button><button class="cta ghost" onClick=${() => setEditing(false)}>Cancel</button></div>
     </div>`}
+    ${!editing && (undoable || redoable) && html`<div class="chips">
+      ${undoable && html`<button class="chip" data-testid="change-undo" onClick=${() => toast(undoChange(p.id, c.id) ? 'Undone. The plan is as it was' : 'The plan has moved on; nothing to undo')}>Undo</button>`}
+      ${redoable && html`<button class="chip accent" data-testid="change-redo" onClick=${() => toast(redoChange(p.id, c.id) ? 'Plan updated' : 'That exercise is no longer in the plan')}>${c.status === 'undone' ? 'Apply again' : 'Apply'}</button>`}
+      ${editable && html`<button class="chip" data-testid="change-edit" onClick=${() => { setValue(c.value); setEditing(true); }}>Edit</button>`}
+    </div>`}
+    ${live && !undoable && html`<p class="small muted">The plan has been rebuilt since, so this stays as a record.</p>`}
   </div>`;
+}
+
+/** One update to the plan: the summary in words, then each change. */
+export function UpdateBlock({ p, bare = false }) {
+  const session = p.sessionId ? store.sessionById(p.sessionId) : null;
+  return html`<section class="stack" data-testid="update" data-mode=${p.mode}>
+    ${!bare && html`<div class="spread"><h3>${MODE_TITLE[p.mode] || 'Update'}</h3><span class="tag" data-testid="update-source">From ${sourceName(p.source)}</span></div>
+      ${session && html`<p class="small muted">${session.title} · ${dateText(session.startedAt)}</p>`}`}
+    ${p.message && html`<p class="small" data-testid="update-message">${p.message}</p>`}
+    ${p.schedule && p.schedule !== p.message && html`<p class="small muted">${p.schedule}</p>`}
+    ${p.checking && html`<p class="small muted" data-testid="checking">${sourceName(p.checking === true ? 'claude' : p.checking)} is reading this now. Its summary and changes take the place of these when it answers.</p>`}
+    ${p.pending && html`<p class="note warn small" data-testid="pending">No connection. ${aiName()} reviews this workout and updates the plan when you are back online.</p>`}
+    ${p.changes.length ? p.changes.map((c) => html`<${ChangeCard} key=${c.id} p=${p} c=${c} />`)
+      : p.mode === 'post_session' ? html`<p class="note" data-testid="no-changes">No changes. Your results do not call for any, so the plan stays as it is.</p>` : ''}
+  </section>`;
 }
 
 export function ReviewScreen() {
   const state = useStore();
-  const list = [...state.proposals].sort((a, b) => b.createdAt - a.createdAt).slice(0, 8);
+  const list = [...state.proposals].sort((a, b) => b.createdAt - a.createdAt).slice(0, 12);
   return html`
     <main class="main with-tabs with-dock">
-      <div class="stack tight"><p class="eyebrow">Proposed changes</p><h2>Next workouts</h2>
-        <p class="muted">Each change shows the old and new value and the reason. Nothing changes until you tap Apply.</p></div>
-      ${!list.length && html`<p class="note">Nothing to review. Proposals show up here after a workout.</p>`}
-      ${list.map((p) => {
-        const session = p.sessionId ? store.sessionById(p.sessionId, state) : null;
-        return html`<section class="stack">
-          <div class="spread"><h3>${MODE_TITLE[p.mode] || 'Proposal'}</h3>
-            <span class="tag">From ${sourceName(p.source)}</span></div>
-          ${session && html`<p class="small muted">${session.title} · ${dateText(session.startedAt)}</p>`}
-          ${p.message && html`<p class="small">${p.message}</p>`}
-          ${p.checking && html`<p class="small muted" data-testid="checking">${sourceName(p.checking === true ? 'claude' : p.checking)} is taking a second look. You can decide now or wait.</p>`}
-          ${p.changes.length ? p.changes.map((c) => html`<${ChangeCard} p=${p} c=${c} />`)
-            : html`<p class="note" data-testid="no-changes">No changes. Your results do not call for any, so the plan stays as it is.</p>`}
-        </section>`;
-      })}
+      <div class="stack tight"><p class="eyebrow">What changed</p><h2>Updates to your plan</h2>
+        <p class="muted">The plan is updated for you after every workout. Each change shows the old and new value and the reason. Undo any of them, or correct the number.</p></div>
+      ${!list.length && html`<p class="note">Nothing yet. Updates show up here after a workout.</p>`}
+      ${list.map((p) => html`<${UpdateBlock} key=${p.id} p=${p} />`)}
     </main>
     <${Dock} aboveTabs><button class="cta" onClick=${() => go('plan')}>Done</button><//>`;
 }

@@ -47,14 +47,20 @@ const shots = [
   ['17c-machines-identified', 'Machines by maker', 'Name the maker and the exact machines are identified. Each says whether it was found on the web or comes from memory.'],
   ['27-workout-machine', 'The machine, mid-workout', 'A sketch of its general look, how it works and what it isolates.'],
   ['07-starting-weight', 'Starting an exercise', 'A sketch of what to look for, and, with no history yet, your first weight.'],
-  ['08-set-active', 'Set in progress', 'One button: Finish set.'],
-  ['09-set-result', 'Set result', 'Starts from the plan. Correct by 1 or 2, or type the number.'],
-  ['10-rest', 'Rest', 'Countdown, next set, and a suggestion with Apply or Keep plan.'],
-  ['11-swap', 'Swap', 'Station busy: same movement on other equipment you have.'],
-  ['12-summary', 'Summary', 'Time, sets done, skipped sets, biggest differences.'],
-  ['13-proposals', 'Proposals', 'Old value, new value, reason. Nothing changes until you tap Apply.'],
+  ['08-set-active', 'Set in progress', 'One button: Finish set. It saves the planned reps; −1 and +1 nudge them first.'],
+  ['37-overview', 'The whole workout', 'Tap the header to see every exercise and jump to any of them.'],
+  ['10-rest', 'Rest', 'The set just saved stays in reach: nudge, change weight, undo. The next set starts by itself when the rest runs out.'],
+  ['11-swap', 'Machine busy? Not now', 'Come back to it later, do another exercise instead, or drop it for today.'],
+  ['12-summary', 'Summary', 'How it went, in words, and what it changed in the plan. Nothing to accept.'],
+  ['13-proposals', 'Undo or edit', 'Each change can be undone, made again, or corrected by hand.'],
+  ['29-plan-after-workout', 'A full cycle, always', 'The finished session moves to the end of the list, with its numbers updated.'],
+  ['34-activity', 'Another activity', 'A run, a ride, a game: what, how long, how hard. The sheet says what it means for the plan.'],
+  ['34b-plan-after-run', 'After a hard run', 'The legs wait: the plan puts another session first and says why.'],
+  ['35-weights', 'Weights', 'What you lift on every exercise, entered up front, each with its own step.'],
+  ['39-offline', 'No connection', 'The rules update the plan; the model reviews the workout when the phone is back online.'],
+  ['38-settings-workout', 'Workout settings', 'Auto-start, sound, vibration, and the signal with the screen off, with a test button.'],
   ['15-session-detail', 'History, one workout', 'Every set: plan and result. Tap a set to correct it.'],
-  ['18-claude-hint', 'Claude mid-workout', 'Claude\'s suggestion replaces the rule-based one if it arrives in time.'],
+  ['18-claude-hint', 'Claude mid-workout', 'The rules change the sets to come at once; Claude\'s change takes their place if it arrives in time.'],
   ['25-openai-connected', 'OpenAI', 'Choose Claude or OpenAI in Settings and paste that provider\'s key.'],
   ['21-viewer-settings', 'Inside claude.ai', 'Claude connected with no key.'],
   ['16-rules', 'Training rules', 'The rules and their sources, readable in the app.'],
@@ -67,16 +73,36 @@ const spec = [
   ['Preferences and movement limitations.', 'done', 'Reads things like "no deadlifts", "I love pull-ups", "my knee hurts". Limitations are handled on the careful side and the app says what it left out.'],
   ['You enter machines. Free weights, benches and the pull-up bar are available by default.', 'done', `${EQUIPMENT.filter((x) => x.kind === 'machine').length} machines to pick from, plus your own machine with what it trains. Or describe the gym in your own words, typed, pasted or spoken: it is read (by the connected model, or by a built-in reader) and the list is saved in one go. Name the maker ("these are from Technogym: ...") and the exact machines are identified, with how each works and what it isolates saved for the coach. Each item has an Available switch.`],
   ['The plan shows days, body parts, time, exercise order, equipment, sets, reps, weight or how to choose it, and rests. Day time includes warm-up, rests and moving between stations.', 'done', `Plan list and session preview. ${EXERCISES.length} exercises in the catalog. The preview splits the time into warm-up, sets, rests and moving. Changed at your request: the plan is no longer a fixed week but a running list of sessions with rest days between, on any days you like.`],
-  ['"Start set" shows the active set. "Finish set" opens the result, starting from the planned value. Correct reps by 1 or 2 or type them. Change weight, add reps in reserve.', 'done', 'As described. Reps in reserve is optional.'],
-  ['Saving starts the countdown. After the last set the screen shows the next exercise.', 'done', 'Saving takes effect at once and never waits for Claude.'],
-  ['For a busy machine, pick a substitute from available equipment.', 'done', '"Machine busy? Swap" lists exercises with the same movement on equipment you marked available. The swap is for that workout only.'],
+  ['"Start set" shows the active set. "Finish set" opens the result, starting from the planned value. Correct reps by 1 or 2 or type them. Change weight, add reps in reserve.', 'changed', 'Changed at your request: "Finish set" now saves the planned reps in one tap and starts the rest. −1 and +1 work while the set runs and during the rest after it, where you can also change the weight, add reps in reserve, or undo the finish. Any number can still be typed by tapping the set in the list.'],
+  ['Saving starts the countdown. After the last set the screen shows the next exercise.', 'done', 'Saving takes effect at once and never waits for a model. When the rest runs out, the next set of the same exercise starts by itself; "Start now" resets its clock.'],
+  ['For a busy machine, pick a substitute from available equipment.', 'done', '"Machine busy? Not now" offers three things: come back to it later, another exercise (same movement first, then same muscles) on equipment you marked available, or drop it for today. A swap is for that workout only.'],
   ['Coming back to the tab restores the saved sets and the rest time left, from the time the rest ends.', 'done', 'Every tap is saved. The rest is stored as an end time. Tested by reloading in the middle of a rest.'],
   ['With no history, the screen asks for a starting weight. Loads are kept as weight per dumbbell, total weight, machine setting, or bodyweight.', 'done', 'Four load types, each with its own label and step size.'],
   ['A session keeps plan and result for every set, also after the plan changes. The summary shows done and skipped sets, time and the biggest differences. A wrong entry can be corrected.', 'done', 'Each workout stores its own copy of the plan. Sets can be corrected during the workout and later from History.'],
-  ['During a session, AI may propose a change to a set or exercise not done yet. After it, AI compares with earlier results and proposes updates. Each proposal shows the change, a short reason, and Apply or Keep plan.', 'mostly', 'Both work, from the training rules at once and from Claude when connected. One gap: mid-workout, Claude can change weight, reps or rest of sets still to come, but it does not swap an exercise by itself. You do that with the Swap button.'],
-  ['AI stays off the main path. With no answer, carry on with the last approved plan. A late suggestion shows only if it is about a part not done yet.', 'done', 'Tested with a slow answer, a late answer and a failing server.'],
+  ['During a session, AI may propose a change to a set or exercise not done yet. After it, AI compares with earlier results and proposes updates. Each proposal shows the change, a short reason, and Apply or Keep plan.', 'changed', 'Changed at your request: changes are now made at once, during and after a workout, and shown with the old value, the new value and the reason. Each one has Undo, and after a workout also Edit. The training rules answer first; a connected model\'s review takes their place when it arrives.'],
+  ['AI stays off the main path. With no answer, carry on with the last approved plan. A late suggestion shows only if it is about a part not done yet.', 'done', 'Tested with a slow answer, a late answer, a failing server and no connection at all. With no connection the rules update the plan and the model\'s review is asked for when the phone is back online.'],
   ['A versioned library of training rules with sources, used by the plan generator and by the updates. A source document plus a rule set the app uses.', 'done', `Version ${RULES_VERSION}: ${RULES.length} rules, ${Object.values(SOURCES).filter((s) => s.url).length} published sources. One file drives the generator, the suggestions, the Claude prompt and the generated document.`],
   ['The AI prompt: modes for a new plan, during a session and after a session; asks when information is missing; uses only recorded data; returns questions, a plan or a list of changes with reasons; returns an empty list when nothing is justified.', 'done', 'One prompt and one answer format for all modes, plus an interview mode for the chat. The app fills in the "previous value" itself and drops anything that does not match its records.'],
+];
+
+// Version 1.1: the list of seventeen notes from the first real workouts.
+const v11 = [
+  ['Baseline weights for everything.', 'A Weights screen lists every exercise your equipment allows. Type what you lift now, before the first workout or any time later.'],
+  ['What to aim for on each set.', 'Every set says whether to stop at the target or push on. The last set of an exercise may go past the target; the extra reps are recorded.'],
+  ['A summary after every workout.', 'In words: how it went against the plan, what changed and why. Written by the connected model, or by the training rules until it answers or when there is none.'],
+  ['One tap to finish a set.', '"Finish set" saves the planned reps and starts the rest. −1 and +1 work before the tap and during the rest after it, and the finish can be undone.'],
+  ['The next set starts by itself.', 'When the rest runs out, the next set of the same exercise begins from that moment. "Start now" resets its clock. Can be switched off.'],
+  ['Everything is logged.', 'When each set started and ended, how long rests really took, every nudge, undo, skip, swap and correction, and when the screen went off. The summary compares rests with the plan, the model gets the timing, and History shows the log.'],
+  ['Any step size, and weights set by hand.', 'Each exercise has its own smallest step: the usual sizes or any number. A weight in the plan can be changed by hand from the session preview.'],
+  ['Better substitutes.', 'Alternatives are grouped: same movement first, then same muscles by another movement. Leg curls now have real stand-ins, with new exercises added for it.'],
+  ['The plan is worked out again after corrections.', 'Correct a set of your latest workout in History and its update is taken back and redone from the new numbers. Deleting that workout takes its changes back too.'],
+  ['Other activity.', 'Log a run, a ride, a game by time and effort. Enough of it counts as work for the muscles it uses, so leg sessions wait 48 hours after a hard run. A new rule with a source covers this.'],
+  ['Machine busy: later, something else, or drop.', '"Come back to it later" moves the exercise to the end of the workout. The header opens the whole workout, where you can jump to any exercise.'],
+  ['A full cycle always on show.', 'A finished session moves to the end of the list with its numbers already updated, instead of vanishing.'],
+  ['"The plan will be updated when you are online."', 'With no connection the rules update the plan at once, the plan says a review is waiting, and the model is asked as soon as the phone is back online.'],
+  ['Changes are made, not proposed.', 'After a workout, from the chat and when equipment changes, the plan is updated without asking. "What changed" lists every change with its reason, an Undo and an Edit.'],
+  ['A signal with the screen off.', 'A web page cannot vibrate behind a dark screen, so the app sends a notification when the rest ends (stand-alone app). The beep is scheduled ahead on the audio clock. Settings has a test button. Not tried on a real phone.'],
+  ['The long view.', 'A plain-words outlook on the Plan tab: what this round holds, how it gets harder, what changes round to round, what happens when it stalls, and what would be added with more time. A connected model adds its own.'],
 ];
 
 const changes = [
@@ -103,6 +129,7 @@ const limits = [
   ['The web lookup of machines has only met stand-ins.', 'The search tools, the paused-search case and the source check all ran against fake search results. With a real key the lookup also depends on web search being allowed for that key, and on what the search finds. How good the descriptions of real machines are is untested.'],
   ['The live claude.ai page was not opened by me.', 'It is published, and I wrote, read back and deleted a test record in its cloud storage. But I could not open it in a signed-in browser from here, so the real permission prompts for Claude and for dictation are untested. The page logic was tested against a stand-in written from the runtime\'s published type definitions.'],
   ['No real Android phone.', 'Everything, the live site included, ran in desktop Chrome with a Pixel 7 screen profile. Chrome reports nothing that blocks installing, but the actual "Add to Home screen" tap, vibration, the screen staying on, and Chrome\'s own speech recognition can only be tried on a phone.'],
+  ['The signal with the screen off is untested.', 'It relies on a notification sent by a page the phone may have put to sleep. The app does what a web page can to stay awake during a rest and schedules the beep ahead, but whether your phone buzzes depends on Chrome and on the phone\'s notification settings. Inside claude.ai there is no such signal at all.'],
 ];
 
 const page = `<title>Seria build report</title>
@@ -177,7 +204,7 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
       <div><strong>${smoke.passed} / ${smoke.total}</strong><span>end-to-end checks passed</span></div>
       <div><strong>${unit.pass} / ${unit.pass + unit.fail}</strong><span>unit tests passed</span></div>
       ${live ? `<div><strong>${live.passed} / ${live.total}</strong><span>checks passed on the live site</span></div>` : ''}
-      <div><strong>${spec.filter((s) => s[1] === 'done').length} / ${spec.length}</strong><span>spec items fully done</span></div>
+      <div><strong>${spec.filter((s) => s[1] === 'done').length} / ${spec.length}</strong><span>spec items done as designed; ${spec.filter((s) => s[1] === 'changed').length} changed at your request</span></div>
     </div>
   </header>
 
@@ -222,12 +249,18 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
     <h2>What the design asked for and what the app does</h2>
     <div class="rows">
       <div class="rowx head"><span>The design says</span><span>Status</span><span>The app does</span></div>
-      ${spec.map(([a, s, b]) => `<div class="rowx"><span>${esc(a)}</span><span><span class="pill ${s}">${s === 'done' ? 'Done' : 'Mostly'}</span></span><span class="muted">${esc(b)}</span></div>`).join('\n      ')}
+      ${spec.map(([a, s, b]) => `<div class="rowx"><span>${esc(a)}</span><span><span class="pill ${s === 'changed' ? 'mostly' : s}">${s === 'done' ? 'Done' : s === 'changed' ? 'Changed' : 'Mostly'}</span></span><span class="muted">${esc(b)}</span></div>`).join('\n      ')}
     </div>
   </section>
 
   <section>
-    <p class="eyebrow">Changed since the first version</p>
+    <p class="eyebrow">New in version 1.1</p>
+    <h2>Your notes from the first workouts, built</h2>
+    <div>${v11.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Changed before that</p>
     <h2>What you asked for along the way</h2>
     <div>${changes.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
   </section>
@@ -247,7 +280,7 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
       <li>Answers come back in a fixed JSON shape. The app then checks them against its own records: unknown exercises are dropped, numbers are clamped, and the "previous value" shown to you always comes from the app.</li>
       <li>Naming a maker makes the model identify the exact machines. With an API key it then looks each one up with the provider's own web search, and a result is only marked "found" when its source address is one the search really returned. Otherwise it is marked "from the model's memory, not checked".</li>
       <li>On Claude, refusal fallback is switched on: if its safety filters decline a request, the API retries on another model by itself. On OpenAI, conversations are not stored on their side.</li>
-      <li>The model is never in the way. Saving a set does not wait for it. If it is off, slow or failing, you carry on with the last approved plan and the rule-based suggestions.</li>
+      <li>The model is never in the way. Saving a set does not wait for it. If it is off, slow or failing, the training rules carry on: they update the plan after the workout and change the sets to come during it.</li>
       <li>Each key stays in that browser, goes only to its own provider, and is left out of backups. Set a spend limit on it.</li>
     </ul>
   </section>
@@ -283,7 +316,11 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
     <p class="eyebrow">Choices</p>
     <h2>Decisions I made where the design was silent</h2>
     <ul style="padding-left:18px;display:flex;flex-direction:column;gap:6px">
-      <li><b>The plan moves on its own; your numbers do not.</b> The order of sessions, the rest days and the next run are updated without asking. Changes to weights, reps or exercises still wait for "Apply" or "Keep plan", as in your original design. Say if you want those applied automatically too.</li>
+      <li><b>The plan updates itself, and every change can be taken back.</b> Weights, reps, order and rest days change without asking, as you asked. Undo puts back exactly what a change replaced, and only where the value has not been changed again since.</li>
+      <li><b>The rules answer first, the model second.</b> After a workout the training rules update the plan at once. The model's review then replaces theirs, unless you have already undone or corrected something; then your choices stand and only its summary is added.</li>
+      <li><b>Only the latest workout is worked out again.</b> Correcting an older workout fixes the record but leaves the plan, which has moved on since.</li>
+      <li><b>An activity is not a workout.</b> A run counts toward recovery for the muscles it uses, but it does not move the day your next session is due.</li>
+      <li><b>Equipment swaps happen when you leave the Equipment tab,</b> not on every toggle, so trying a switch on and off does not reshuffle the plan. A swap you undo is not forced back in.</li>
       <li><b>"Train now" only stops to ask on an unplanned day.</b> On the day the next session is due it starts at once. Earlier or later, it shows what makes sense and why first.</li>
       <li><b>It works without a model.</b> A built-in coach asks the same questions and the plan comes from the rules. Claude or OpenAI makes it better; neither is required.</li>
       <li><b>Machine facts must show where they come from.</b> Every identified machine is labelled: found on a named site, from the model's memory, or maker noted only. A web address the search did not return is thrown away.</li>
@@ -302,6 +339,7 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
     <ol class="steps">
       <li>Open the claude.ai page on your phone and add it to the home screen. Tell the coach how you want to train.</li>
       <li>Do one real workout. That is the test I could not run: a real phone, real Claude, a real gym.</li>
+      <li>In Settings, turn on "Signal with the screen off" (stand-alone app), tap "Test the signal" and lock the phone. Tell me whether it buzzed: that part is untested.</li>
       <li>Or use the stand-alone app at <a href="${LIVE_URL}">${LIVE_URL.replace('https://', '')}</a> if you want it to work with no signal. The two copies do not share data; a backup file moves it across.</li>
       <li>For a model on the stand-alone app, create an Anthropic or OpenAI API key with a spend limit, choose the provider in Settings, paste the key and tap "Test the connection". That will be the first real call.</li>
       <li>Then describe your gym with the maker named and check a few "found on the web" machines against the real ones. That is the first real test of the lookup.</li>

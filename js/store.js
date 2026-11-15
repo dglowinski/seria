@@ -50,6 +50,8 @@ export const defaultSettings = () => ({
   apiKey: '', model: DEFAULT_MODEL, baseUrl: '', aiOn: true,
   openaiKey: '', openaiModel: DEFAULT_OPENAI_MODEL, openaiBaseUrl: '',
   sound: true, vibrate: true, keepAwake: true,
+  autoStart: true, // the next set starts by itself when the rest runs out
+  notify: false, // a notification when the rest ends, so the phone can buzz with the screen off
 });
 
 function read(key) {
@@ -71,6 +73,8 @@ export function hydrate(raw) {
   if (!s.weights || typeof s.weights !== 'object') s.weights = {};
   s.schema = SCHEMA;
   if (s.activeSessionId && !s.sessions.some((x) => x.id === s.activeSessionId && x.status === 'active')) s.activeSessionId = null;
+  // A workout left on the old "enter the result" step carries on as a set in progress: one tap finishes it.
+  s.sessions = s.sessions.map((x) => (x.status === 'active' && x.phase === 'log' ? { ...x, phase: 'active' } : x));
   return s;
 }
 
@@ -126,6 +130,8 @@ export function replaceState(next, info = {}) {
 export const activeSession = (s = state) => s.sessions.find((x) => x.id === s.activeSessionId) || null;
 export const sessionById = (id, s = state) => s.sessions.find((x) => x.id === id) || null;
 export const doneSessions = (s = state) => s.sessions.filter((x) => x.status === 'done').sort((a, b) => b.startedAt - a.startedAt);
+/** Gym workouts only, without runs, rides and other logged activity. */
+export const doneWorkouts = (s = state) => doneSessions(s).filter((x) => x.kind !== 'activity');
 
 export function putSession(session, extra = {}) {
   const exists = state.sessions.some((x) => x.id === session.id);
@@ -143,7 +149,7 @@ export function removeSession(id) {
   }, { removed: [id] });
 }
 
-// ---------------------------------------------------------------- chat, proposals
+// ---------------------------------------------------------------- chat, plan updates
 
 let n = 0;
 export const newId = (p) => `${p}-${Date.now().toString(36)}${(n++).toString(36)}`;
@@ -154,22 +160,31 @@ export function say(role, text, extra = {}) {
   return msg;
 }
 
-export function addProposal(p) {
-  const proposal = { id: newId('p'), createdAt: Date.now(), ...p, changes: p.changes.map((c) => ({ status: 'open', ...c })) };
-  // A newer review of the same session or kind replaces the open one.
-  const rest = state.proposals.filter((x) => !(x.mode === proposal.mode && x.sessionId === proposal.sessionId && x.changes.every((c) => c.status === 'open')));
-  set({ proposals: [...rest, proposal] });
-  return proposal;
+/**
+ * Write down an update to the plan: what changed, why, and where it came from.
+ * The changes are already made; `extra` carries the plan and weights they left.
+ * (The list is saved as `proposals`, the name it had when changes waited to be accepted.)
+ */
+export function addUpdate(u, extra = {}) {
+  const update = { id: newId('p'), createdAt: Date.now(), ...u };
+  set({ proposals: [...state.proposals, update], ...extra });
+  return update;
 }
 
-export function markChange(proposalId, changeId, status, extra = {}) {
+export function patchUpdate(id, patch, extra = {}) {
+  set({ proposals: state.proposals.map((p) => (p.id === id ? { ...p, ...patch } : p)), ...extra });
+}
+
+export function patchChange(updateId, changeId, patch, extra = {}) {
   set({
-    proposals: state.proposals.map((p) => (p.id !== proposalId ? p : { ...p, changes: p.changes.map((c) => (c.id === changeId ? { ...c, status } : c)) })),
+    proposals: state.proposals.map((p) => (p.id !== updateId ? p : { ...p, changes: p.changes.map((c) => (c.id === changeId ? { ...c, ...patch } : c)) })),
     ...extra,
   });
 }
 
-export const openChanges = (s = state) => s.proposals.flatMap((p) => p.changes.filter((c) => c.status === 'open').map((c) => ({ p, c })));
+/** The newest update, or the newest one for a workout. */
+export const latestUpdate = (s = state) => [...s.proposals].sort((a, b) => b.createdAt - a.createdAt)[0] || null;
+export const updateFor = (sessionId, s = state) => s.proposals.find((p) => p.sessionId === sessionId) || null;
 
 // ---------------------------------------------------------------- backup
 

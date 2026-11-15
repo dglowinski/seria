@@ -144,6 +144,90 @@ export function beep() {
   } catch { /* ignore */ }
 }
 
+let planned = [];
+
+/**
+ * Put the "rest over" tones on the audio clock ahead of time. Unlike a timer,
+ * the audio clock keeps running when the screen goes off, so the sound still
+ * comes on time. Returns a function that calls it off.
+ */
+export function scheduleBeep(inSeconds) {
+  cancelBeep();
+  if (!audio || !(inSeconds > 0)) return cancelBeep;
+  try {
+    const t = audio.currentTime + inSeconds;
+    planned = [[880, 0], [880, 0.22], [1175, 0.44]].map(([freq, at]) => {
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.frequency.value = freq;
+      osc.connect(gain); gain.connect(audio.destination);
+      gain.gain.setValueAtTime(0.0001, t + at);
+      gain.gain.exponentialRampToValueAtTime(0.35, t + at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.18);
+      osc.start(t + at); osc.stop(t + at + 0.2);
+      return osc;
+    });
+  } catch { planned = []; }
+  return cancelBeep;
+}
+export function cancelBeep() {
+  for (const osc of planned) { try { osc.stop(); osc.disconnect(); } catch { /* already done */ } }
+  planned = [];
+}
+
+let hum = null;
+
+/**
+ * A tone too low and too quiet to hear, played while a rest runs. Browsers pause pages
+ * that sit in the background or behind a dark screen, but not ones playing
+ * sound, so this keeps the rest timer and its signals on time.
+ */
+export function keepAlive(on) {
+  try {
+    if (on && audio && !hum) {
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      gain.gain.value = 0.001;
+      osc.frequency.value = 40;
+      osc.connect(gain); gain.connect(audio.destination);
+      osc.start();
+      hum = osc;
+    } else if (!on && hum) {
+      hum.stop(); hum.disconnect(); hum = null;
+    }
+  } catch { hum = null; }
+}
+
+export const canNotify = () => !inViewer && typeof Notification !== 'undefined' && 'serviceWorker' in navigator;
+export const notifyState = () => (canNotify() ? Notification.permission : 'unsupported');
+
+/** Ask for permission to show notifications. Call from a tap. Resolves true when allowed. */
+export async function askNotify() {
+  if (!canNotify()) return false;
+  try { return (await Notification.requestPermission()) === 'granted'; } catch { return false; }
+}
+
+/**
+ * Show a notification. With the screen off this is the only way a web page can
+ * make the phone buzz: the vibration is the notification's own.
+ */
+export async function notify(title, body) {
+  if (notifyState() !== 'granted') return false;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return false;
+    await reg.showNotification(title, { body, tag: 'seria-rest', renotify: true, vibrate: [250, 120, 250, 120, 250], icon: 'icons/icon-192.png', badge: 'icons/icon-192.png' });
+    return true;
+  } catch { return false; }
+}
+
+export async function clearNotifications() {
+  try {
+    const reg = canNotify() ? await navigator.serviceWorker.getRegistration() : null;
+    for (const n of (await reg?.getNotifications({ tag: 'seria-rest' })) || []) n.close();
+  } catch { /* nothing to clear */ }
+}
+
 export function buzz(pattern = [220, 120, 220]) {
   try { navigator.vibrate?.(pattern); } catch { /* not allowed here */ }
 }

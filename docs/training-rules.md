@@ -1,6 +1,6 @@
-# Seria training rules, version 1.1.0
+# Seria training rules, version 1.3.0
 
-Last updated 2026-11-13. Generated from `js/domain/rules.js` with `npm run rules-doc`. Do not edit by hand: change the rules file, bump `RULES_VERSION`, and run the script again.
+Last updated 2026-11-15. Generated from `js/domain/rules.js` with `npm run rules-doc`. Do not edit by hand: change the rules file, bump `RULES_VERSION`, and run the script again.
 
 This is the one set of rules behind the app. Three things read it:
 
@@ -75,6 +75,11 @@ Seria is not medical advice. Stop if something hurts and see a professional.
 - Source: App convention
 - In the code: `SCHEDULE.breakDays`, `SCHEDULE.easePct`
 
+**REC-4.** Other activity counts toward recovery. A run, ride, hike, game or swim that adds up to about 30 minutes at a moderate effort (less when hard, more when easy) counts as work for the muscles it uses, mostly the legs. Sessions that train those muscles hard wait about 48 hours, as after a gym session. Short, easy activity changes nothing.
+
+- Source: Wilson 2012; ACSM 2011; App convention
+- In the code: `ACTIVITIES`, `ACTIVITY.countsFromMin`, `activityGroups()`
+
 ## Volume
 
 **VOL-1.** More weekly sets per muscle group bring more muscle growth, with 10 or more sets a week doing better than fewer. Strength also gains more from medium and high weekly set counts than from low ones. The app's own targets, built on that: 6-10 weekly sets per muscle group for novices, 10-16 for intermediates and 12-20 for advanced lifters. The time budget comes first; the plan screen shows where a week falls short of the target.
@@ -103,6 +108,11 @@ Seria is not medical advice. Stop if something hurts and see a professional.
 
 - Source: Zourdos 2016; Helms 2016
 - In the code: `TARGET_RIR`
+
+**EFF-1.** Sets before the last one stop at the target, with reps in reserve. The last set of an exercise may go past the target, to about one rep short of failure (two for novices on the main lifts). The extra reps are recorded: they show when the lifter is ready for more.
+
+- Source: Helms 2016; App convention
+- In the code: `effortCue()`
 
 **INT-4.** Keep sets of 5 reps and under for barbell lifts. Dumbbell, machine and bodyweight exercises use at least 6-8 reps, and novices do not go below 6 reps on any lift.
 
@@ -154,7 +164,7 @@ Seria is not medical advice. Stop if something hurts and see a professional.
 - Source: ACSM 2009; App convention
 - In the code: `PROGRESSION.shortfallReps`, `deloadPct`
 
-**ADJ-3.** Judge only what was recorded: planned against done reps and load, reps in reserve when given, skipped sets, and earlier sessions of the same exercise. If the records do not justify a change, propose none.
+**ADJ-3.** Judge only what was recorded: planned against done reps and load, reps in reserve when given, skipped sets, and earlier sessions of the same exercise. If the records do not justify a change, make none. Changes are made at once and listed with their reasons; each can be undone or corrected by hand.
 
 - Source: App convention
 - In the code: `history`
@@ -257,6 +267,7 @@ Slots are filled in this order. When time is short they are dropped from the end
 - **Zourdos 2016.** Zourdos MC, Klemp A, Dolan C, et al. Novel resistance training-specific rating of perceived exertion scale measuring repetitions in reserve. J Strength Cond Res. 2016;30(1):267-275. <https://doi.org/10.1519/JSC.0000000000001049>
 - **Helms 2016.** Helms ER, Cronin J, Storey A, Zourdos MC. Application of the repetitions in reserve-based rating of perceived exertion scale for resistance training. Strength Cond J. 2016;38(4):42-49. <https://doi.org/10.1519/SSC.0000000000000218>
 - **ACSM 2011.** Garber CE, Blissmer B, Deschenes MR, et al. Quantity and quality of exercise for developing and maintaining cardiorespiratory, musculoskeletal, and neuromotor fitness in apparently healthy adults: guidance for prescribing exercise. Med Sci Sports Exerc. 2011;43(7):1334-1359. <https://doi.org/10.1249/MSS.0b013e318213fefb>
+- **Wilson 2012.** Wilson JM, Marin PJ, Rhea MR, Wilson SMC, Loenneke JP, Anderson JC. Concurrent training: a meta-analysis examining interference of aerobic and resistance exercises. J Strength Cond Res. 2012;26(8):2293-2307. <https://doi.org/10.1519/JSC.0b013e31823a3e2d>
 - **Simão 2012.** Simão R, de Salles BF, Figueiredo T, Dias I, Willardson JM. Exercise order in resistance training. Sports Med. 2012;42(3):251-265. <https://doi.org/10.2165/11597240-000000000-00000>
 - **App convention.** Practical convention chosen for this app. Not taken from a study; change it if it does not suit you.
 

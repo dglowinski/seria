@@ -32,11 +32,35 @@ The plan is a running list, not a calendar: train this, rest a day, train that, 
 
 - **The coach proposes it and you can discuss it.** It is laid out a couple of weeks ahead. The main lifts come back every week so they can progress; the smaller exercises take turns, so what did not fit one week is trained the next.
 - **One button: "Train now".** On the day the next session is planned for, it just starts. On any other day it first shows what makes sense today and why (for example a session that lets yesterday's muscles rest), and how the rest of the plan follows. Starting accepts that update. You can also pick any session yourself, or skip one.
-- **It moves as you train.** After each workout the finished session comes off the list. With Claude or OpenAI connected, the order and rest days of what is left are updated from your results without asking. Changes to weights, reps or exercises still come as proposals with "Apply" and "Keep plan".
+- **It moves as you train.** After each workout the plan is updated for you: weights, reps, the order of what is left and the rest days. Nothing waits to be accepted. You get a summary in words and a list of what changed and why, and you can undo any change or correct its number ("What changed" on the Plan tab).
+- **A full cycle is always on show.** A session you finish moves to the end of the list, with its numbers already updated, so you see when it comes round again.
 - **When the list runs out, the next run is planned.** The connected model plans it from your results so far. Without a model the same run starts again, with its exercises taking turns.
 - **After ten days away,** the first session back is 10% lighter. The plan keeps its numbers.
 
+- **Other activity counts.** "Did something else?" on the Plan tab logs a run, a ride, a game: what it was, how long, how hard. About 30 minutes at a moderate effort counts as work for the muscles it uses, so leg sessions wait 48 hours after a hard run. Short, easy activity changes nothing. It shows in History next to the workouts.
+- **The long view.** The Plan tab has a part called "The long view": how the training is meant to develop, in words. What this round holds, how it gets harder, what changes from one round to the next, what happens when it stalls, and what would be added with more time. A connected model adds its own reading when it builds the plan.
+
 The rules behind this are in `js/domain/schedule.js` and in the "A plan that moves" and "Training on any day" parts of `docs/training-rules.md`.
+
+## A workout, tap by tap
+
+- **One tap per set.** "Start set", then "Finish set". The set is saved with the planned reps and the rest starts. While the set runs, or during the rest after it, −1 and +1 nudge the reps; you can also change the weight, say how many reps were left in the tank, or undo the finish.
+- **The next set starts by itself** when the rest runs out, from that moment. If you were not ready, "Start now" resets its clock and "Not doing it yet" puts it down. You can turn this off in Settings.
+- **What to aim for.** Each set says whether to stop at the target or push on: sets before the last stop with reps in reserve, the last set of an exercise may go past the target.
+- **Machine busy? Not now.** Come back to the exercise later (it moves to the end of the workout), do another one instead (same movement first, then same muscles), or drop it for today.
+- **The whole workout at a glance.** Tap "Exercise 2 of 5" at the top to see every exercise and jump to any that still has sets to do.
+- **A missed set changes the sets to come at once,** with the reason and an Undo on screen.
+- **Everything is logged with its time:** when each set started and ended, how long rests really were, every nudge, undo, skip and swap, and when the screen went off. The summary compares your rests with the plan, and "Every step, with times" in History shows the log.
+- **After the workout** you get a summary in words. With a model connected it writes the summary and reviews the changes; until it answers, and whenever there is no connection, the training rules do both. With no connection the plan says "will be updated when you are online", and the model's review is asked for as soon as the phone is back online.
+- **Correcting a workout later.** Fix a set in History and, if it is your latest workout, the plan is worked out again from the corrected numbers. Deleting the latest workout takes its changes back and puts its session on the list again.
+
+### Signals when the rest ends
+
+With the screen on, the phone beeps and buzzes. With the screen off a web page is not allowed to vibrate. The only way is a notification, and the phone decides how that buzzes. Turn on "Signal with the screen off" in Settings (stand-alone app only, best when added to the home screen), then use "Test the signal" with the phone locked. The beep is put on the audio clock when the rest starts, and a tone too quiet to hear keeps the page running during the rest, so the signal has the best chance of coming on time. This part could not be tried on a real phone while building.
+
+## The weights you lift
+
+"Weights" on the Plan tab (also on the Equipment tab) lists every exercise your equipment allows. Type what you lift now and the plan uses it from the first workout; anything left blank is asked for when the exercise first comes up. Each exercise has its own step, the smallest change the equipment allows: pick 1, 2, 2.5, 5 or 10, or type any number. In a session preview, "Change" next to a weight sets it by hand.
 
 ## Telling it what your gym has
 
@@ -99,7 +123,7 @@ Both:
 - Each key lives only in this browser's storage, is sent only to its own provider, and is never part of a backup. Set a spend limit on it.
 - Settings, Advanced lets you point the app at your own relay instead of the provider's address.
 
-The model is never on the critical path. Saving a set and the rest timer work at once. If the model is off, slow or failing, the app carries on with the last approved plan and the rule-based suggestions.
+The model is never on the critical path. Saving a set and the rest timer work at once. If the model is off, slow or failing, the app carries on with the training rules: they update the plan after the workout and change the sets to come during it.
 
 ## Tests
 
@@ -125,8 +149,8 @@ js/domain/rules.js                        the training rules library, versioned,
 js/domain/catalog.js                      equipment and exercises
 js/domain/planner.js                      builds the plan, estimates time
 js/domain/schedule.js                     what to train today, the order and rests of what follows
-js/domain/session.js                      the workout: ready, set, result, rest, next, summary
-js/domain/progression.js                  reads results, proposes changes, applies them
+js/domain/session.js                      the workout: ready, set, rest, next, summary, and its log
+js/domain/progression.js                  reads results, makes changes to the plan, and can undo them
 js/ai/prompts.js                          the prompt, the answer schema, the request data
 js/ai/ai.js                               picks the provider, checks the answer
 js/ai/claude.js                           the two ways to reach Claude
@@ -143,7 +167,7 @@ report/                                   the build report, test results and scr
 
 ## Changing things
 
-- **Training rules:** edit `js/domain/rules.js`, bump `RULES_VERSION`, run `npm run rules-doc`. The generator, the suggestions and the Claude prompt all pick up the change.
+- **Training rules:** edit `js/domain/rules.js`, bump `RULES_VERSION`, run `npm run rules-doc`. The generator, the changes made during and after a workout, and the prompt sent to the model all pick up the change.
 - **Exercises and machines:** `js/domain/catalog.js`.
 - **Releasing:** push to `main`. The deploy stamps the offline cache with the commit id, so installed phones pick up new files on the next start or the one after. On any other host, bump `VERSION` in `sw.js` yourself.
 - **The claude.ai page:** `npm run build:artifact` packs everything into `dist/seria-artifact.html`. Publish that file as an update to the page address above, so the link and the saved data stay the same.
@@ -154,5 +178,6 @@ report/                                   the build report, test results and scr
 - Weights are in kilograms only.
 - The claude.ai page and the stand-alone app do not share data. Move it with a backup file.
 - Cloud sync is simple: the newest main record wins, workouts are merged one by one. It is meant for one person, mostly on one device at a time.
-- Rest-over sound and vibration only fire while the page is on screen. The countdown itself is always right, because it is stored as an end time.
+- With the screen off, the rest-over signal is a notification, and only in the stand-alone app. Whether the phone buzzes for it is up to the phone's notification settings, and it was not tried on a real phone. The countdown itself is always right, because it is stored as an end time.
+- Undo works on the plan a change was made to. After the plan is rebuilt, older changes stay in the list as a record only.
 - Not medical advice. The limitation handling is deliberately cautious and says what it left out.

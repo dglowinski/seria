@@ -65,6 +65,7 @@ export function tidy(out) {
     changes: Array.isArray(o.changes) ? o.changes.filter((c) => c && typeof c === 'object') : [],
     equipment: o.equipment && typeof o.equipment === 'object' ? o.equipment : null,
     schedule: o.schedule && typeof o.schedule === 'object' && typeof o.schedule.first_session_id === 'string' ? o.schedule : null,
+    outlook: typeof o.outlook === 'string' ? o.outlook.replace(/\s+/g, ' ').trim().slice(0, 1200) : '',
   };
 }
 

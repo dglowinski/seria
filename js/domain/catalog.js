@@ -43,6 +43,14 @@ export const GROUP_OF = {
 };
 export const MAIN_GROUPS = ['Chest', 'Back', 'Shoulders', 'Quads', 'Hamstrings and glutes'];
 
+// When the movement itself cannot be done, these train the same muscles.
+const SUB_PATTERNS = {
+  knee_flex: ['hinge', 'glute'], knee_ext: ['squat', 'lunge'], squat: ['lunge', 'knee_ext'], lunge: ['squat', 'knee_ext'],
+  hinge: ['glute', 'knee_flex'], glute: ['hinge', 'lunge'], calf: [], push_h: ['chest_fly', 'push_v'], chest_fly: ['push_h'],
+  push_v: ['delt_side', 'push_h'], delt_side: ['push_v'], delt_rear: ['pull_h'], pull_h: ['pull_v', 'delt_rear'], pull_v: ['pull_h'],
+  biceps: ['pull_v', 'pull_h'], triceps: ['push_h', 'push_v'], core: [],
+};
+
 const LOWER = new Set(['squat', 'hinge', 'lunge', 'glute', 'knee_ext', 'knee_flex', 'calf']);
 export const isLowerPattern = (p) => LOWER.has(p);
 
@@ -93,7 +101,11 @@ export const EXERCISES = [
   e('db_step_up', 'Dumbbell step-up', 'lunge', ['dumbbells', 'bench'], 'per_dumbbell', 3, ['knee']),
 
   e('leg_extension', 'Leg extension', 'knee_ext', ['leg_extension'], 'machine', 1, ['knee']),
+  e('db_leg_extension', 'Seated dumbbell leg extension', 'knee_ext', ['dumbbells', 'bench'], 'per_dumbbell', 2, ['knee']),
   e('leg_curl', 'Leg curl', 'knee_flex', ['leg_curl'], 'machine', 1),
+  e('db_leg_curl', 'Lying dumbbell leg curl', 'knee_flex', ['dumbbells', 'bench'], 'per_dumbbell', 2),
+  e('cable_leg_curl', 'Standing cable leg curl', 'knee_flex', ['cable'], 'machine', 3),
+  e('nordic_curl', 'Nordic hamstring curl', 'knee_flex', [], 'bodyweight', 4, [], true),
 
   e('calf_raise_machine', 'Calf raise machine', 'calf', ['calf_machine'], 'machine', 1),
   e('db_calf_raise', 'Standing dumbbell calf raise', 'calf', ['dumbbells'], 'per_dumbbell', 2),
@@ -258,7 +270,9 @@ export function equipmentNames(eq, exercise) {
 }
 
 /**
- * Other ways to do the same movement right now, best first.
+ * Other ways to train the same thing right now, best first: the same movement
+ * on other equipment, then other movements for the same muscles. Each result
+ * carries `close`: true for the same movement.
  * @param {object} eq equipment state
  * @param {string} exerciseId the lift to replace
  * @param {object} [opts] exclude: ids already in the session; busy: equipment ids in use by someone else
@@ -268,12 +282,18 @@ export function substitutesFor(eq, exerciseId, opts = {}) {
   const cur = all.find((x) => x.id === exerciseId);
   if (!cur) return [];
   const exclude = new Set([exerciseId, ...(opts.exclude || [])]);
-  const busy = new Set(opts.busy || []);
+  const busy = new Set([...(opts.busy || [])]);
   const avoidTags = new Set(opts.avoidTags || []);
   const avoid = new Set(opts.avoid || []);
   const ok = (x) => !exclude.has(x.id) && !avoid.has(x.id) && canDo(eq, x) && !x.equip.some((id) => busy.has(id)) && !x.tags.some((t) => avoidTags.has(t));
-  const same = all.filter((x) => x.pattern === cur.pattern && ok(x)).sort((a, b) => a.rank - b.rank);
-  return same;
+  const same = all.filter((x) => x.pattern === cur.pattern && ok(x)).sort((a, b) => a.rank - b.rank).map((x) => ({ ...x, close: true }));
+  // Same muscles by another movement: first the movements the rules name as stand-ins, then the rest of the group.
+  const group = GROUP_OF[cur.pattern];
+  const standIns = SUB_PATTERNS[cur.pattern] || [];
+  const order = (p) => { const i = standIns.indexOf(p); return i < 0 ? 99 : i; };
+  const near = all.filter((x) => x.pattern !== cur.pattern && ok(x) && (standIns.includes(x.pattern) || (group && GROUP_OF[x.pattern] === group)))
+    .sort((a, b) => order(a.pattern) - order(b.pattern) || a.rank - b.rank).map((x) => ({ ...x, close: false }));
+  return [...same, ...near];
 }
 
 // ---------------------------------------------------------------- reading a gym from free text
