@@ -1,9 +1,9 @@
 {
   "url": "https://dglowinski.github.io/seria/",
-  "ranAt": "2026-11-15T12:17:43.096Z",
+  "ranAt": "2026-11-15T17:28:12.106Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 16,
-  "passed": 16,
+  "total": 17,
+  "passed": 17,
   "results": [
     {
       "name": "the address answers over HTTPS",
@@ -76,7 +76,12 @@
       "detail": ""
     },
     {
-      "name": "a set can be logged offline and survives a reload mid-rest",
+      "name": "a set can be logged offline with one tap and survives a reload mid-rest",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the new screens are in the release: weights, activities, the long view",
       "ok": true,
       "detail": ""
     },
