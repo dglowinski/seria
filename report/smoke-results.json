@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-15T11:58:03.183Z",
+  "ranAt": "2026-11-15T12:16:43.834Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 180,
-  "passed": 180,
+  "total": 184,
+  "passed": 184,
   "failed": 0,
   "results": [
     {
@@ -199,7 +199,19 @@
     },
     {
       "part": "A built-in",
+      "name": "the sketch stays on the training screen during the set",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
       "name": "\"Finish set\" opens the result with the planned value",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "and while the result is entered",
       "ok": true,
       "detail": ""
     },
@@ -218,6 +230,12 @@
     {
       "part": "A built-in",
       "name": "saving starts the rest countdown at once",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "and during the rest",
       "ok": true,
       "detail": ""
     },
@@ -272,6 +290,12 @@
     {
       "part": "A built-in",
       "name": "a wrong entry can be corrected during the workout",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "the next exercise comes with its own sketch",
       "ok": true,
       "detail": ""
     },

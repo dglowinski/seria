@@ -9,7 +9,7 @@ import { fmtLoad, fmtLoadShort, num } from '../domain/planner.js';
 import { LOAD_TYPES, PROGRESSION } from '../domain/rules.js';
 import { substitutesFor, exerciseById, equipmentNames, zoneOf, machineForExercise, sketchForExercise } from '../domain/catalog.js';
 import { MachineInfo } from './equipment.js';
-import { Sketch, SketchFigure } from './sketch.js';
+import { Sketch, sketchNote } from './sketch.js';
 import { describeChange } from '../domain/progression.js';
 import { afterSetSaved, afterWorkout, rememberWeight } from '../ai/coach.js';
 import { sourceName } from '../ai/ai.js';
@@ -195,15 +195,19 @@ export function Workout() {
           <button class="chip" onClick=${() => put(S.skipRest(session))}>Skip rest</button>
         </div>`}
 
-      <div class="stack tight">
-        ${waiting && html`<p class="eyebrow">${firstOfExercise ? (c.done + c.skipped === 0 ? 'First exercise' : 'Next exercise') : 'Next set'}</p>`}
-        ${phase === 'log' && html`<p class="eyebrow">Set result</p>`}
-        ${phase === 'active' && html`<p class="eyebrow">Set in progress · ${clock(setElapsed)}</p>`}
-        <h3 data-testid="exercise-name">${ex.name}</h3>
-        <p class="muted small">${ex.zone} · set ${setIdx + 1} of ${ex.sets.length}${ex.swappedFrom ? ` · swapped in for ${ex.swappedFrom.name}` : ''}</p>
-        ${waiting && session.easePct > 0 && c.done + c.skipped === 0 && html`<p class="small muted" data-testid="eased">Loads are ${session.easePct}% lighter today to ease back in. The plan keeps its numbers.</p>`}
-        ${waiting && firstOfExercise && html`<p class="muted small">${ex.equipment} · ${ex.sets.length} sets · rest ${restText(ex.restSec)}</p>`}
+      <div class="spread" style="align-items:flex-start">
+        <div class="stack tight grow">
+          ${waiting && html`<p class="eyebrow">${firstOfExercise ? (c.done + c.skipped === 0 ? 'First exercise' : 'Next exercise') : 'Next set'}</p>`}
+          ${phase === 'log' && html`<p class="eyebrow">Set result</p>`}
+          ${phase === 'active' && html`<p class="eyebrow">Set in progress · ${clock(setElapsed)}</p>`}
+          <h3 data-testid="exercise-name">${ex.name}</h3>
+          <p class="muted small">${ex.zone} · set ${setIdx + 1} of ${ex.sets.length}${ex.swappedFrom ? ` · swapped in for ${ex.swappedFrom.name}` : ''}</p>
+          ${waiting && session.easePct > 0 && c.done + c.skipped === 0 && html`<p class="small muted" data-testid="eased">Loads are ${session.easePct}% lighter today to ease back in. The plan keeps its numbers.</p>`}
+          ${waiting && firstOfExercise && html`<p class="muted small">${ex.equipment} · ${ex.sets.length} sets · rest ${restText(ex.restSec)}</p>`}
+        </div>
+        ${look && html`<div data-testid="sketch"><${Sketch} medium id=${look.id} loading=${look.loading} /></div>`}
       </div>
+      ${waiting && firstOfExercise && look && html`<p class="small muted" data-testid="sketch-note">${sketchNote(look)}</p>`}
 
       ${phase !== 'log' && !(waiting && needW) && html`
         <div class="metrics">
@@ -212,7 +216,6 @@ export function Workout() {
             <small>${ex.loadType === 'bodyweight' ? (set.target.load ? 'added to bodyweight' : 'bodyweight') : LOAD_TYPES[ex.loadType].label}</small></div>
         </div>`}
 
-      ${waiting && firstOfExercise && html`<${SketchFigure} look=${look} />`}
       ${(waiting || phase === 'active') && machine && (machine.how || machine.isolates) && html`<${MachineInfo} d=${machine} />`}
 
       ${waiting && needW && html`<${WeightPicker} ex=${ex} reps=${set.target.reps} machine=${machine} value=${picked.value} step=${picked.step}

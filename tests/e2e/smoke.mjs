@@ -292,7 +292,7 @@ await guarded(async () => {
   await page.getByTestId('start-day').click();
   await main(page).waitFor();
   check('workout has its own screen without the tab bar', (await page.getByRole('navigation', { name: 'Main' }).count()) === 0);
-  check('a new exercise starts with a sketch of what to look for', (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch')) === 'dumbbells' && /General look of a dumbbell\. Yours may differ/.test(await page.getByTestId('sketch').textContent()));
+  check('a new exercise starts with a sketch of what to look for', (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch')) === 'dumbbells' && /General look of a dumbbell\. Yours may differ/.test(await page.getByTestId('sketch-note').textContent()));
   check('no history: asks for a starting weight first', (await main(page).textContent()).trim() === 'Save starting weight' && await page.getByText('Choose your starting weight').isVisible());
   await shot(page, '07-starting-weight');
   await page.fill('#start-weight', '20'); await sleep(120);
@@ -301,10 +301,12 @@ await guarded(async () => {
   const target = Number(await page.getByTestId('target-reps').textContent());
   await tap(page);
   check('"Start set" shows the active set', (await phase(page)) === 'active' && (await main(page).textContent()).trim() === 'Finish set');
+  check('the sketch stays on the training screen during the set', await page.getByTestId('sketch').locator('svg[data-sketch=dumbbells]').isVisible());
   await shot(page, '08-set-active');
   await tap(page);
   check('"Finish set" opens the result with the planned value', (await phase(page)) === 'log' && Number(await page.inputValue('#reps-done')) === target);
   await page.getByRole('button', { name: '1 rep fewer' }).click();
+  check('and while the result is entered', await page.getByTestId('sketch').locator('svg[data-sketch=dumbbells]').isVisible());
   check('reps correct by ±1 and ±2', await until(async () => Number(await page.inputValue('#reps-done')) === target - 1));
   await page.getByRole('button', { name: '2 reps more' }).click();
   await until(async () => Number(await page.inputValue('#reps-done')) === target + 1);
@@ -314,6 +316,7 @@ await guarded(async () => {
   const t0 = Date.now();
   await tap(page);
   check('saving starts the rest countdown at once', (await phase(page)) === 'rest' && Date.now() - t0 < 1500);
+  check('and during the rest', await page.getByTestId('sketch').locator('svg[data-sketch=dumbbells]').isVisible() && (await page.getByTestId('sketch-note').count()) === 0);
   const restSec = (await state(page)).sessions[0].exercises[0].restSec;
   const shown = secs(await page.getByTestId('rest-timer').textContent());
   check('countdown starts from the planned rest', shown <= restSec && shown >= restSec - 3, `${shown} vs ${restSec}`);
@@ -354,6 +357,7 @@ await guarded(async () => {
 
   // --- finish exercise 1, next exercise, swap, skip
   await runWorkout(page, { stop: async () => (await state(page)).sessions[0].cursor.ex === 1 });
+  check('the next exercise comes with its own sketch', (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch')) === 'barbell' && /General look of a barbell/.test(await page.getByTestId('sketch-note').textContent()));
   check('after the last set the screen shows the next exercise', (await page.locator('.eyebrow').first().textContent()) === 'Next exercise' && (await page.getByTestId('exercise-name').textContent()) !== 'Dumbbell bench press' && (await page.getByTestId('progress').textContent()).includes('Exercise 2 of'));
   const before = await page.getByTestId('exercise-name').textContent();
   await page.getByRole('button', { name: 'Machine busy? Swap' }).click();
@@ -906,7 +910,7 @@ await guarded(async () => {
   const about = page.getByTestId('machine-info');
   await about.locator('summary').click();
   check('the sketch follows what was found about the machine: this one is loaded with plates', (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch')) === 'leg_press'
-    && /General look of a leg press, loaded with plates/.test(await page.getByTestId('sketch').textContent()));
+    && /General look of a leg press, loaded with plates/.test(await page.getByTestId('sketch-note').textContent()));
   check('the workout screen explains the machine you are on', (await page.getByTestId('exercise-name').textContent()) === 'Leg press' && /How it works: From the maker's page/.test(await about.textContent()) && /Loaded with: plates you load/.test(await about.textContent()));
   await shot(page, '27-workout-machine');
   await page.getByRole('button', { name: 'End workout' }).click();

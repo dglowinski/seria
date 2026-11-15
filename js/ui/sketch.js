@@ -124,26 +124,22 @@ function part(p, plates) {
 }
 
 /**
- * @param {{id: string, loading?: string, small?: boolean}} props id: a key of SKETCHES
+ * @param {{id: string, loading?: string, small?: boolean, medium?: boolean}} props id: a key of SKETCHES
  */
-export function Sketch({ id, loading, small }) {
+export function Sketch({ id, loading, small, medium }) {
   const sk = SKETCHES[id];
   if (!sk) return null;
   const plates = loading === 'plate_loaded';
   // A small one sits next to the name it illustrates, so it is decoration there; a big one stands alone and is labelled.
-  return html`<svg class=${`sketch${small ? ' small' : ''}`} viewBox="0 0 120 90" role=${small ? undefined : 'img'} aria-hidden=${small ? 'true' : undefined}
+  return html`<svg class=${`sketch${small ? ' small' : medium ? ' medium' : ''}`} viewBox="0 0 120 90" role=${small ? undefined : 'img'} aria-hidden=${small ? 'true' : undefined}
     aria-label=${small ? undefined : `Sketch of a ${sk.name}`} data-sketch=${id}>
     <path class="sk-g" d="M6 86 H114" />
     ${sk.parts.map((p) => part(p, plates))}
   </svg>`;
 }
 
-/** The sketch with a line saying what it is, and that it is only the general look. */
-export function SketchFigure({ look }) {
-  if (!look || !SKETCHES[look.id]) return null;
-  const sk = SKETCHES[look.id];
-  return html`<figure class="sketch-fig" data-testid="sketch">
-    <${Sketch} id=${look.id} loading=${look.loading} />
-    <figcaption class="small muted">General look of a ${sk.name}${look.loading === 'plate_loaded' ? ', loaded with plates' : ''}. Yours may differ in detail.</figcaption>
-  </figure>`;
+/** One line saying what the sketch shows, and that it is only the general look. */
+export function sketchNote(look) {
+  const sk = look && SKETCHES[look.id];
+  return sk ? `General look of a ${sk.name}${look.loading === 'plate_loaded' ? ', loaded with plates' : ''}. Yours may differ in detail.` : '';
 }
