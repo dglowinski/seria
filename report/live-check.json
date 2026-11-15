@@ -1,9 +1,9 @@
 {
   "url": "https://dglowinski.github.io/seria/",
-  "ranAt": "2026-11-13T15:40:24.089Z",
+  "ranAt": "2026-11-15T11:58:38.517Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 15,
-  "passed": 15,
+  "total": 16,
+  "passed": 16,
   "results": [
     {
       "name": "the address answers over HTTPS",
@@ -67,6 +67,11 @@
     },
     {
       "name": "the plan reads as a list with one \"Train now\" button",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the workout shows a sketch of the equipment for the first exercise",
       "ok": true,
       "detail": ""
     },
