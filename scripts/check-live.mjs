@@ -88,6 +88,7 @@ try {
   await page.getByTestId('train-now').click();
   const main = page.getByTestId('main-action');
   await main.waitFor();
+  const sketchSeen = (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch').catch(() => '')) === 'dumbbells';
   await page.fill('#start-weight', '20'); await sleep(150);
   for (const label of ['Save starting weight', 'Start set', 'Finish set']) {
     await page.waitForFunction((l) => document.querySelector('[data-testid=main-action]')?.textContent.trim() === l, label, { timeout: 5000 });
@@ -95,6 +96,7 @@ try {
   }
   await page.waitForFunction(() => document.querySelector('[data-testid=main-action]')?.textContent.trim().startsWith('Save set'), null, { timeout: 5000 });
   await main.click();
+  check('the workout shows a sketch of the equipment for the first exercise', false || sketchSeen);
   await page.getByTestId('rest-timer').waitFor({ timeout: 5000 });
   await page.reload();
   await page.getByTestId('rest-timer').waitFor({ timeout: 15000 });

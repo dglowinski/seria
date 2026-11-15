@@ -45,8 +45,8 @@ const shots = [
   ['05-equipment', 'Equipment', 'Machines you add. Free weights, bench and bar are on by default.'],
   ['05-gym-text', 'Describe your gym', 'Name the machines or paste any text. It is read and saved, and you see what was added.'],
   ['17c-machines-identified', 'Machines by maker', 'Name the maker and the exact machines are identified. Each says whether it was found on the web or comes from memory.'],
-  ['27-workout-machine', 'The machine, mid-workout', 'How the machine you are on works and what it isolates.'],
-  ['07-starting-weight', 'Starting weight', 'No history yet, so you pick the first weight.'],
+  ['27-workout-machine', 'The machine, mid-workout', 'A sketch of its general look, how it works and what it isolates.'],
+  ['07-starting-weight', 'Starting an exercise', 'A sketch of what to look for, and, with no history yet, your first weight.'],
   ['08-set-active', 'Set in progress', 'One button: Finish set.'],
   ['09-set-result', 'Set result', 'Starts from the plan. Correct by 1 or 2, or type the number.'],
   ['10-rest', 'Rest', 'Countdown, next set, and a suggestion with Apply or Keep plan.'],
@@ -82,6 +82,7 @@ const spec = [
 const changes = [
   ['A plan that moves, not a weekly calendar.', 'The plan is a running list: train this, rest so many days, train that. The coach proposes it, you can discuss it, and it is updated after every workout. When the list runs out the next run is planned, by the connected model from your results or by repeating the run with its exercises taking turns.'],
   ['One "Train now" button.', 'On the planned day it starts the next session. On any other day it shows what makes sense today, why, and how the rest of the plan follows; the model reviews the pick when connected. You can pick or skip any session.'],
+  ['A sketch of the equipment.', 'Each kind of equipment has a line sketch of its general look, shown when an exercise comes up, in the session preview and on the equipment list. It follows what is saved about your machine, such as plates instead of a weight stack. Makers\' photos are not used: the app has no way to fetch the right one, and they are the makers\' own.'],
   ['Describe your gym in your own words.', 'Type, paste or dictate what the gym has; it is read and saved in one go.'],
   ['Machines by maker.', 'Name the maker and the exact machines are identified, with how each works and what it isolates saved for the coach, and a label saying whether that was found on the web or comes from memory.'],
   ['OpenAI as well as Claude.', 'Choose either in Settings on the stand-alone app. Same prompt, rules and checks.'],

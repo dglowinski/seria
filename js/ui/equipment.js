@@ -3,7 +3,8 @@
 
 import { html, useState, useRef, useEffect, useStore, Sheet, Icon, toast } from './kit.js';
 import * as store from '../store.js';
-import { EQUIPMENT, PATTERNS, ZONES, LOADING, isAvailable, isListed, machineDetail, machineLabel } from '../domain/catalog.js';
+import { EQUIPMENT, PATTERNS, ZONES, LOADING, isAvailable, isListed, machineDetail, machineLabel, sketchForEquipment } from '../domain/catalog.js';
+import { Sketch } from './sketch.js';
 import { readEquipment } from '../ai/coach.js';
 import { aiReady, aiName, sourceName } from '../ai/ai.js';
 import { useVoiceInput } from './voice.js';
@@ -23,6 +24,12 @@ const BASIS = {
   stated: () => 'Maker noted',
 };
 const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } };
+
+/** The small drawing of a piece of equipment, in a list row. */
+function Look({ eq, id }) {
+  const look = sketchForEquipment(eq, id);
+  return look ? html`<${Sketch} small id=${look.id} loading=${look.loading} />` : null;
+}
 
 /** What is saved about the exact machine: how it works and what it isolates. */
 export function MachineInfo({ d, open = false }) {
@@ -131,12 +138,14 @@ export function EquipmentScreen() {
         <button class="chip accent" data-testid="add-machine" onClick=${() => setAdding(true)}>Add to list</button>
       </div>
       ${mine.map((x) => html`<div class="row" data-testid="machine">
-        <span class="stack tight"><b>${x.name}</b><button class="sub" style="text-align:left" onClick=${() => setItem(x.id, undefined, true)}>Remove from list</button></span>
+        <${Look} eq=${eq} id=${x.id} />
+        <span class="stack tight grow"><b>${x.name}</b><button class="sub" style="text-align:left" onClick=${() => setItem(x.id, undefined, true)}>Remove from list</button></span>
         <${Toggle} name=${x.name} on=${isAvailable(eq, x.id)} onChange=${(v) => setItem(x.id, v)} />
       </div>
       <${MachineInfo} d=${machineDetail(eq, x.id)} />`)}
       ${eq.custom.map((c) => html`<div class="row" data-testid="machine">
-        <span class="stack tight"><b>${c.name}</b><span class="sub">${PATTERNS[c.pattern]} · <button class="sub" onClick=${() => removeCustom(c.id)}>Remove</button></span></span>
+        <${Look} eq=${eq} id=${c.id} />
+        <span class="stack tight grow"><b>${c.name}</b><span class="sub">${PATTERNS[c.pattern]} · <button class="sub" onClick=${() => removeCustom(c.id)}>Remove</button></span></span>
         <${Toggle} name=${c.name} on=${isAvailable(eq, c.id)} onChange=${(v) => setItem(c.id, v)} />
       </div>
       <${MachineInfo} d=${machineDetail(eq, c.id)} />`)}
@@ -146,7 +155,8 @@ export function EquipmentScreen() {
     <div class="stack">
       <h3>Always there</h3>
       ${basics.map((x) => html`<div class="row">
-        <b>${x.name}</b>
+        <${Look} eq=${eq} id=${x.id} />
+        <b class="grow">${x.name}</b>
         <${Toggle} name=${x.name} on=${isAvailable(eq, x.id)} onChange=${(v) => setItem(x.id, v ? undefined : false)} />
       </div>
       <${MachineInfo} d=${machineDetail(eq, x.id)} />`)}
@@ -159,7 +169,7 @@ export function EquipmentScreen() {
       <div class="rule stack">
         <h4>Or pick from the list</h4>
         ${rest.map((x) => html`<button class="row" onClick=${() => { setItem(x.id, true); toast(`${x.name} added`); }}>
-          <b>${x.name}</b><span class="accent">Add</span></button>`)}
+          <${Sketch} small id=${x.id} /><b class="grow">${x.name}</b><span class="accent">Add</span></button>`)}
         ${!rest.length && html`<p class="muted small">Every machine from the list is already added.</p>`}
       </div>
       <div class="rule stack">

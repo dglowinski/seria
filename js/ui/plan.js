@@ -6,7 +6,8 @@ import * as store from '../store.js';
 import { fmtLoad, loadMethod, timeBreakdown, brokenExercises, weeklySets } from '../domain/planner.js';
 import { recommend, plannedNext, timeline, queueState, dayStatus, skipDay, unskipDay } from '../domain/schedule.js';
 import { describeChange } from '../domain/progression.js';
-import { exerciseById, machineForExercise, machineLabel } from '../domain/catalog.js';
+import { exerciseById, machineForExercise, machineLabel, sketchForExercise } from '../domain/catalog.js';
+import { Sketch } from './sketch.js';
 import { RULES_VERSION } from '../domain/rules.js';
 import { applyChange, keepPlan, reviewEquipment, startTraining, reviewToday } from '../ai/coach.js';
 import { sourceName, aiReady, aiName } from '../ai/ai.js';
@@ -197,11 +198,13 @@ export function DayScreen({ dayId }) {
       </div>
       <ol class="stack">
         ${day.exercises.map((ex, i) => {
-          const m = machineForExercise(state.equipment, exerciseById(state.equipment, ex.exerciseId));
+          const lift = exerciseById(state.equipment, ex.exerciseId);
+          const m = machineForExercise(state.equipment, lift);
+          const look = sketchForExercise(state.equipment, lift);
           return html`
           <li class="panel" style="border-radius:16px;padding:14px;gap:6px">
             <div class="spread"><h4>${i + 1}. ${ex.name}</h4><span class="tag">${ex.tier}</span></div>
-            <p class="small muted">${ex.equipment} · ${ex.zone}</p>
+            <div class="spread" style="align-items:flex-start"><p class="small muted grow">${ex.equipment} · ${ex.zone}</p>${look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}</div>
             ${m && html`<p class="small muted" data-testid="day-machine">${machineLabel(m) || m.name}${m.isolates ? ` · isolates ${m.isolates.replace(/\.$/, '').toLowerCase()}` : ''}</p>`}
             <p><b>${ex.sets} × ${ex.reps} reps</b> <span class="muted small">(range ${ex.repLo}-${ex.repHi}) · rest ${restText(ex.restSec)}</span></p>
             <p class="small">${ex.load ? html`<b>${fmtLoad(ex.loadType, ex.load.value)}</b>` : html`<span class="muted">Weight: ${loadMethod(ex)}</span>`}</p>

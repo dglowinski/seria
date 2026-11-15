@@ -263,6 +263,8 @@ await guarded(async () => {
   check('added machines are listed as available', (await page.getByTestId('machine').count()) === 7 && (await page.getByTestId('machine').first().textContent()).includes('Available'));
   st = await state(page);
   check('free weights, bench and pull-up bar need no entry (on by default)', !('dumbbells' in st.equipment.items) && !('barbell' in st.equipment.items) && st.equipment.items.lat_pulldown === true);
+  check('equipment rows carry a sketch each', (await page.locator('main svg.sketch').count()) === 11 && (await page.locator('[data-testid=machine] svg.sketch').first().getAttribute('data-sketch')) === 'lat_pulldown'
+    && (await page.locator('[data-testid=machine]').filter({ hasText: 'Glute drive' }).locator('svg.sketch').getAttribute('data-sketch')) === 'glute');
   await shot(page, '05-equipment');
   await page.getByRole('switch', { name: /Pull-up bar/ }).click();
   await tab(page, 'Plan').click();
@@ -282,12 +284,15 @@ await guarded(async () => {
   const dayText = await page.locator('main').textContent();
   check('day preview: order, equipment, sets, reps, rest, how to pick the weight, time parts',
     /1\. Dumbbell bench press/.test(dayText) && /Dumbbells, Bench/.test(dayText) && /\d × \d+ reps/.test(dayText) && /rest 3:00 min/.test(dayText) && /You pick it in the first session/.test(dayText) && /warm-up 8, sets \d+, rests \d+, moving between stations \d+/.test(dayText), dayText.slice(0, 300));
+  check('each exercise in the preview has a sketch of its equipment', (await page.locator('main svg.sketch').count()) === 4 && (await page.locator('main svg.sketch').first().getAttribute('data-sketch')) === 'dumbbells'
+    && (await page.locator('main svg.sketch').nth(1).getAttribute('data-sketch')) === 'barbell' && (await page.locator('main svg.sketch').first().getAttribute('aria-hidden')) === 'true');
   await shot(page, '06-day');
 
   // --- workout: starting weight, set, result, rest
   await page.getByTestId('start-day').click();
   await main(page).waitFor();
   check('workout has its own screen without the tab bar', (await page.getByRole('navigation', { name: 'Main' }).count()) === 0);
+  check('a new exercise starts with a sketch of what to look for', (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch')) === 'dumbbells' && /General look of a dumbbell\. Yours may differ/.test(await page.getByTestId('sketch').textContent()));
   check('no history: asks for a starting weight first', (await main(page).textContent()).trim() === 'Save starting weight' && await page.getByText('Choose your starting weight').isVisible());
   await shot(page, '07-starting-weight');
   await page.fill('#start-weight', '20'); await sleep(120);
@@ -900,7 +905,9 @@ await guarded(async () => {
   await main(page).waitFor();
   const about = page.getByTestId('machine-info');
   await about.locator('summary').click();
-  check('the workout screen explains the machine you are on', (await page.getByTestId('exercise-name').textContent()) === 'Leg press' && /How it works: From the maker's page/.test(await about.textContent()) && /Loaded with: weight stack with a pin/.test(await about.textContent()));
+  check('the sketch follows what was found about the machine: this one is loaded with plates', (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch')) === 'leg_press'
+    && /General look of a leg press, loaded with plates/.test(await page.getByTestId('sketch').textContent()));
+  check('the workout screen explains the machine you are on', (await page.getByTestId('exercise-name').textContent()) === 'Leg press' && /How it works: From the maker's page/.test(await about.textContent()) && /Loaded with: plates you load/.test(await about.textContent()));
   await shot(page, '27-workout-machine');
   await page.getByRole('button', { name: 'End workout' }).click();
   await page.getByRole('button', { name: 'Discard workout' }).click();

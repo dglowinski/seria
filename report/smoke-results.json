@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-13T15:38:44.351Z",
+  "ranAt": "2026-11-15T11:58:03.183Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 176,
-  "passed": 176,
+  "total": 180,
+  "passed": 180,
   "failed": 0,
   "results": [
     {
@@ -139,6 +139,12 @@
     },
     {
       "part": "A built-in",
+      "name": "equipment rows carry a sketch each",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
       "name": "lost equipment gives a swap with old value, new value and reason",
       "ok": true,
       "detail": ""
@@ -157,7 +163,19 @@
     },
     {
       "part": "A built-in",
+      "name": "each exercise in the preview has a sketch of its equipment",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
       "name": "workout has its own screen without the tab bar",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a new exercise starts with a sketch of what to look for",
       "ok": true,
       "detail": ""
     },
@@ -956,6 +974,12 @@
     {
       "part": "F OpenAI API",
       "name": "the day preview names the machine and what it isolates",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "F OpenAI API",
+      "name": "the sketch follows what was found about the machine: this one is loaded with plates",
       "ok": true,
       "detail": ""
     },

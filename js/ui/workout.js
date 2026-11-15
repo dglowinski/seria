@@ -7,8 +7,9 @@ import * as store from '../store.js';
 import * as S from '../domain/session.js';
 import { fmtLoad, fmtLoadShort, num } from '../domain/planner.js';
 import { LOAD_TYPES, PROGRESSION } from '../domain/rules.js';
-import { substitutesFor, exerciseById, equipmentNames, zoneOf, machineForExercise } from '../domain/catalog.js';
+import { substitutesFor, exerciseById, equipmentNames, zoneOf, machineForExercise, sketchForExercise } from '../domain/catalog.js';
 import { MachineInfo } from './equipment.js';
+import { Sketch, SketchFigure } from './sketch.js';
 import { describeChange } from '../domain/progression.js';
 import { afterSetSaved, afterWorkout, rememberWeight } from '../ai/coach.js';
 import { sourceName } from '../ai/ai.js';
@@ -58,7 +59,7 @@ function WeightPicker({ ex, reps, value, step, onValue, onStep, machine }) {
     <b>Choose your starting weight</b>
     <p class="small muted">There is no history for this exercise yet. Pick a weight you could lift for about ${reps + 2} reps with good form.</p>
     <label class="field"><span>${type.pick}${type.unit ? ` (${type.unit})` : ''}</span>
-      <${NumberInput} id="start-weight" wide value=${value} onChange=${onValue} label="Starting weight" placeholder=${ex.loadType === 'machine' ? 'setting' : 'kg'} />
+      <${NumberInput} id="start-weight" wide value=${value} onChange=${onValue} label="Starting weight" placeholder=${ex.loadType === 'machine' && !plates ? 'setting' : 'kg'} />
     </label>
     <div class="field"><span>Smallest step you can add${ex.loadType === 'machine' && !plates ? ' (one pin hole)' : ' (kg)'}</span>
       <div class="chips">${STEPS.map((v) => html`<button class=${`chip ${step === v ? 'on' : ''}`} onClick=${() => onStep(v)}>${num(v)}</button>`)}</div>
@@ -168,7 +169,9 @@ export function Workout() {
     exclude: session.exercises.map((x) => x.exerciseId), avoid: state.profile.avoid, avoidTags: state.profile.avoidTags,
   }) : [];
   const editing = sheet?.edit != null ? ex.sets[sheet.edit] : null;
-  const machine = machineForExercise(state.equipment, exerciseById(state.equipment, ex.exerciseId));
+  const thisLift = exerciseById(state.equipment, ex.exerciseId);
+  const machine = machineForExercise(state.equipment, thisLift);
+  const look = sketchForExercise(state.equipment, thisLift); // what the equipment looks like, for finding it
   const setElapsed = phase === 'active' && session.setStartedAt ? Math.max(now, Date.now()) - session.setStartedAt : 0;
 
   return html`
@@ -209,6 +212,7 @@ export function Workout() {
             <small>${ex.loadType === 'bodyweight' ? (set.target.load ? 'added to bodyweight' : 'bodyweight') : LOAD_TYPES[ex.loadType].label}</small></div>
         </div>`}
 
+      ${waiting && firstOfExercise && html`<${SketchFigure} look=${look} />`}
       ${(waiting || phase === 'active') && machine && (machine.how || machine.isolates) && html`<${MachineInfo} d=${machine} />`}
 
       ${waiting && needW && html`<${WeightPicker} ex=${ex} reps=${set.target.reps} machine=${machine} value=${picked.value} step=${picked.step}
@@ -269,7 +273,8 @@ export function Workout() {
       <p class="muted small">Same movement, on equipment you marked available. The swap is for today only.</p>
       ${subs.length ? subs.map((cat) => html`
         <button class="row" onClick=${() => swapTo(cat)}>
-          <span class="stack tight"><b>${cat.name}</b><span class="sub">${equipmentNames(state.equipment, cat)}</span></span>
+          <${Sketch} small id=${sketchForExercise(state.equipment, cat)?.id} loading=${sketchForExercise(state.equipment, cat)?.loading} />
+          <span class="stack tight grow"><b>${cat.name}</b><span class="sub">${equipmentNames(state.equipment, cat)}</span></span>
           <span class="accent">Use</span>
         </button>`) : html`<p class="note">Nothing else on your equipment list trains this movement. You can skip it, or add machines on the Equipment tab.</p>`}
     <//>`}

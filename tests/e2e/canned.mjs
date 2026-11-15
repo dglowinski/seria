@@ -44,8 +44,8 @@ export function canned(payload) {
         custom,
         unrecognized: /treadmill/.test(t) ? ['treadmills'] : [],
         machines: !branded ? [] : [
-          ...add.filter((id) => facts[id]).map((id) => ({ ref: id, vendor: 'Technogym', model: facts[id][0], how_it_works: facts[id][1], isolates: facts[id][2], loading: 'selectorized', notes: null, sure: true })),
-          { ref: 'nothing_like_this', vendor: 'Technogym', model: 'Ghost 3000', how_it_works: 'x', isolates: 'y', loading: 'laser', notes: null, sure: false },
+          ...add.filter((id) => facts[id]).map((id) => ({ ref: id, vendor: 'Technogym', model: facts[id][0], how_it_works: facts[id][1], isolates: facts[id][2], loading: 'selectorized', looks_like: id, notes: null, sure: true })),
+          { ref: 'nothing_like_this', vendor: 'Technogym', model: 'Ghost 3000', how_it_works: 'x', isolates: 'y', loading: 'laser', looks_like: 'machine', notes: null, sure: false },
         ],
       },
     };
@@ -134,7 +134,7 @@ export function cannedLookup(payload) {
   const found = payload.machines.map((m) => ({
     ref: m.ref, vendor: m.vendor, model: m.ref === 'leg_press' ? 'Selection 900 Leg Press' : `${m.model || m.kind}`,
     how_it_works: `From the maker's page: ${m.kind} with a weight stack. You sit, set the backrest, and push the platform away.`,
-    isolates: 'Quadriceps first, then glutes.', loading: 'selectorized', notes: 'Backrest has five positions.',
+    isolates: 'Quadriceps first, then glutes.', loading: m.ref === 'leg_press' ? 'plate_loaded' : 'selectorized', looks_like: m.ref, notes: 'Backrest has five positions.',
     source_url: m.ref === 'leg_press' ? page(m.ref) : 'https://made-up.example/not-searched',
   }));
   found.push({ ref: 'smith', vendor: 'Nobody', model: 'Unasked', how_it_works: 'x', isolates: 'y', loading: 'other', notes: '', source_url: urls[0] || '' });

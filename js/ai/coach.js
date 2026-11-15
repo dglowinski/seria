@@ -594,7 +594,7 @@ export async function readEquipment(text, onStage = () => {}) {
           custom: (Array.isArray(e.custom) ? e.custom : []).filter((c) => c && typeof c.name === 'string').map((c) => ({ name: c.name, pattern: c.movement_id })),
           unknown: strings(e.unrecognized),
           machines: (Array.isArray(e.machines) ? e.machines : []).filter((m) => m && typeof m.ref === 'string')
-            .map((m) => ({ ref: m.ref, vendor: m.vendor, model: m.model, how: m.how_it_works, isolates: m.isolates, loading: m.loading, notes: m.notes, basis: 'memory' })),
+            .map((m) => ({ ref: m.ref, vendor: m.vendor, model: m.model, how: m.how_it_works, isolates: m.isolates, loading: m.loading, sketch: m.looks_like, notes: m.notes, basis: 'memory' })),
         };
         via = src;
       }

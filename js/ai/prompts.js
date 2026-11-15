@@ -6,7 +6,7 @@ import { rulesAsText, RULES_VERSION, GOALS, levelFor } from '../domain/rules.js'
 import { allExercises, canDo, equipmentList, isAvailable, isListed, PATTERNS, EQUIPMENT, LOADING, machineDetail, machineForExercise } from '../domain/catalog.js';
 import { WEEKDAYS, clampMinutes, sessionsPerWeek, cycleWeeks } from '../domain/planner.js';
 import { queueState, recommend, timeline, doneGroups, daysBetween } from '../domain/schedule.js';
-import { GROUP_OF } from '../domain/catalog.js';
+import { GROUP_OF, SKETCH_IDS } from '../domain/catalog.js';
 
 export const SYSTEM_PROMPT = `You are the training coach inside Seria, a gym training app. You build and update one person's resistance-training plan. The plan is a running list, not a calendar: train this, rest so many days, train that. The user works through it on whatever days they can, and it is updated after every workout from what was recorded. Each request names a mode: "interview", "new_plan", "train_now", "in_session", "after_session", "next_run" or "equipment".
 
@@ -21,7 +21,7 @@ Modes
 - after_session: compare the plan with what was done, take reps in reserve into account when given, and check the earlier sessions for the same result. Propose updates for the coming sessions in "changes", using fields "load", "reps", "sets", "rest", "exercise" or "remove". If the order of what is left, or the rest days, should change because of this workout, also fill "schedule" as in train_now, with first_session_id as the next session to do; otherwise set schedule to null.
 
 - equipment: the user describes their gym in their own words, as a list or as loose text. Fill "equipment". Put the ids of catalog items the gym has in add_ids, matching by meaning (a "functional trainer" is the cable station). Put catalog items the user says the gym does not have, or that are broken, in unavailable_ids. A strength machine that is not in equipment_catalog goes in "custom" with a short name as written on the machine and the one movement_id from "movements" it trains most. Leave out assisted machines, where a higher setting makes the lift easier. Anything else (cardio machines, things you cannot place) goes in unrecognized, in the user's words. Only list what the user mentioned. Leave profile, plan and changes empty.
-  When the user names a maker or a model, as in "these are from Technogym: leg press, chest press", add one entry per such machine to "machines". Its ref is the catalog id you put in add_ids, or the exact name you gave it in custom. Use at most one entry per catalog id; a second branded machine of the same kind goes in custom under its own name. Give the maker and the model as the maker writes them, then say what you know of that exact product: how it works (path of the movement, seat and pad set-up, one arm or two, how it is loaded) and which muscles it isolates. Set sure to true only when you know this exact product. If you are describing the general kind of machine, say so plainly in how_it_works and set sure to false. Never invent a model name or number.
+  When the user names a maker or a model, as in "these are from Technogym: leg press, chest press", add one entry per such machine to "machines". Its ref is the catalog id you put in add_ids, or the exact name you gave it in custom. Use at most one entry per catalog id; a second branded machine of the same kind goes in custom under its own name. Give the maker and the model as the maker writes them, then say what you know of that exact product: how it works (path of the movement, seat and pad set-up, one arm or two, how it is loaded) and which muscles it isolates. Pick in looks_like the drawing closest to the machine's general look (the names are kinds of equipment; use "machine" when none fits). Set sure to true only when you know this exact product. If you are describing the general kind of machine, say so plainly in how_it_works and set sure to false. Never invent a model name or number.
 
 Changes
 For each change give the exercise_key exactly as it appears in the plan or session, the field, the new value and a short reason that points at the recorded numbers. new_value is a number: for "load" it is in the exercise's own unit (kg per dumbbell, total kg with the bar, the machine setting, or kg added to bodyweight). For field "exercise" put the replacement's id in new_exercise_id and null in new_value. The app shows the previous value itself. If the results do not justify a change, return an empty list. Do not repeat a change that is listed under already_proposed.
@@ -87,6 +87,7 @@ export const OUTPUT_SCHEMA = obj({
       how_it_works: str('Two or three plain sentences.'),
       isolates: str('The muscles it trains, main ones first.'),
       loading: { type: 'string', enum: Object.keys(LOADING) },
+      looks_like: { type: 'string', enum: SKETCH_IDS, description: 'The drawing that is closest to how the machine looks.' },
       notes: nullable(str('Set-up or use notes worth knowing, or null.')),
       sure: { type: 'boolean' },
     })),
@@ -239,7 +240,7 @@ export function equipmentRequest({ equipment, text }) {
 export const LOOKUP_SYSTEM = `You look up gym machines for a training app. You get a list of machines a user's gym has, each with a maker and, when known, a model. For each one, search the web for the maker's own product page, or failing that a retailer or manual for that exact product, and read how the machine works and which muscles it trains.
 
 Reply with only a JSON array, one object per machine you could find, no other text:
-[{"ref": "<ref exactly as given>", "vendor": "<maker>", "model": "<model or product line as the maker writes it>", "how_it_works": "<two or three plain sentences: path of the movement, seat and pad set-up, one arm or two, how it is loaded>", "isolates": "<muscles it trains, main ones first>", "loading": "selectorized" | "plate_loaded" | "cable" | "bodyweight" | "other", "notes": "<set-up or use notes worth knowing, or empty>", "source_url": "<the page you took this from, copied exactly from your search results>"}]
+[{"ref": "<ref exactly as given>", "vendor": "<maker>", "model": "<model or product line as the maker writes it>", "how_it_works": "<two or three plain sentences: path of the movement, seat and pad set-up, one arm or two, how it is loaded>", "isolates": "<muscles it trains, main ones first>", "loading": "selectorized" | "plate_loaded" | "cable" | "bodyweight" | "other", "looks_like": "<the closest of: ${SKETCH_IDS.join(', ')}>", "notes": "<set-up or use notes worth knowing, or empty>", "source_url": "<the page you took this from, copied exactly from your search results>"}]
 
 Rules: use only what the pages say. Leave a machine out if you cannot find that exact product; do not describe a different one. Never invent a model name or a web address. If you find nothing, reply [].`;
 

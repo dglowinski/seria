@@ -46,6 +46,12 @@ On the Equipment tab, "Add to list" opens a box where you can name the machines 
 
 Say who makes the machines, as in "these are from Technogym: leg press, chest press", and the exact machines are identified. For each one the app saves the maker, the model, how the machine works, what it isolates and how it is loaded. The coach gets this with every request, on the equipment list and on each exercise done on that machine, and you see it on the Equipment tab, in the day preview and on the workout screen.
 
+### What the equipment looks like
+
+Every piece of equipment has a small line sketch of its general look: a leg press, a lat pulldown, a cable station and so on. You see it when an exercise comes up in a workout, next to each exercise in the session preview, on the equipment list and when swapping. The sketch follows what is saved about your machine: a plate-loaded one is drawn with plates instead of a weight stack, and a machine of your gym's own gets the drawing closest to it (the model picks it when it identifies the machine; otherwise it goes by what the machine trains).
+
+These are sketches, not photos of your exact model. Makers' photos are not shown: without a server the app cannot fetch a maker's page to find the right picture, the claude.ai page blocks outside images, and the photos belong to the makers. For a machine found on the web, "Open the page" takes you to the maker's own picture. The drawings are in `js/ui/sketch.js`.
+
 How sure the details are depends on the connection, and every machine is labelled:
 
 | Connection | What happens | Label |
@@ -127,6 +133,7 @@ js/ai/claude.js                           the two ways to reach Claude
 js/ai/openai.js                           OpenAI through its Responses API
 js/ai/coach.js                            the conversation, with and without a model
 js/ui/*.js                                the screens
+js/ui/sketch.js                           line sketches of each kind of equipment
 vendor/                                   Preact + htm, the Anthropic SDK and the OpenAI SDK, built by npm run vendor
 docs/training-rules.md                    the rules as a document, generated from rules.js
 scripts/                                  local server, icon, vendor, rules-doc and single-file builders

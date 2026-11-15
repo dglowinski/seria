@@ -8,7 +8,8 @@ import { providerSays, ROOM } from '../js/ai/errors.js';
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT, LOOKUP_SYSTEM, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, lookupRequest, parseLookup, trainNowRequest, nextRunRequest } from '../js/ai/prompts.js';
 import { recommend, completeDay } from '../js/domain/schedule.js';
 import { emptyProfile, generatePlan, missingFields } from '../js/domain/planner.js';
-import { emptyEquipment, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail, machineForExercise, machineLabel, isAvailable, isListed, EQUIPMENT, allExercises } from '../js/domain/catalog.js';
+import { emptyEquipment, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail, machineForExercise, machineLabel, isAvailable, isListed, EQUIPMENT, allExercises, SKETCH_IDS, sketchForExercise, sketchForEquipment, EXERCISES } from '../js/domain/catalog.js';
+import { SKETCHES } from '../js/ui/sketch.js';
 import { emptyState, hydrate } from '../js/store.js';
 import * as S from '../js/domain/session.js';
 
@@ -261,6 +262,32 @@ test('machines by maker: what the model knows is saved, and a web result needs a
   assert.equal(machineForExercise(merged.equipment, allExercises(merged.equipment).find((x) => x.id === 'leg_press')).name, 'Leg press');
   assert.equal(machineForExercise(merged.equipment, allExercises(merged.equipment).find((x) => x.id === 'db_curl')), null);
   assert.ok(SYSTEM_PROMPT.includes('what it isolates'));
+});
+
+test('sketches: every kind of equipment has a drawing, and every exercise maps to the right one', () => {
+  assert.deepEqual(Object.keys(SKETCHES).sort(), [...SKETCH_IDS].sort());
+  for (const [id, sk] of Object.entries(SKETCHES)) { assert.ok(sk.name && sk.parts.length >= 2, id); for (const p of sk.parts) assert.ok(['f', 'p', 'm', 'mp', 'mr', 'c', 's', 'w', 'r'].includes(p[0]), `${id}: ${p[0]}`); }
+  for (const x of EQUIPMENT) assert.ok(SKETCHES[x.id], `no drawing for ${x.name}`);
+  const eq = emptyEquipment(); Object.assign(eq.items, { leg_press: true, rack: true, cable: true, smith: true });
+  const look = (id) => sketchForExercise(eq, EXERCISES.find((x) => x.id === id));
+  assert.deepEqual(look('leg_press'), { id: 'leg_press', loading: undefined });
+  assert.equal(look('db_bench_press').id, 'dumbbells'); assert.equal(look('bb_back_squat').id, 'rack'); assert.equal(look('bb_deadlift').id, 'barbell');
+  assert.equal(look('pull_up').id, 'pullup_bar'); assert.equal(look('cable_pushdown').id, 'cable'); assert.equal(look('smith_bench_press').id, 'smith');
+  assert.equal(look('push_up'), null, 'floor work needs no drawing');
+  for (const x of EXERCISES.filter((e) => e.equip.length)) assert.ok(SKETCHES[sketchForExercise({ items: Object.fromEntries(EQUIPMENT.map((q) => [q.id, true])), custom: [], details: {} }, x)?.id], x.id);
+  // A machine of the gym's own: by what it trains, or by what the model said it looks like; plates when it is plate-loaded.
+  let n = 0;
+  const res = applyEquipmentRead(eq, {
+    custom: [{ name: 'Glute drive', pattern: 'glute' }, { name: 'Iso row', pattern: 'pull_h' }],
+    machines: [{ ref: 'Iso row', vendor: 'Hammer Strength', how: 'Two arms move on their own.', isolates: 'Lats', loading: 'plate_loaded', sketch: 'seated_row', basis: 'memory' },
+      { ref: 'leg_press', vendor: 'X', how: 'Sled.', isolates: 'Quads', loading: 'plate_loaded', looks_like: 'not_a_drawing', basis: 'memory' }],
+  }, () => `cm-${++n}`);
+  assert.deepEqual(sketchForEquipment(res.equipment, 'cm-1'), { id: 'glute', loading: undefined });
+  assert.deepEqual(sketchForEquipment(res.equipment, 'cm-2'), { id: 'seated_row', loading: 'plate_loaded' });
+  assert.deepEqual(sketchForEquipment(res.equipment, 'leg_press'), { id: 'leg_press', loading: 'plate_loaded' });
+  assert.ok(!('sketch' in machineDetail(res.equipment, 'leg_press')), 'an unknown drawing name is dropped');
+  assert.deepEqual(OUTPUT_SCHEMA.properties.equipment.anyOf[0].properties.machines.items.properties.looks_like.enum, SKETCH_IDS);
+  assert.ok(LOOKUP_SYSTEM.includes('looks_like') && LOOKUP_SYSTEM.includes('hack_squat'));
 });
 
 test('machine lookup: the request names each machine and the answer is read leniently', () => {

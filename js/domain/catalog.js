@@ -157,6 +157,41 @@ export const emptyEquipment = () => ({ items: {}, custom: [], details: {} });
 
 export const LOADING = { selectorized: 'weight stack with a pin', plate_loaded: 'plates you load', cable: 'cable and weight stack', bodyweight: 'bodyweight', other: 'other' };
 
+// Drawings the app has (see ui/sketch.js): one per kind of equipment, plus a few
+// for machines of the gym's own that are not in the catalog.
+export const SKETCH_IDS = [
+  'dumbbells', 'barbell', 'bench', 'pullup_bar', 'rack', 'cable', 'lat_pulldown', 'seated_row', 'leg_press', 'leg_extension',
+  'leg_curl', 'chest_press', 'shoulder_press', 'pec_deck', 'smith', 'hack_squat', 'dip_station', 'calf_machine', 'back_extension',
+  'glute', 'curl', 'ab', 'machine',
+];
+// The closest drawing for a machine known only by the movement it trains.
+const PATTERN_SKETCH = {
+  push_h: 'chest_press', push_v: 'shoulder_press', pull_h: 'seated_row', pull_v: 'lat_pulldown', squat: 'leg_press', hinge: 'back_extension',
+  lunge: 'machine', glute: 'glute', knee_ext: 'leg_extension', knee_flex: 'leg_curl', calf: 'calf_machine', biceps: 'curl', triceps: 'cable',
+  delt_side: 'machine', delt_rear: 'pec_deck', chest_fly: 'pec_deck', core: 'ab',
+};
+// For free-weight lifts, the piece that says most about where to go.
+const BASIC_ORDER = ['rack', 'barbell', 'dumbbells', 'pullup_bar', 'bench'];
+
+/** The drawing for a piece of equipment: { id, loading } or null. */
+export function sketchForEquipment(eq, id) {
+  const item = equipmentList(eq).find((x) => x.id === id);
+  if (!item) return null;
+  const d = machineDetail(eq, id);
+  const loading = d?.loading || undefined;
+  if (item.kind === 'custom') return { id: SKETCH_IDS.includes(d?.sketch) ? d.sketch : (PATTERN_SKETCH[item.pattern] || 'machine'), loading };
+  return SKETCH_IDS.includes(id) ? { id, loading } : null;
+}
+
+/** The drawing for the equipment an exercise is done on, or null for bodyweight work on the floor. */
+export function sketchForExercise(eq, exercise) {
+  if (!exercise || !exercise.equip?.length) return null;
+  const list = equipmentList(eq);
+  const machine = exercise.equip.find((id) => { const k = list.find((x) => x.id === id)?.kind; return (k === 'machine' || k === 'custom') && id !== 'rack'; });
+  const id = machine || BASIC_ORDER.find((b) => exercise.equip.includes(b)) || exercise.equip[0];
+  return sketchForEquipment(eq, id);
+}
+
 /** What is known about the exact machine, or null. */
 export const machineDetail = (eq, id) => (eq?.details || {})[id] || null;
 
@@ -424,6 +459,7 @@ export function cleanDetail(m, basis) {
     vendor: text(m?.vendor, 40), model: text(m?.model, 80),
     how: text(m?.how ?? m?.how_it_works, 420), isolates: text(m?.isolates, 220), notes: text(m?.notes, 300),
     loading: LOADING[m?.loading] ? m.loading : '',
+    sketch: SKETCH_IDS.includes(m?.sketch ?? m?.looks_like) ? (m.sketch ?? m.looks_like) : '',
     source: basis === 'web' ? text(m?.source, 300) : '',
     basis,
   };
