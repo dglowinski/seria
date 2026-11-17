@@ -1,9 +1,9 @@
 {
   "url": "https://dglowinski.github.io/seria/",
-  "ranAt": "2026-11-17T09:53:49.615Z",
+  "ranAt": "2026-11-17T14:41:55.854Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 18,
-  "passed": 18,
+  "total": 21,
+  "passed": 21,
   "results": [
     {
       "name": "the address answers over HTTPS",
@@ -76,6 +76,21 @@
       "detail": ""
     },
     {
+      "name": "exercises can be paired to save time with one switch on the plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "starting a session offers to enter the missing weights first, and a step of 1 can be typed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the band at the top of the workout says what to do: \"Ready\", then \"Train\" while the set runs",
+      "ok": true,
+      "detail": ""
+    },
+    {
       "name": "the workout shows a sketch of the equipment for the first exercise",
       "ok": true,
       "detail": ""
@@ -86,7 +101,7 @@
       "detail": ""
     },
     {
-      "name": "the new screens are in the release: weights, activities, the long view, optional extras",
+      "name": "the new screens are in the release: weights, activities, the long view, optional extras, pairs, the model thinking",
       "ok": true,
       "detail": ""
     },
