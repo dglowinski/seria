@@ -4,7 +4,7 @@
 
 import {
   SPLITS, TEMPLATES, DAY_TITLES, PATTERN_FALLBACK, TIME, MAX_DAYS, GOALS, TARGET_RIR, CYCLE,
-  RULES_VERSION, PROGRESSION, WEEKLY_SETS, SCHEDULE, OPTIONAL, prescribe, levelFor, setSeconds, defaultCycleWeeks,
+  RULES_VERSION, PROGRESSION, WEEKLY_SETS, SCHEDULE, OPTIONAL, PAIRS, prescribe, levelFor, setSeconds, defaultCycleWeeks,
 } from './rules.js';
 import { newRun, restPattern } from './schedule.js';
 import { allExercises, canDo, zoneOf, equipmentNames, isLowerPattern, equipmentList, isAvailable, GROUP_OF, MAIN_GROUPS, PATTERNS } from './catalog.js';
@@ -22,6 +22,7 @@ const DEFAULT_DAYS = {
 export const emptyProfile = () => ({
   goal: null, months: null, daysPerWeek: null, days: [], minutes: null, cycleWeeks: null,
   preferences: '', limitations: '', avoid: [], include: [], avoidTags: [], askedExtras: false,
+  pairs: false, // do exercises that use different muscles in turns, to save time (rule PAR-1)
 });
 
 /** Which profile fields still need an answer before a plan can be made. */
@@ -76,10 +77,34 @@ export function exerciseSeconds(ex) {
   return ex.sets * setSeconds(ex.reps) + Math.max(ex.sets - 1, 0) * ex.restSec;
 }
 
+/** The rest after each set of a pair (rule PAR-2). */
+export const pairRestSec = (a, b) => Math.max(PAIRS.minRestSec, Math.round((Math.max(a.restSec, b.restSec) * PAIRS.restShare) / 5) * 5);
+
+/** A session as the units it is done in: one exercise alone, or two done in turns. */
+export function units(exercises) {
+  const out = [];
+  for (let i = 0; i < exercises.length; i++) {
+    const a = exercises[i]; const b = exercises[i + 1];
+    if (a.pair && b && b.pair === a.pair) { out.push([a, b]); i++; } else out.push([a]);
+  }
+  return out;
+}
+
+// Rest inside one unit. A pair goes A, B, A, B...: a short rest after each set.
+// When one of the two has sets left over, those keep the exercise's own rest.
+function restSeconds([a, b]) {
+  if (!b) return Math.max(a.sets - 1, 0) * a.restSec;
+  const turns = a.sets > b.sets ? 2 * b.sets : 2 * a.sets - 1;
+  const alone = a.sets > b.sets ? (a.sets - b.sets - 1) * a.restSec : (b.sets - a.sets) * b.restSec;
+  return turns * pairRestSec(a, b) + alone;
+}
+
+const allRests = (exercises) => units(exercises).reduce((s, u) => s + restSeconds(u), 0);
+
 export function daySeconds(exercises) {
   if (!exercises.length) return 0;
-  const work = exercises.reduce((s, ex) => s + exerciseSeconds(ex), 0);
-  return TIME.warmupGeneralSec + TIME.warmupRampSec + work + (exercises.length - 1) * TIME.transitionSec;
+  const sets = exercises.reduce((s, ex) => s + ex.sets * setSeconds(ex.reps), 0);
+  return TIME.warmupGeneralSec + TIME.warmupRampSec + sets + allRests(exercises) + (exercises.length - 1) * TIME.transitionSec;
 }
 
 export const dayMinutes = (exercises) => Math.round(daySeconds(exercises) / 60);
@@ -87,7 +112,7 @@ export const dayMinutes = (exercises) => Math.round(daySeconds(exercises) / 60);
 /** Minute-by-minute parts of a day estimate, for the day preview. */
 export function timeBreakdown(exercises) {
   const sets = exercises.reduce((s, ex) => s + ex.sets * setSeconds(ex.reps), 0);
-  const rests = exercises.reduce((s, ex) => s + Math.max(ex.sets - 1, 0) * ex.restSec, 0);
+  const rests = allRests(exercises);
   return {
     warmup: Math.round((TIME.warmupGeneralSec + TIME.warmupRampSec) / 60),
     sets: Math.round(sets / 60),
@@ -169,13 +194,16 @@ function toPlanExercise(x, tier, ctx, key) {
 
 const TIER_ORDER = ['accessory', 'secondary', 'main'];
 
-/** Trim a day to the time budget. Returns notes on what was cut. */
-export function fitToBudget(exercises, budgetMin) {
+/**
+ * Trim a day to the time budget. Returns notes on what was cut.
+ * `seconds` measures the day; with pairs on it counts the time as paired.
+ */
+export function fitToBudget(exercises, budgetMin, seconds = daySeconds) {
   const budget = budgetMin * 60;
   const notes = [];
   const left = [];
   let guard = 0;
-  while (daySeconds(exercises) > budget && guard++ < 60) {
+  while (seconds(exercises) > budget && guard++ < 60) {
     const last = exercises[exercises.length - 1];
     if (exercises.length > TIME.minExercises && last.tier !== 'main') {
       exercises.pop();
@@ -193,9 +221,103 @@ export function fitToBudget(exercises, budgetMin) {
     cut.sets -= 1;
   }
   if (left.length) notes.push(`left out ${left.join(', ')} to fit ${budgetMin} min.`);
-  if (daySeconds(exercises) > budget) notes.push(`about ${dayMinutes(exercises)} min is the shortest sensible session.`);
+  if (seconds(exercises) > budget) notes.push(`about ${Math.round(seconds(exercises) / 60)} min is the shortest sensible session.`);
   return notes;
 }
+
+// ---------------------------------------------------------------- pairs
+// Two neighbours in a session that use different muscles can be done in turns
+// (rule PAR-1). The plan marks them with the same `pair` id; the order of the
+// session never changes.
+
+const TIER_RANK = { main: 0, secondary: 1, accessory: 2 };
+const byTier = (p, q) => TIER_RANK[p.tier] - TIER_RANK[q.tier];
+
+const pairable = (ex, goal) => !!PAIRS.works[ex.pattern] && !PAIRS.never.includes(ex.pattern) && !(goal === 'strength' && ex.tier === 'main');
+
+/** Can these two be done in turns? Different muscles, close in weight class, and neither a lift that needs its full rest. */
+export function canPair(a, b, goal) {
+  if (!pairable(a, goal) || !pairable(b, goal) || a.optional || b.optional) return false;
+  if (Math.abs((TIER_RANK[a.tier] ?? 2) - (TIER_RANK[b.tier] ?? 2)) > PAIRS.maxTierGap) return false;
+  if (PAIRS.works[a.pattern].some((m) => PAIRS.works[b.pattern].includes(m))) return false;
+  if (a.pattern === 'core' || b.pattern === 'core') return PAIRS.withCore.includes(a.pattern === 'core' ? b.pattern : a.pattern);
+  return true;
+}
+
+/** True when a pair works opposite muscles (press and row), not just ones far apart. */
+export function oppositePair(a, b) {
+  const x = PAIRS.side[a.pattern]; const y = PAIRS.side[b.pattern];
+  return !!x && !!y && x !== y && (x.includes('legs') === y.includes('legs'));
+}
+
+/**
+ * Mark the neighbours of one session that pair up, top to bottom, or clear the
+ * marks when `on` is false. Returns true when a mark changed.
+ */
+export function pairUp(exercises, goal, on = true) {
+  let changed = false; let n = 0;
+  const mark = (ex, v) => {
+    if ((ex.pair || null) === v) return;
+    changed = true;
+    if (v) ex.pair = v; else delete ex.pair;
+  };
+  for (let i = 0; i < exercises.length; i++) {
+    const a = exercises[i]; const b = exercises[i + 1];
+    if (on && b && canPair(a, b, goal)) { const id = `p${++n}`; mark(a, id); mark(b, id); i++; } else mark(a, null);
+  }
+  return changed;
+}
+
+/** The exercise this one is done in turns with, or null. */
+export const pairMate = (exercises, ex) => (ex?.pair ? units(exercises).find((u) => u.length === 2 && u.includes(ex))?.find((x) => x !== ex) || null : null);
+
+// How long a list would take once paired, without touching the list. `sorted`: in the order the session is done.
+const pairedSeconds = (goal, sorted) => (list) => {
+  const copy = list.map((x) => ({ ...x }));
+  if (sorted) copy.sort(byTier);
+  pairUp(copy, goal);
+  return daySeconds(copy);
+};
+
+/**
+ * Bring the pairs of a plan in line with its exercises and with the user's
+ * choice (`profile.pairs`). Run whenever either may have changed. Returns the
+ * same plan when nothing did.
+ */
+export function fillPairs(plan, profile = {}) {
+  if (!plan?.days?.length) return plan;
+  const on = !!profile?.pairs;
+  const same = plan.days.every((d) => {
+    const copy = d.exercises.map((x) => ({ ...x }));
+    return !pairUp(copy, plan.goal, on);
+  });
+  if (same) return plan;
+  const next = clone(plan);
+  for (const d of next.days) if (pairUp(d.exercises, next.goal, on)) d.estMinutes = dayMinutes(d.exercises);
+  return next;
+}
+
+/** Trim every session of a plan to its time budget, counting the time the way the plan will be done. */
+export function fitPlan(plan, profile = {}) {
+  const seconds = profile?.pairs ? pairedSeconds(plan.goal, false) : daySeconds;
+  for (const d of plan.days) fitToBudget(d.exercises, plan.minutes, seconds);
+  return plan;
+}
+
+/** Minutes an average session gets shorter with pairs on. */
+export function pairSavings(plan) {
+  if (!plan?.days?.length) return 0;
+  let saved = 0;
+  for (const d of plan.days) {
+    const off = d.exercises.map((x) => ({ ...x }));
+    pairUp(off, plan.goal, false);
+    saved += daySeconds(off) - pairedSeconds(plan.goal, false)(off);
+  }
+  return Math.round(saved / plan.days.length / 60);
+}
+
+/** The session's exercises that still have no weight to start from. */
+export const blankWeights = (day) => (day?.exercises || []).filter((ex) => ex.loadType !== 'bodyweight' && !ex.load);
 
 /**
  * Build the cycle: sessions per week times the number of weeks.
@@ -236,7 +358,8 @@ export function generatePlan(profile, equipment, weights = {}, now = Date.now())
   const planDays = [];
   const week1 = []; // week 1's main lifts, by session, so they repeat every week
   const turn = []; // per session: where in the list of other slots this week starts
-  const TIER_RANK = { main: 0, secondary: 1, accessory: 2 };
+  // With pairs on, the time is counted as the session will be done, so more fits.
+  const seconds = profile.pairs ? pairedSeconds(goal, true) : daySeconds;
   let anyCut = false;
   for (let w = 1; w <= weeks; w++) {
     ctx.usedWeek = new Set();
@@ -268,11 +391,12 @@ export function generatePlan(profile, equipment, weights = {}, now = Date.now())
         exercises.push(toPlanExercise(x, slot.tier, ctx, ''));
       }
       const before = exercises.length;
-      const cut = fitToBudget(exercises, minutes);
+      const cut = fitToBudget(exercises, minutes, seconds);
       const keptOthers = exercises.length - mains.length - asked.length;
       if (exercises.length < before) { anyCut = true; turn[si] = off + Math.max(keptOthers, 1); }
       // Done in the order the rules ask for: compound lifts before single-joint work.
-      exercises.sort((p, q) => TIER_RANK[p.tier] - TIER_RANK[q.tier]);
+      exercises.sort(byTier);
+      pairUp(exercises, goal, !!profile.pairs);
       exercises.forEach((ex, j) => { ex.key = `d${di + 1}e${j + 1}`; });
       for (const ex of exercises) { ctx.usedWeek.add(ex.exerciseId); ctx.usedCycle.add(ex.exerciseId); }
       planDays.push({ id: `d${di + 1}`, week: w, slot: si + 1, kind, title: DAY_TITLES[kind], restAfter: rests[si], exercises, estMinutes: dayMinutes(exercises), cut: weeks === 1 ? cut : cut.filter((n) => !n.startsWith('left out')) });
@@ -339,6 +463,7 @@ export function buildAssumptions(profile, equipment) {
     ['Effort', `Finish sets with ${rir[0]}-${rir[1]} reps left in the tank`],
     ['Starting weights', 'You choose them in your first session; I track them from there'],
   ];
+  if (profile.pairs) out.push(['Pairs', 'Exercises that use different muscles are done in turns, which makes sessions shorter']);
   if ((profile.avoid || []).length) out.push(['Leaving out', uniq((profile.avoid || []).map(nameOf)).join(', ')]);
   if ((profile.avoidTags || []).length) out.push(['Working around', profile.avoidTags.map((t) => TAG_TEXT[t] || t).join('; ')]);
   if ((profile.include || []).length) out.push(['Making room for', uniq((profile.include || []).map(nameOf)).join(', ')]);
@@ -663,7 +788,7 @@ export function normalizePlan(raw, profile, equipment, weights = {}, now = Date.
     notes: (raw.notes || []).map((n) => String(n).slice(0, 200)).slice(0, 6),
   };
   plan.queue = newRun(plan);
-  return { plan: fillOptional(plan, profile, equipment, weights), dropped };
+  return { plan: fillOptional(fillPairs(plan, profile), profile, equipment, weights), dropped };
 }
 
 function clampInt(v, lo, hi, fallback) {

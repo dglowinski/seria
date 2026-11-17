@@ -1,5 +1,9 @@
 // The workout screen. One main action at the bottom, one tap per set:
 //   Start set -> Finish set -> (rest, then the next set starts by itself) -> Finish set ...
+// The top of the screen does not scroll: it holds the rest countdown, and when
+// the time is up, the word for what to do now: "Train", or "Push" on a set that
+// goes past its target.
+// Two exercises marked as a pair are done in turns, with a short rest between.
 // When the planned sets are done and the session has optional extras, one more
 // step offers them: add one, or finish.
 // A finished set is saved as planned; it can be nudged by a rep before the tap
@@ -9,7 +13,7 @@
 import { html, useState, useEffect, useRef, useStore, Sheet, Dock, Icon, clock, go, toast, NumberInput, restText, flags } from './kit.js';
 import * as store from '../store.js';
 import * as S from '../domain/session.js';
-import { fmtLoad, fmtLoadShort, num, optionalMinutes } from '../domain/planner.js';
+import { fmtLoad, fmtLoadShort, num, optionalMinutes, pairRestSec } from '../domain/planner.js';
 import { LOAD_TYPES, PROGRESSION } from '../domain/rules.js';
 import { substitutesFor, exerciseById, equipmentNames, zoneOf, machineForExercise, sketchForExercise } from '../domain/catalog.js';
 import { MachineInfo } from './equipment.js';
@@ -192,6 +196,8 @@ export function Workout() {
   const offer = S.optionalLeft(session); // optional extras not taken yet
   const last = waiting || phase === 'optional' ? S.lastSet(session) : null;
   const cue = S.effortCue(ex, setIdx, state.plan?.level);
+  const mate = session.exercises[S.mateIdx(session, exIdx, false)] || null; // the exercise this one is done in turns with
+  const inTurns = !!mate && S.mateIdx(session) >= 0; // and it still has sets to do
 
   const put = (next, extra) => store.putSession(next, extra);
   const done = (s) => { cancelBeep(); afterWorkout(s); flags.justFinished = s.id; go('session', s.id, { replace: true }); };
@@ -231,6 +237,12 @@ export function Workout() {
     put(S.addOptional(session, o.key));
     setSheet(null);
     toast(phase === 'optional' ? `${o.name}: optional extra` : `${o.name} added at the end`);
+  };
+
+  const splitPair = () => {
+    put(S.unpair(session));
+    setSheet(null);
+    toast('One after the other today');
   };
 
   const swapTo = (cat) => {
@@ -276,7 +288,7 @@ export function Workout() {
           const status = here ? 'Now' : x.dropped ? 'Dropped' : !pending ? 'Done' : x.postponed ? 'Later' : 'To do';
           return html`<button class=${`row ${here ? 'on' : ''}`} disabled=${!pending || here}
             onClick=${() => { cancelBeep(); put(S.goToExercise(session, i)); setSheet(null); }}>
-            <span class="stack tight grow"><b>${i + 1}. ${x.name}</b><span class="sub">${d} of ${x.sets.length} sets done${x.optional ? ' · optional extra' : ''}${x.swappedFrom ? ` · swapped in for ${x.swappedFrom.name}` : ''}</span></span>
+            <span class="stack tight grow"><b>${i + 1}. ${x.name}</b><span class="sub">${d} of ${x.sets.length} sets done${x.pair && session.exercises[S.mateIdx(session, i, false)] ? ` · in turns with ${session.exercises[S.mateIdx(session, i, false)].name}` : ''}${x.optional ? ' · optional extra' : ''}${x.swappedFrom ? ` · swapped in for ${x.swappedFrom.name}` : ''}</span></span>
             <span class=${`tag ${status === 'Now' || status === 'Done' ? 'good' : ''}`}>${status}</span>
           </button>`;
         })}
@@ -318,38 +330,57 @@ export function Workout() {
       ${allSheet}`;
   }
 
-  return html`
-    <header class="top">
-      <div class="top-title">
-        <button class="icon-btn" aria-label="End workout" onClick=${() => setSheet('end')}><${Icon} name="close" /></button>
-        <div class="stack tight"><b>${resting ? 'Rest' : 'Workout'}</b></div>
-      </div>
-      <button class="chip" data-testid="progress" aria-label="See the whole workout" onClick=${() => setSheet('all')}>Exercise ${exIdx + 1} of ${session.exercises.length} ▾</button>
-    </header>
-    <main class="main with-dock" data-phase=${phase}>
-      <div class="bar" aria-hidden="true"><i style=${`width:${Math.round(((c.done + c.skipped) / c.total) * 100)}%`}></i></div>
+  // The band at the top, which stays put while the page scrolls. During a rest it
+  // counts down. When the time is up, and while a set runs, it says what to do:
+  // "Train", or "Push" on a set that goes past its target.
+  const word = cue.push ? 'Push' : 'Train';
+  const counting = resting && left > 0;
+  const band = counting ? 'rest' : phase === 'active' ? 'set' : resting && !needW ? 'go' : 'ready';
+  const restLine = session.rest?.swap ? (settings.autoStart && !needW ? `Go to ${ex.name}. It starts when this runs out.` : `Rest, then ${ex.name}.`)
+    : session.rest?.betweenExercises ? 'Time to change station.'
+      : settings.autoStart && !needW ? 'Rest. The next set starts when it runs out.' : 'Rest.';
 
-      ${resting && html`
-        <div class="stack tight">
-          <strong class=${`timer ${left > 0 ? 'accent' : 'over'}`} data-testid="rest-timer" aria-live="off">${clock(left)}</strong>
-          <p class="small muted">${left > 0 ? (session.rest.betweenExercises ? 'Time to change station' : settings.autoStart ? 'Rest. The next set starts when it runs out.' : 'Rest') : 'Rest is over. Go when you are ready.'}</p>
+  return html`
+    <header class="top stacked">
+      <div class="spread">
+        <div class="top-title">
+          <button class="icon-btn" aria-label="End workout" onClick=${() => setSheet('end')}><${Icon} name="close" /></button>
+          <div class="stack tight"><b>${resting ? 'Rest' : 'Workout'}</b></div>
         </div>
-        <div class="chips">
+        <button class="chip" data-testid="progress" aria-label="See the whole workout" onClick=${() => setSheet('all')}>Exercise ${exIdx + 1} of ${session.exercises.length} ▾</button>
+      </div>
+      <div class="now" data-testid="now" data-now=${band}>
+        <div class="stack tight grow">
+          ${band === 'rest' && html`<strong class="timer accent" data-testid="rest-timer" aria-live="off">${clock(left)}</strong>
+            <p class="small muted" data-testid="now-line">${restLine}</p>`}
+          ${band === 'set' && html`<strong class="timer accent" data-testid="now-word" aria-live="polite">${word}</strong>
+            <p class="small muted" data-testid="set-clock">${cue.title} · ${clock(setElapsed)}${set.auto ? ' · started by itself' : ''}</p>`}
+          ${band === 'go' && html`<strong class="timer accent" data-testid="now-word" aria-live="polite">${word}</strong>
+            <p class="small muted" data-testid="now-line">Rest is over. Tap "Start set" when you begin.</p>`}
+          ${band === 'ready' && html`<strong class="timer over" data-testid="now-word">Ready</strong>
+            <p class="small muted" data-testid="now-line">${needW ? 'Choose a starting weight, then start.' : 'Tap "Start set" when you begin.'}</p>`}
+        </div>
+        ${resting && html`<div class="chips">
           <button class="chip" onClick=${() => put(S.addRest(session, 15))}>+15 s</button>
           <button class="chip" onClick=${() => put(S.addRest(session, 60))}>+1 min</button>
         </div>`}
+      </div>
+    </header>
+    <main class="main with-dock" data-phase=${phase}>
+      <div class="bar" aria-hidden="true"><i style=${`width:${Math.round(((c.done + c.skipped) / c.total) * 100)}%`}></i></div>
 
       ${last && html`<${LastSet} key=${`${last.ex.key}-${last.setIdx}`} last=${last} onAdjust=${adjust}
         onUndo=${() => { cancelBeep(); put(S.undoFinish(session)); toast('Set is open again'); }} />`}
 
       <div class="spread" style="align-items:flex-start">
         <div class="stack tight grow">
-          ${waiting && html`<p class="eyebrow">${firstOfExercise ? (c.done + c.skipped === 0 ? 'First exercise' : 'Next exercise') : 'Next set'}</p>`}
-          ${phase === 'active' && html`<p class="eyebrow" data-testid="set-clock">Set in progress · ${clock(setElapsed)}${set.auto ? ' · started by itself' : ''}</p>`}
+          ${waiting && html`<p class="eyebrow">${session.rest?.swap ? 'In turns: now this one' : firstOfExercise ? (c.done + c.skipped === 0 ? 'First exercise' : 'Next exercise') : 'Next set'}</p>`}
+          ${phase === 'active' && html`<p class="eyebrow">Set in progress</p>`}
           <h3 data-testid="exercise-name">${ex.name}</h3>
           <p class="muted small">${ex.zone} · set ${setIdx + 1} of ${ex.sets.length}${ex.optional ? ' · optional extra' : ''}${ex.swappedFrom ? ` · swapped in for ${ex.swappedFrom.name}` : ''}${ex.postponed ? ' · put off earlier' : ''}</p>
+          ${mate && html`<p class="small" data-testid="pair-line"><span class="tag good">pair</span> ${inTurns ? `In turns with ${mate.name}: a set here, ${restText(pairRestSec(ex, mate))} rest, a set there.` : `Was in turns with ${mate.name}, which is done. The sets left here keep their own rest.`}</p>`}
           ${waiting && session.easePct > 0 && c.done + c.skipped === 0 && html`<p class="small muted" data-testid="eased">Loads are ${session.easePct}% lighter today to ease back in. The plan keeps its numbers.</p>`}
-          ${waiting && firstOfExercise && html`<p class="muted small">${ex.equipment} · ${ex.sets.length} sets · rest ${restText(ex.restSec)}</p>`}
+          ${waiting && firstOfExercise && html`<p class="muted small">${ex.equipment} · ${ex.sets.length} sets · rest ${inTurns ? `${restText(pairRestSec(ex, mate))} after each set` : restText(ex.restSec)}</p>`}
         </div>
         ${look && html`<div data-testid="sketch"><${Sketch} medium id=${look.id} loading=${look.loading} /></div>`}
       </div>
@@ -403,7 +434,11 @@ export function Workout() {
     ${endSheet}
 
     ${sheet === 'busy' && html`<${Sheet} title="Machine busy, or not now?" onClose=${() => setSheet(null)}>
-      <button class="cta" data-testid="later" disabled=${!others} onClick=${() => { move(S.postponeExercise(session)); setSheet(null); toast(`${ex.name} comes back at the end`); }}>Come back to it later</button>
+      ${inTurns && html`<div class="stack tight">
+        <button class="cta" data-testid="unpair" onClick=${splitPair}>Do the two one after the other today</button>
+        <p class="small muted">${ex.name} is done in turns with ${mate.name}. If you cannot keep both stations, split them: each is then done on its own, with its usual rests.</p>
+      </div>`}
+      <button class=${`cta ${inTurns ? 'ghost' : ''}`} data-testid="later" disabled=${!others} onClick=${() => { move(S.postponeExercise(session)); setSheet(null); toast(`${ex.name} comes back at the end`); }}>Come back to it later</button>
       ${!others && html`<p class="small muted">This is the last exercise left, so there is nothing to do first.</p>`}
       <div class="stack">
         <p class="small muted">Or do something else instead, for today only:</p>

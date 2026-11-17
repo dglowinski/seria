@@ -10,8 +10,8 @@ import { GOALS, MAX_DAYS, CYCLE, SCHEDULE, EFFORTS, levelFor, activityGroups } f
 import { recommend, setOrder, setRests, completeDay, uncompleteDay, queueState, runFinished } from '../domain/schedule.js';
 import { KEYWORDS, allExercises, canDo, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail } from '../domain/catalog.js';
 import {
-  WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_NAMES, missingFields, generatePlan, normalizePlan, fitToBudget, refreshPlan, fmtMonths,
-  trainingDays, clampMinutes, setPlanLoad, fillOptional, allEntries,
+  WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_NAMES, missingFields, generatePlan, normalizePlan, refreshPlan, fmtMonths,
+  trainingDays, clampMinutes, setPlanLoad, fillOptional, fitPlan, allEntries,
 } from '../domain/planner.js';
 import { inSessionHint, postSessionChanges, equipmentChanges, applyPlanChange, undoPlanChange, withValue, fromAiChanges, ruleSummary, isApplied } from '../domain/progression.js';
 import { applyHint, withoutHint, startSession, newActivity } from '../domain/session.js';
@@ -105,6 +105,15 @@ export function parseProfile(text, ctx = {}) {
     got.push('cycle');
   }
 
+  // Pairs: "superset my exercises", "no supersets", "pair exercises to save time"
+  const pairAt = t.search(/\b(super ?sets?|supersetting|pair(ed|ing)? (up )?(the |my |some )?(exercises|sets|lifts)|paired sets|(exercises|sets|lifts) in (turns|pairs))\b/);
+  if (pairAt >= 0) {
+    const before = t.slice(Math.max(0, pairAt - 40), pairAt);
+    const neg = lastIndex(NEG, before); const pos = lastIndex(POS, before);
+    patch.pairs = !(neg >= 0 && neg > pos);
+    got.push('pairs');
+  }
+
   // Session length
   let minutes = null;
   const range = t.match(/\b(\d{2,3})\s*(?:-|to)\s*(\d{2,3})\s*(?:min|mins|minutes)\b/);
@@ -183,6 +192,7 @@ export function mergeAiProfile(profile, ai, equipment) {
     p.daysPerWeek = n;
   }
   if (Number.isFinite(ai.minutes_per_session) && ai.minutes_per_session >= 10) p.minutes = clampMinutes(ai.minutes_per_session);
+  if (typeof ai.pair_exercises === 'boolean') p.pairs = ai.pair_exercises;
   if (typeof ai.preferences === 'string') p.preferences = ai.preferences.slice(0, 400);
   if (typeof ai.limitations === 'string') p.limitations = ai.limitations.slice(0, 400);
   if (Array.isArray(ai.avoid_exercise_ids)) p.avoid = ai.avoid_exercise_ids.filter((id) => ids.has(id));
@@ -207,6 +217,7 @@ function ackText(patch, got) {
   if (got.includes('days')) bits.push(patch.days?.length ? patch.days.map((d) => WEEKDAY_SHORT[d]).join(', ') : `${patch.daysPerWeek} day${patch.daysPerWeek === 1 ? '' : 's'} a week`);
   if (got.includes('minutes')) bits.push(`${patch.minutes} min sessions`);
   if (got.includes('cycle')) bits.push(`planned ${patch.cycleWeeks} week${patch.cycleWeeks === 1 ? '' : 's'} ahead`);
+  if (got.includes('pairs')) bits.push(patch.pairs ? 'exercises paired up to save time' : 'no paired exercises');
   if (got.includes('avoid')) bits.push('some lifts left out');
   if (got.includes('include')) bits.push('your favourites kept in');
   if (got.includes('limitations')) bits.push('a limitation to work around');
@@ -313,7 +324,7 @@ export async function buildPlan() {
       const out = await ask(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights: st.weights }));
       if (out.plan) {
         const res = normalizePlan(out.plan, st.profile, st.equipment, st.weights);
-        for (const d of res.plan.days) fitToBudget(d.exercises, res.plan.minutes);
+        fitPlan(res.plan, st.profile);
         plan = fillOptional(refreshPlan({ ...res.plan, source: src, outlook: out.outlook ? { text: out.outlook, by: src } : null }), st.profile, st.equipment, st.weights);
         via = src;
       } else if (out.questions.length) {
@@ -409,7 +420,7 @@ export function planNextRun() {
       const now = store.getState();
       if (!out.plan || !now.plan || now.plan.id !== planId || !runFinished(now.plan) || store.activeSession(now)) return;
       const res = normalizePlan(out.plan, now.profile, now.equipment, now.weights);
-      for (const d of res.plan.days) fitToBudget(d.exercises, res.plan.minutes);
+      fitPlan(res.plan, now.profile);
       // Rep targets already earned carry over to the same exercise in the new run.
       const reps = {};
       for (const d of now.plan.days) for (const ex of allEntries(d)) reps[ex.exerciseId] = ex.reps;
@@ -533,13 +544,29 @@ export function editChange(updateId, changeId, value) {
 
 const reviews = new Map();
 
+// The update the training rules make for a finished workout, against the plan as it is now.
+function byRules(session, st) {
+  if (!st.plan || session.planId !== st.plan.id) return { fields: { source: 'rules', message: ruleSummary(session, []), changes: [] }, extra: {} };
+  const done = applyAll(postSessionChanges(session, st.plan, st.sessions), st.plan, st.weights, st.equipment);
+  const message = ruleSummary(session, done.changes.filter(isApplied));
+  return { fields: { source: 'rules', message, changes: done.changes }, extra: { plan: noted(done.plan, 'rules', message), weights: done.weights } };
+}
+
+// True while an update waits for the model and the rules have not touched the plan for it.
+const untouchedByRules = (p) => p.source !== 'rules';
+
 /**
  * A finished workout is compared with the plan and history, and the plan is
- * updated at once. The training rules answer straight away; a connected model
- * then reviews the same workout, and its changes and summary take the place of
- * the rule-based ones unless the user has already undone or corrected any.
- * With no connection the model's review waits and is asked for when the phone
- * is back online.
+ * updated from it.
+ *
+ * With a model connected and the phone online, the model does this: the update
+ * shows as "thinking" until it answers, and nothing changes before that. The
+ * training rules step in only when the model cannot be reached or fails. With
+ * no connection they update the plan at once, and the model's review is asked
+ * for as soon as the phone is back online; it then takes the place of theirs,
+ * unless the user has undone or corrected any of it in the meantime.
+ *
+ * With no model connected, the rules do it.
  */
 export function reviewSession(sessionId) {
   const st = store.getState();
@@ -547,23 +574,21 @@ export function reviewSession(sessionId) {
   if (!session || session.status !== 'done' || session.kind === 'activity' || !st.plan) return null;
   const existing = st.proposals.find((p) => p.mode === 'post_session' && p.sessionId === sessionId);
   if (existing) return existing;
-  const rules = postSessionChanges(session, st.plan, st.sessions);
-  const done = applyAll(rules, st.plan, st.weights, st.equipment);
-  const message = ruleSummary(session, done.changes.filter(isApplied));
   const wantAi = aiReady();
-  const offline = wantAi && isOffline();
-  const update = store.addUpdate({
-    mode: 'post_session', source: 'rules', sessionId, message, changes: done.changes,
-    checking: wantAi && !offline ? aiSource() : false, pending: offline,
-  }, { plan: noted(done.plan, 'rules', message), weights: done.weights });
-  if (wantAi && !offline) askReview(update.id, session, st.plan);
-  return update;
+  if (wantAi && !isOffline()) {
+    const update = store.addUpdate({ mode: 'post_session', source: aiSource(), sessionId, message: '', changes: [], checking: aiSource(), pending: false });
+    askReview(update.id, session, st.plan);
+    return update;
+  }
+  const r = byRules(session, st);
+  return store.addUpdate({ mode: 'post_session', sessionId, ...r.fields, checking: false, pending: wantAi }, r.extra);
 }
 
-// `planBefore` is the plan as the workout was done against it, before the rule-based changes.
+// `planBefore` is the plan as the workout was done against it, before any rule-based changes.
 function askReview(updateId, session, planBefore) {
   const st = store.getState();
   const src = aiSource();
+  const name = aiName();
   const ctl = new AbortController();
   reviews.set(updateId, ctl);
   ask(sessionRequest({ mode: 'after_session', profile: st.profile, equipment: st.equipment, plan: planBefore, session, past: st.sessions }), { signal: ctl.signal })
@@ -572,57 +597,77 @@ function askReview(updateId, session, planBefore) {
       const cur = now.proposals.find((p) => p.id === updateId);
       if (!cur || !now.plan) return;
       let { plan, weights } = now;
-      let { changes, source } = cur;
-      // The model's changes replace the rule-based ones only while the user has left those alone.
+      let { changes } = cur;
+      // The model's changes replace rule-based ones (made while offline) only while the user has left those alone.
       const untouched = now.plan.id === planBefore.id && cur.changes.every((c) => c.status === 'applied' || c.status === 'stale');
       if (untouched) {
         const back = undoAll(cur, plan, weights);
         const ai = fromAiChanges(out.changes, { plan: back.plan, equipment: now.equipment, mode: 'after_session' });
         const made = applyAll(ai, back.plan, back.weights, now.equipment);
-        plan = made.plan; weights = made.weights; changes = made.changes; source = src;
+        plan = made.plan; weights = made.weights; changes = made.changes;
       }
       // The order of what is left and the rest days follow the results too.
       const sched = now.plan.id === planBefore.id && !store.activeSession(now) && !runFinished(plan) ? withSchedule(plan, out.schedule, now.sessions) : null;
       if (sched) plan = sched.plan;
-      const message = out.message || cur.message;
-      store.patchUpdate(updateId, { source, changes, message, schedule: sched?.reason || '', checking: false, pending: false },
+      const message = out.message || cur.message || ruleSummary(session, changes.filter(isApplied));
+      store.patchUpdate(updateId, { source: untouched || untouchedByRules(cur) ? src : cur.source, changes, message, schedule: sched?.reason || '', checking: false, pending: false, failed: '' },
         { plan: now.plan.id === planBefore.id ? noted(plan, src, message) : plan, weights });
     })
     .catch((e) => {
       if (e?.code === 'cancelled') return;
-      // No connection: the rule-based update stands, and the review is asked for again later.
-      store.patchUpdate(updateId, { checking: false, pending: e?.code === 'offline' || isOffline() });
+      const now = store.getState();
+      const cur = now.proposals.find((p) => p.id === updateId);
+      if (!cur) return;
+      // No connection: the review is asked for again later. Any other failure is said in words, and can be tried again.
+      const offline = e?.code === 'offline' || isOffline();
+      const flags = { checking: false, pending: offline, failed: offline ? '' : (e instanceof AiError ? e.message : `${name} did not answer.`) };
+      // Either way the plan is not left waiting: the training rules update it now.
+      if (untouchedByRules(cur)) { const r = byRules(session, now); store.patchUpdate(updateId, { ...r.fields, ...flags }, r.extra); } else store.patchUpdate(updateId, flags);
     })
     .finally(() => { if (reviews.get(updateId) === ctl) reviews.delete(updateId); });
 }
 
 /**
  * Ask again for reviews that could not be had: the phone was offline, or the
- * page was closed while waiting. Only the newest workout is sent; for older
- * ones the plan has moved on, so their rule-based update stands.
+ * page was closed while the model was thinking. Only the newest workout is
+ * sent; for older ones the plan has moved on, so the rule-based update stands.
+ * A workout that never got any update gets the rule-based one here.
  */
 export function retryPending() {
-  const st = store.getState();
+  let st = store.getState();
   const waiting = st.proposals.filter((p) => p.mode === 'post_session' && (p.pending || (p.checking && !reviews.has(p.id))));
   if (!waiting.length) return;
-  if (!aiReady()) { // nothing to ask any more
-    store.set({ proposals: st.proposals.map((p) => (waiting.includes(p) ? { ...p, pending: false, checking: false } : p)) });
-    return;
-  }
-  if (isOffline()) {
-    if (waiting.some((p) => p.checking)) store.set({ proposals: st.proposals.map((p) => (waiting.includes(p) && p.checking ? { ...p, pending: true, checking: false } : p)) });
-    return;
-  }
+  const ready = aiReady();
+  const offline = isOffline();
   const newest = waiting.reduce((a, b) => (b.createdAt > a.createdAt ? b : a));
   const session = store.sessionById(newest.sessionId);
   const last = store.doneWorkouts(st)[0];
-  const usable = session && last?.id === session.id && st.plan && session.planId === st.plan.id;
-  store.set({ proposals: st.proposals.map((p) => (!waiting.includes(p) ? p : { ...p, pending: false, checking: p === newest && usable ? aiSource() : false })) });
+  const usable = ready && !offline && session && last?.id === session.id && st.plan && session.planId === st.plan.id;
+  for (const p of waiting) {
+    if (p === newest && usable) continue;
+    // Not sent now. With no connection it keeps waiting; a plan left without any update gets the rule-based one.
+    const flags = { checking: false, pending: ready && offline };
+    const s = store.sessionById(p.sessionId);
+    if (untouchedByRules(p) && s) { const r = byRules(s, store.getState()); store.patchUpdate(p.id, { ...r.fields, ...flags }, r.extra); } else store.patchUpdate(p.id, flags);
+  }
   if (!usable) return;
+  st = store.getState();
+  store.patchUpdate(newest.id, { pending: false, failed: '', checking: aiSource() });
   // The plan as it was before the rule-based changes, when those are all still in place.
   const intact = newest.changes.every((c) => c.status === 'applied' || c.status === 'stale');
   askReview(newest.id, session, intact ? undoAll(newest, st.plan, st.weights).plan : st.plan);
 }
+
+/** "Ask again" on an update the model failed to review. */
+export function askAgain(updateId) {
+  const p = store.getState().proposals.find((x) => x.id === updateId);
+  if (!p || p.mode !== 'post_session' || p.checking) return;
+  store.patchUpdate(updateId, { pending: true, failed: '' });
+  retryPending();
+}
+
+/** The model is reviewing the last workout right now. */
+export const reviewRunning = (st = store.getState()) => st.proposals.find((p) => p.mode === 'post_session' && p.checking) || null;
 
 /** True while a model's review of the last workout is waiting for a connection. */
 export const reviewWaiting = (st = store.getState()) => st.proposals.some((p) => p.pending);

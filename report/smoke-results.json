@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-17T09:52:06.241Z",
+  "ranAt": "2026-11-17T14:40:26.064Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 245,
-  "passed": 245,
+  "total": 277,
+  "passed": 277,
   "failed": 0,
   "results": [
     {
@@ -865,13 +865,13 @@
     },
     {
       "part": "B Claude API",
-      "name": "the summary is there at once from the rules, and says Claude is reading the workout",
+      "name": "at the end of a workout Claude reviews it: the summary says it is thinking, and the rules stay out of it",
       "ok": true,
       "detail": ""
     },
     {
       "part": "B Claude API",
-      "name": "Claude's review then takes the place of the rule-based one: its summary, and its changes with the app's own old value",
+      "name": "Claude's answer then fills it in: its summary, and its changes with the app's own old value",
       "ok": true,
       "detail": ""
     },
@@ -1004,6 +1004,18 @@
     {
       "part": "B Claude API",
       "name": "back online, Claude reviews that workout and the notice goes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "when Claude fails at the end of a workout, the rules update the plan and the screen says why",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
+      "name": "\"Ask Claude again\" gets its review after all",
       "ok": true,
       "detail": ""
     },
@@ -1472,6 +1484,186 @@
     {
       "part": "G optional extras",
       "name": "no script errors in part G",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "\"Other\" opens the step field ready to type in",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "a step of 1 can be typed: the 1 stays in the field",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "and so can 1.25, one key at a time",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the weight and its step are saved together",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the plan offers to pair exercises, and says what it saves",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "switched on, exercises that use different muscles are paired and the sessions get shorter",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the next session shows its pairs",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the session says which exercises are done in turns, why they fit, and the rest between them",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "starting a session with weights missing offers to enter them first",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "nothing is saved without a number",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "a weight entered there is saved with its step, and the next exercise comes up with an empty field",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "one can be skipped: it is asked for when it comes up",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the workout starts with the weights that were entered",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "before the first set the band says \"Ready\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "a paired exercise says who it takes turns with",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "while a set runs the band says \"Train\", with the target and the set clock",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the band does not scroll away with the page",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "after a set of the first exercise, the second of the pair is up",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the rest between them is the short one, counted down in the band",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "when the time is up the set of the other exercise starts, and the band says \"Train\" in place of the clock",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "then back to the first one",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "on a set that goes past its target the band says \"Push\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "with the automatic start off, the band still says what to do when the time comes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "when the pair is done the workout moves on to the next exercise",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the rests inside a pair are saved as the short ones they were planned to be",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "\"Machine busy?\" offers to split a pair",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "split, the two are done one after the other today; the plan keeps the pair",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the saved workout says which exercises were done in turns",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "pairs can be switched off again: one exercise at a time, as before",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "no script errors in part H",
       "ok": true,
       "detail": ""
     }

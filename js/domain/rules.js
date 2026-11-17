@@ -8,7 +8,7 @@
 // Bump RULES_VERSION when a number or a rule changes. Plans and sessions store
 // the version they were made with.
 
-export const RULES_VERSION = '1.4.0';
+export const RULES_VERSION = '1.5.0';
 export const RULES_UPDATED = '2026-11-17';
 
 export const SOURCES = {
@@ -76,6 +76,21 @@ export const SOURCES = {
     short: 'Simão 2012',
     cite: 'Simão R, de Salles BF, Figueiredo T, Dias I, Willardson JM. Exercise order in resistance training. Sports Med. 2012;42(3):251-265.',
     url: 'https://doi.org/10.2165/11597240-000000000-00000',
+  },
+  zhang2025: {
+    short: 'Zhang 2025',
+    cite: 'Zhang X, Weakley J, Li H, Li Z, García-Ramos A. Superset versus traditional resistance training prescriptions: a systematic review and meta-analysis exploring acute and chronic effects on mechanical, metabolic, and perceptual variables. Sports Med. 2025.',
+    url: 'https://doi.org/10.1007/s40279-025-02176-8',
+  },
+  iversen2021: {
+    short: 'Iversen 2021',
+    cite: 'Iversen VM, Norum M, Schoenfeld BJ, Fimland MS. No time to lift? Designing time-efficient training programs for strength and hypertrophy: a narrative review. Sports Med. 2021;51(10):2079-2095.',
+    url: 'https://doi.org/10.1007/s40279-021-01490-1',
+  },
+  robbins2010: {
+    short: 'Robbins 2010',
+    cite: 'Robbins DW, Young WB, Behm DG, Payne WR. Agonist-antagonist paired set resistance training: a brief review. J Strength Cond Res. 2010;24(10):2873-2882.',
+    url: 'https://doi.org/10.1519/JSC.0b013e3181f00bfc',
   },
   practice: {
     short: 'App convention',
@@ -235,6 +250,31 @@ export const TIME = {
 // end on a day with time and energy left. They sit outside the time budget.
 export const OPTIONAL = { perSession: 2, sets: 2 };
 
+// Pairs: two neighbouring exercises that use different muscles, done in turns,
+// so one rests while the other works. Off unless the user turns them on.
+export const PAIRS = {
+  restShare: 0.45, // rest after each set, as a share of the longer of the two planned rests
+  minRestSec: 30, // never less: time to get to the other station
+  never: ['squat', 'hinge'], // heavy whole-body lifts keep their full rest
+  maxTierGap: 1, // a main lift is not paired with single-joint work
+  // The muscles each movement loads. Two movements can share a rest when these do not overlap.
+  works: {
+    push_h: ['chest', 'front delts', 'triceps'], push_v: ['front delts', 'side delts', 'triceps'], chest_fly: ['chest', 'front delts'],
+    triceps: ['triceps'], delt_side: ['side delts'],
+    pull_h: ['back', 'biceps', 'rear delts'], pull_v: ['back', 'biceps', 'rear delts'], biceps: ['biceps'], delt_rear: ['rear delts'],
+    squat: ['quads', 'glutes', 'lower back'], hinge: ['hamstrings', 'glutes', 'lower back'], lunge: ['quads', 'glutes'],
+    glute: ['glutes', 'hamstrings'], knee_ext: ['quads'], knee_flex: ['hamstrings'], calf: ['calves'], core: ['core'],
+  },
+  // Core work steadies every big lift, so it is paired only with these single-joint movements.
+  withCore: ['biceps', 'triceps', 'delt_side', 'delt_rear', 'chest_fly', 'knee_ext', 'knee_flex', 'calf'],
+  // Which side of the body a movement is on, for telling opposite muscles from ones that are just far apart.
+  side: {
+    push_h: 'push', push_v: 'push', chest_fly: 'push', triceps: 'push', delt_side: 'push',
+    pull_h: 'pull', pull_v: 'pull', biceps: 'pull', delt_rear: 'pull',
+    knee_ext: 'front of the legs', lunge: 'front of the legs', knee_flex: 'back of the legs', glute: 'back of the legs',
+  },
+};
+
 // Progression and result reading.
 export const PROGRESSION = {
   // Raise the load when every set reaches the top of the rep range.
@@ -377,6 +417,16 @@ export const RULES = [
     sources: ['schoenfeld2017volume', 'practice'], uses: ['OPTIONAL', 'fillOptional()'],
   },
   {
+    id: 'PAR-1', area: 'Pairs',
+    text: 'Pairs are off unless the user turns them on. When on, two neighbouring exercises that use different muscles are done in turns: a set of one, a short rest, a set of the other. Good pairs are opposite muscles (a press with a row, biceps with triceps, leg extension with leg curl) or exercises far apart on the body. Exercises that share a muscle are never paired, because the second one loses reps. Squats and hip hinges are never paired, nor are the main lifts of a strength plan: the heaviest lifts keep their full rest. Core work is paired only with single-joint lifts. Trained this way, sessions take clearly less time for the same sets, and over weeks strength and muscle gains were no different from doing one exercise at a time. The sets feel harder, and both stations have to be free.',
+    sources: ['zhang2025', 'iversen2021', 'robbins2010'], uses: ['PAIRS', 'pairUp()'],
+  },
+  {
+    id: 'PAR-2', area: 'Pairs',
+    text: 'In a pair, the rest after each set is 45% of the longer of the two planned rests, and never under 30 seconds, which is the time to get to the other station. With the other exercise\'s set in between, each muscle still waits at least its planned rest before it works again. The session time is counted this way. During a workout a pair can be split for the day when one of the two stations is taken.',
+    sources: ['robbins2010', 'practice'], uses: ['PAIRS.restShare', 'PAIRS.minRestSec', 'pairRestSec()'],
+  },
+  {
     id: 'LOD-1', area: 'Starting weight',
     text: 'With no history for an exercise, the user picks a starting weight: one they could lift for about 2 reps more than the target with good form. Loads are recorded as weight per dumbbell, total weight (bar included), machine setting, or bodyweight plus added weight.',
     sources: ['helms2016', 'practice'], uses: ['LOAD_TYPES'],
@@ -457,5 +507,6 @@ export function rulesAsText() {
   lines.push(`Time model: warm-up ${(TIME.warmupGeneralSec + TIME.warmupRampSec) / 60} min, each set ${TIME.setBaseSec}s + ${TIME.secPerRep}s per rep, ${TIME.transitionSec}s between exercises.`);
   lines.push(`Default load steps (kg): ${Object.entries(PROGRESSION.defaultStep).map(([k, v]) => `${k} ${v}`).join(', ')}.`);
   lines.push(`Optional extras: up to ${OPTIONAL.perSession} per session, ${OPTIONAL.sets} sets each, outside the time budget.`);
+  lines.push(`Pairs, when the user has them on: rest after each set ${Math.round(PAIRS.restShare * 100)}% of the longer planned rest, at least ${PAIRS.minRestSec}s. Never paired: ${PAIRS.never.join(', ')}, and the main lifts of a strength plan.`);
   return lines.join('\n');
 }

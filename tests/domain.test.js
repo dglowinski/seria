@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RULES, SOURCES, PRESCRIPTION, prescribe, levelFor, rulesAsText, RULES_VERSION, activityGroups } from '../js/domain/rules.js';
 import { emptyEquipment, isAvailable, substitutesFor, allExercises, EXERCISES, EQUIPMENT, canDo } from '../js/domain/catalog.js';
-import { generatePlan, emptyProfile, missingFields, dayMinutes, buildAssumptions, normalizePlan, brokenExercises, weeklySets, upgradePlan, buildOutlook, fillOptional, dayOptional, allEntries, optionalMinutes } from '../js/domain/planner.js';
+import { generatePlan, emptyProfile, missingFields, dayMinutes, buildAssumptions, normalizePlan, brokenExercises, weeklySets, upgradePlan, buildOutlook, fillOptional, dayOptional, allEntries, optionalMinutes, fillPairs, pairUp, canPair, units, pairRestSec, pairSavings, pairMate, oppositePair, blankWeights, timeBreakdown, daySeconds } from '../js/domain/planner.js';
 import { GROUP_OF } from '../js/domain/catalog.js';
-import { OPTIONAL, TEMPLATES } from '../js/domain/rules.js';
+import { OPTIONAL, TEMPLATES, PAIRS, TIME } from '../js/domain/rules.js';
 import * as K from '../js/domain/schedule.js';
 import * as S from '../js/domain/session.js';
 import { inSessionHint, postSessionChanges, applyPlanChange, undoPlanChange, canUndo, withValue, ruleSummary, lowerLoad, equipmentChanges, fromAiChanges } from '../js/domain/progression.js';
@@ -884,4 +884,159 @@ test('optional extras: a model can pick them per session; where it gives none, t
   assert.ok(up.optional.every((o) => o.optional === true));
   assert.ok(low.optional.length >= 1 && low.optional.every((o) => PART[o.pattern] === 'legs' || o.pattern === 'core'), 'the rules fill the session the model left empty');
   assert.equal(up.estMinutes, dayMinutes(up.exercises));
+});
+
+// ---------------------------------------------------------------- pairs
+
+const shape = (day) => units(day.exercises).map((u) => u.map((x) => x.pattern).join('+')).join(' ');
+const ex = (pattern, tier = 'accessory', over = {}) => ({ key: pattern, pattern, tier, sets: 3, reps: 10, restSec: 90, ...over });
+
+test('pairs: off unless asked for; on, neighbours that use different muscles are done in turns and the session gets shorter', () => {
+  const who = profile({ goal: 'muscle', daysPerWeek: 4, minutes: 60 });
+  const off = generatePlan(who, emptyEquipment(), {}, T0);
+  assert.ok(off.days.every((d) => d.exercises.every((x) => !x.pair)), 'no pairs by default');
+  const on = generatePlan({ ...who, pairs: true }, emptyEquipment(), {}, T0);
+  assert.equal(shape(on.days[0]), 'push_h+pull_h push_v+pull_v biceps+triceps delt_side', 'upper body: press with row, curl with extension');
+  assert.equal(shape(on.days[1]), 'squat hinge lunge+knee_flex calf+core', 'squats and hip hinges keep their full rest');
+  assert.deepEqual(on.days[0].exercises.map((x) => x.exerciseId), off.days[0].exercises.map((x) => x.exerciseId), 'the same exercises in the same order');
+  assert.ok(on.days[0].estMinutes <= off.days[0].estMinutes - 8, `clearly shorter: ${on.days[0].estMinutes} against ${off.days[0].estMinutes} min`);
+  assert.ok(pairSavings(off) >= 5, 'the plan screen can say how much it saves');
+  assert.equal(pairSavings(on), pairSavings(off), 'and says the same once it is on');
+  const [a, b] = on.days[0].exercises;
+  assert.equal(pairMate(on.days[0].exercises, a), b); assert.equal(pairMate(on.days[0].exercises, on.days[0].exercises[6]), null);
+  assert.ok(oppositePair(a, b), 'a press and a row work opposite muscles');
+  assert.ok(!oppositePair(ex('lunge'), ex('biceps')), 'legs and arms are just far apart');
+
+  // The saved plan follows the switch both ways, and nothing is copied when nothing changes.
+  const flipped = fillPairs(off, { pairs: true });
+  assert.deepEqual(flipped.days.map(shape), on.days.map(shape));
+  assert.deepEqual(flipped.days.map((d) => d.estMinutes), on.days.map((d) => d.estMinutes));
+  assert.equal(fillPairs(on, { pairs: true }), on); assert.equal(fillPairs(off, {}), off);
+  const back = fillPairs(on, { pairs: false });
+  assert.ok(back.days.every((d) => d.exercises.every((x) => !x.pair)));
+  assert.deepEqual(back.days.map((d) => d.estMinutes), off.days.map((d) => d.estMinutes));
+
+  // With little time, the minutes pairs save go to work that would otherwise be left out.
+  const short = { ...who, minutes: 40 };
+  const sets = (plan) => plan.days.reduce((n, d) => n + d.exercises.reduce((m, x) => m + x.sets, 0), 0);
+  const tight = generatePlan(short, emptyEquipment(), {}, T0);
+  const tightOn = generatePlan({ ...short, pairs: true }, emptyEquipment(), {}, T0);
+  assert.ok(sets(tightOn) > sets(tight), `${sets(tightOn)} sets fit with pairs, ${sets(tight)} without`);
+  assert.ok(tightOn.days.every((d) => d.estMinutes <= 41), 'still inside the time');
+  assert.ok(buildAssumptions({ ...who, pairs: true }, emptyEquipment()).some((r) => r.label === 'Pairs'));
+});
+
+test('pairs: which two can share a rest, and how long that rest is', () => {
+  assert.ok(canPair(ex('push_h', 'main'), ex('pull_h', 'main'), 'muscle'));
+  assert.ok(canPair(ex('knee_ext'), ex('knee_flex'), 'muscle'));
+  assert.ok(canPair(ex('lunge', 'secondary'), ex('delt_side'), 'muscle'), 'far apart on the body');
+  assert.ok(!canPair(ex('push_h', 'main'), ex('push_v', 'secondary'), 'muscle'), 'both load shoulders and triceps');
+  assert.ok(!canPair(ex('pull_v', 'secondary'), ex('biceps'), 'muscle'), 'the pull already works the biceps');
+  assert.ok(!canPair(ex('squat', 'main'), ex('pull_v', 'secondary'), 'muscle') && !canPair(ex('hinge', 'main'), ex('push_h', 'main'), 'muscle'), 'never squats or hip hinges');
+  assert.ok(!canPair(ex('push_h', 'main'), ex('pull_h', 'main'), 'strength'), 'the main lifts of a strength plan keep their full rest');
+  assert.ok(canPair(ex('push_v', 'secondary'), ex('pull_v', 'secondary'), 'strength'));
+  assert.ok(!canPair(ex('push_h', 'main'), ex('calf'), 'muscle'), 'a main lift is not paired with single-joint work');
+  assert.ok(canPair(ex('calf'), ex('core'), 'muscle') && !canPair(ex('push_v', 'secondary'), ex('core'), 'muscle'), 'core only with single-joint lifts');
+  assert.ok(!canPair(ex('biceps'), ex('triceps', 'accessory', { optional: true }), 'muscle'), 'optional extras stay out of it');
+  // Each list is paired from the top, neighbours only, so the order of the session never changes.
+  const list = [ex('push_h', 'main'), ex('push_v', 'secondary'), ex('pull_v', 'secondary'), ex('biceps'), ex('triceps')];
+  assert.ok(pairUp(list, 'muscle'));
+  assert.deepEqual(list.map((x) => x.pair || '-'), ['-', 'p1', 'p1', 'p2', 'p2']);
+  assert.ok(!pairUp(list, 'muscle'), 'a second pass changes nothing');
+  assert.ok(pairUp(list, 'muscle', false) && list.every((x) => !('pair' in x)));
+
+  // The rest in a pair: 45% of the longer planned rest, never under 30 s. The muscle still gets its planned rest.
+  assert.equal(pairRestSec({ restSec: 150 }, { restSec: 120 }), 70);
+  assert.equal(pairRestSec({ restSec: 60 }, { restSec: 45 }), PAIRS.minRestSec);
+  const shortestSet = TIME.setBaseSec + 4 * TIME.secPerRep; // the other exercise's set, at its quickest
+  for (const r of [45, 60, 75, 90, 120, 150, 180]) {
+    const gap = 2 * pairRestSec({ restSec: r }, { restSec: r }) + shortestSet;
+    assert.ok(gap >= r, `planned ${r} s, waits ${gap} s`);
+  }
+  // Time: three sets each, in turns, is five short rests. Sets left over on one side keep its own rest.
+  const a = ex('biceps', 'accessory', { pair: 'p1' }); const b = ex('triceps', 'accessory', { pair: 'p1' });
+  const alone = timeBreakdown([{ ...a, pair: undefined }, { ...b, pair: undefined }]).rests;
+  assert.equal(alone, Math.round((4 * 90) / 60));
+  const r = pairRestSec(a, b);
+  assert.equal(r, 40);
+  assert.equal(daySeconds([{ ...a, pair: undefined }, { ...b, pair: undefined }]) - daySeconds([a, b]), 4 * 90 - 5 * r);
+  assert.equal(daySeconds([{ ...a, sets: 4 }, { ...b, sets: 2 }]) - daySeconds([{ ...a, sets: 4, pair: undefined }, { ...b, sets: 2, pair: undefined }]), (4 * r + 90) - (3 * 90 + 90), 'A B A B A, then A alone');
+  assert.equal(daySeconds([{ ...a, sets: 2 }, { ...b, sets: 4 }]) - daySeconds([{ ...a, sets: 2, pair: undefined }, { ...b, sets: 4, pair: undefined }]), (3 * r + 2 * 90) - (90 + 3 * 90), 'A B A B, then B twice alone');
+});
+
+test('pairs in a workout: the two take turns with a short rest between, then the workout moves on', () => {
+  const plan = generatePlan(profile({ goal: 'muscle', daysPerWeek: 4, minutes: 60, pairs: true }), emptyEquipment(), { db_bench_press: { value: 20, step: 2 } }, T0);
+  let s = S.startSession(plan, 'd1', T0);
+  const [A, B] = s.exercises;
+  assert.ok(A.pair && A.pair === B.pair, 'the session carries the pair');
+  const short = pairRestSec(A, B);
+  let t = T0;
+  const order = [];
+  const rests = [];
+  // Both exercises of the first pair, then stop.
+  while (s.exercises[0].sets.some((x) => x.status === 'pending') || s.exercises[1].sets.some((x) => x.status === 'pending')) {
+    if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t);
+    order.push(`${s.cursor.ex}.${s.cursor.set}`);
+    s = S.beginSet(s, t += short * 1000);
+    s = S.finishSet(s, t += 30000);
+    rests.push(s.rest);
+  }
+  const n = Math.min(A.sets.length, B.sets.length);
+  assert.deepEqual(order.slice(0, 4), ['0.0', '1.0', '0.1', '1.1'], 'a set of one, then a set of the other');
+  assert.equal(order.length, A.sets.length + B.sets.length);
+  assert.ok(rests.slice(0, 2 * n - 1).every((r) => r.swap && !r.betweenExercises && r.plannedSec === short), 'a short rest after each set, and the next set may start by itself');
+  const lastRest = rests[rests.length - 1];
+  assert.ok(lastRest.betweenExercises && !lastRest.swap && lastRest.plannedSec === TIME.transitionSec, 'after the pair: time to change station');
+  assert.equal(s.cursor.ex, 2, 'then the next exercise');
+  assert.equal(S.mateIdx(s, 0), -1); assert.equal(S.mateIdx(s, 0, false), 1);
+  // The second pair takes turns as well, from its own first exercise.
+  if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t);
+  s = S.finishSet(S.beginSet(s, t += 1000), t += 1000);
+  assert.equal(s.cursor.ex, 3); assert.ok(s.rest.swap);
+  // What was recorded: the rest before each set of a pair is the short one, and it is read as planned.
+  const stats = S.restStats(s);
+  assert.equal(stats.planned, short); assert.equal(stats.actual, short);
+  assert.ok(S.readLog(s).some((l) => /then the other exercise of the pair/.test(l.text)));
+  assert.ok(s.exercises[0].sets[1].restPlannedSec === short && s.exercises[0].sets[0].restPlannedSec == null);
+  // A plan without pairs runs as it always did.
+  const plain = S.startSession(fillPairs(plan, { pairs: false }), 'd1', T0);
+  let p = S.finishSet(S.beginSet(S.needsWeight(plain) ? S.setStartingWeight(plain, 20, 2, T0) : plain, T0), T0 + 1000);
+  assert.equal(p.cursor.ex, 0); assert.ok(!p.rest.swap && p.rest.plannedSec === plain.exercises[0].restSec);
+});
+
+test('pairs in a workout: a pair can be split for the day, and putting one off or dropping it frees the other', () => {
+  const plan = generatePlan(profile({ goal: 'muscle', daysPerWeek: 4, minutes: 60, pairs: true }), emptyEquipment(), {}, T0);
+  const ready = (s) => (S.needsWeight(s) ? S.setStartingWeight(s, 20, 2, T0) : s);
+  const one = (s, t) => { const r = ready(s); return S.finishSet(S.beginSet(r, t), t + 1000); };
+  let s = one(S.startSession(plan, 'd1', T0), T0);
+  assert.equal(s.cursor.ex, 1, 'the other one is up');
+  // Split while resting before the second exercise: the first is finished first, with its own rests.
+  let u = S.unpair(s, T0 + 2000);
+  assert.ok(u.exercises.slice(0, 2).every((x) => !x.pair) && u.exercises[2].pair, 'only this pair is split');
+  assert.equal(u.cursor.ex, 0); assert.equal(u.cursor.set, 1); assert.ok(!u.rest.swap);
+  u = one(u, T0 + 3000);
+  assert.equal(u.cursor.ex, 0); assert.equal(u.rest.plannedSec, u.exercises[0].restSec);
+  assert.ok(S.readLog(u).some((l) => /no longer done in turns today/.test(l.text)));
+  assert.equal(S.unpair(u), u, 'nothing left to split');
+  // Putting one off: it goes to the end, its partner carries on alone.
+  let later = S.postponeExercise(s, T0 + 2000); // the second of the pair is the current one
+  assert.equal(later.exercises[later.exercises.length - 1].key, s.exercises[1].key);
+  assert.ok(!later.exercises[0].pair && !later.exercises[later.exercises.length - 1].pair);
+  assert.equal(later.cursor.ex, 0); assert.equal(later.cursor.set, 1, 'the partner, which has sets left, comes first');
+  later = one(later, T0 + 4000);
+  assert.equal(later.cursor.ex, 0);
+  // Dropping one: the other keeps going with its own rest.
+  let d = S.dropExercise(s, T0 + 2000);
+  assert.equal(d.cursor.ex, 0);
+  d = one(d, T0 + 4000);
+  assert.equal(d.cursor.ex, 0); assert.ok(!d.rest.swap && d.rest.plannedSec === d.exercises[0].restSec);
+});
+
+test('weights before a workout: the session knows which of its exercises have none yet', () => {
+  const plan = generatePlan(profile({ goal: 'muscle', daysPerWeek: 4 }), emptyEquipment(), { db_bench_press: { value: 20, step: 2 } }, T0);
+  const blank = blankWeights(plan.days[0]);
+  assert.ok(blank.length > 0 && blank.every((x) => x.loadType !== 'bodyweight' && !x.load));
+  assert.ok(!blank.some((x) => x.exerciseId === 'db_bench_press'), 'one with a weight is not asked for');
+  assert.ok(plan.days[0].exercises.filter((x) => x.loadType === 'bodyweight').every((x) => !blank.includes(x)), 'bodyweight lifts need none');
+  assert.deepEqual(blankWeights(null), []);
 });

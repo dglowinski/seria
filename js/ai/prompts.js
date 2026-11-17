@@ -4,7 +4,7 @@
 
 import { rulesAsText, RULES_VERSION, GOALS, levelFor, ACTIVITIES, activityGroups } from '../domain/rules.js';
 import { allExercises, canDo, equipmentList, isAvailable, isListed, PATTERNS, EQUIPMENT, LOADING, machineDetail, machineForExercise } from '../domain/catalog.js';
-import { WEEKDAYS, clampMinutes, sessionsPerWeek, cycleWeeks, dayOptional } from '../domain/planner.js';
+import { WEEKDAYS, clampMinutes, sessionsPerWeek, cycleWeeks, dayOptional, pairMate, pairRestSec } from '../domain/planner.js';
 import { queueState, recommend, timeline, doneGroups, daysBetween } from '../domain/schedule.js';
 import { GROUP_OF, SKETCH_IDS } from '../domain/catalog.js';
 
@@ -33,6 +33,9 @@ Equipment and exercises can come with the exact machine behind them: maker, mode
 Optional extras
 Each session can list up to two optional exercises that the user may add at the end on a day with time and energy left (rule OPT-1). In new_plan and next_run fill optional_exercises for every session. Pick what makes sense for that session and for the plan as a whole, from the same part of the body the session trains, so it does not tire what the next session needs fresh: first what you had to leave out of that session for time, then a muscle group that is short of its weekly sets, then a small muscle group with no direct work. Give each 2 sets, do not count them in the session's minutes, never repeat an exercise that is already in that session, and say in "why", in one short sentence for the user, why it fits. In a plan you are given they are listed per session under optional_at_the_end; you can change one through "changes" by its exercise_key, like any other exercise. In a session, an exercise marked optional_extra is one the user chose to add; read its results like any other. An optional exercise that was not done is not a miss and is never a reason for a change.
 
+Pairs
+The user can turn on pairs (rules PAR-1 and PAR-2): two neighbouring exercises of a session that use different muscles are done in turns, with a short rest after each set, which makes the session shorter for the same sets. The profile says whether they are on in pair_exercises. You do not mark pairs yourself: the app pairs neighbours by rule PAR-1 and shows the result as paired_with in the plan and done_in_turns_with in a session. When pairs are on, in new_plan and next_run put exercises that can pair next to each other (a press next to a row, biceps next to triceps, leg extension next to leg curl), keep squats and hip hinges on their own, and count the time by PAR-2, so the time saved can go to exercises that would otherwise be left out. In a session, the rest before a set of a paired exercise is the short one after the other exercise's set; that is as planned, not a rest cut short. In the interview, set pair_exercises to true when the user asks to pair or superset exercises, to false when they ask to stop, and otherwise return the value you were given.
+
 The long view
 In new_plan and next_run, fill "outlook": four to six plain sentences for the user on how this training develops over the next two to three months. Say what this round focuses on, how the loads and reps are meant to move, how long a round is and what changes from one round to the next, and which exercises or extra sets you would add later or with more time. Base it on the profile and the rules; promise no numbers the records cannot support. In every other mode set outlook to null.
 
@@ -56,6 +59,7 @@ export const OUTPUT_SCHEMA = obj({
     days_per_week: nullable(int),
     weekdays: list({ type: 'string', enum: WEEKDAYS }),
     minutes_per_session: nullable(int),
+    pair_exercises: nullable({ type: 'boolean', description: 'True when the user wants exercises that use different muscles done in turns to save time.' }),
     preferences: nullable(str()),
     limitations: nullable(str()),
     avoid_exercise_ids: list(str()),
@@ -119,7 +123,7 @@ export const OUTPUT_SCHEMA = obj({
 const profileOut = (p) => ({
   goal: p.goal, months_training: p.months, experience_level: p.months == null ? null : levelFor(p.months),
   sessions_per_week: p.daysPerWeek || (p.days?.length || null), usual_weekdays_only_a_note: p.days || [],
-  minutes_per_session: p.minutes, preferences: p.preferences || null, limitations: p.limitations || null,
+  minutes_per_session: p.minutes, pair_exercises: !!p.pairs, preferences: p.preferences || null, limitations: p.limitations || null,
   avoid_exercise_ids: p.avoid || [], include_exercise_ids: p.include || [], work_around: p.avoidTags || [],
 });
 
@@ -154,6 +158,7 @@ const planOut = (plan) => {
         exercise_key: ex.key, exercise_id: ex.exerciseId, name: ex.name, role: ex.tier,
         sets: ex.sets, target_reps: ex.reps, rep_range: [ex.repLo, ex.repHi], rest_seconds: ex.restSec,
         load_unit: ex.loadType, load: ex.load?.value ?? null, load_step: ex.load?.step ?? null,
+        ...(pairMate(d.exercises, ex) ? { paired_with: pairMate(d.exercises, ex).key, rest_seconds_in_the_pair: pairRestSec(ex, pairMate(d.exercises, ex)) } : {}),
       })),
       // Not part of the session's time: the user may add these at the end.
       optional_at_the_end: dayOptional(d).map((ex) => ({
@@ -181,6 +186,7 @@ const sessionOut = (s) => ({
     rep_range: [ex.repLo, ex.repHi], rest_seconds: ex.restSec,
     swapped_in_for: ex.swappedFrom?.name || null,
     put_off_until_later: !!ex.postponed, dropped_for_today: !!ex.dropped, optional_extra: !!ex.optional,
+    done_in_turns_with: (ex.pair && s.exercises.find((x) => x !== ex && x.pair === ex.pair)?.name) || null,
     sets: ex.sets.map(setOut),
   })),
   // Optional extras offered with this session that the user did not take. Not a miss.

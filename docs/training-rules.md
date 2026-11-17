@@ -1,4 +1,4 @@
-# Seria training rules, version 1.4.0
+# Seria training rules, version 1.5.0
 
 Last updated 2026-11-17. Generated from `js/domain/rules.js` with `npm run rules-doc`. Do not edit by hand: change the rules file, bump `RULES_VERSION`, and run the script again.
 
@@ -140,6 +140,18 @@ Seria is not medical advice. Stop if something hurts and see a professional.
 - Source: Schoenfeld 2017 (volume); App convention
 - In the code: `OPTIONAL`, `fillOptional()`
 
+## Pairs
+
+**PAR-1.** Pairs are off unless the user turns them on. When on, two neighbouring exercises that use different muscles are done in turns: a set of one, a short rest, a set of the other. Good pairs are opposite muscles (a press with a row, biceps with triceps, leg extension with leg curl) or exercises far apart on the body. Exercises that share a muscle are never paired, because the second one loses reps. Squats and hip hinges are never paired, nor are the main lifts of a strength plan: the heaviest lifts keep their full rest. Core work is paired only with single-joint lifts. Trained this way, sessions take clearly less time for the same sets, and over weeks strength and muscle gains were no different from doing one exercise at a time. The sets feel harder, and both stations have to be free.
+
+- Source: Zhang 2025; Iversen 2021; Robbins 2010
+- In the code: `PAIRS`, `pairUp()`
+
+**PAR-2.** In a pair, the rest after each set is 45% of the longer of the two planned rests, and never under 30 seconds, which is the time to get to the other station. With the other exercise's set in between, each muscle still waits at least its planned rest before it works again. The session time is counted this way. During a workout a pair can be split for the day when one of the two stations is taken.
+
+- Source: Robbins 2010; App convention
+- In the code: `PAIRS.restShare`, `PAIRS.minRestSec`, `pairRestSec()`
+
 ## Starting weight
 
 **LOD-1.** With no history for an exercise, the user picks a starting weight: one they could lift for about 2 reps more than the target with good form. Loads are recorded as weight per dumbbell, total weight (bar included), machine setting, or bodyweight plus added weight.
@@ -276,6 +288,9 @@ Slots are filled in this order. When time is short they are dropped from the end
 - **ACSM 2011.** Garber CE, Blissmer B, Deschenes MR, et al. Quantity and quality of exercise for developing and maintaining cardiorespiratory, musculoskeletal, and neuromotor fitness in apparently healthy adults: guidance for prescribing exercise. Med Sci Sports Exerc. 2011;43(7):1334-1359. <https://doi.org/10.1249/MSS.0b013e318213fefb>
 - **Wilson 2012.** Wilson JM, Marin PJ, Rhea MR, Wilson SMC, Loenneke JP, Anderson JC. Concurrent training: a meta-analysis examining interference of aerobic and resistance exercises. J Strength Cond Res. 2012;26(8):2293-2307. <https://doi.org/10.1519/JSC.0b013e31823a3e2d>
 - **Simão 2012.** Simão R, de Salles BF, Figueiredo T, Dias I, Willardson JM. Exercise order in resistance training. Sports Med. 2012;42(3):251-265. <https://doi.org/10.2165/11597240-000000000-00000>
+- **Zhang 2025.** Zhang X, Weakley J, Li H, Li Z, García-Ramos A. Superset versus traditional resistance training prescriptions: a systematic review and meta-analysis exploring acute and chronic effects on mechanical, metabolic, and perceptual variables. Sports Med. 2025. <https://doi.org/10.1007/s40279-025-02176-8>
+- **Iversen 2021.** Iversen VM, Norum M, Schoenfeld BJ, Fimland MS. No time to lift? Designing time-efficient training programs for strength and hypertrophy: a narrative review. Sports Med. 2021;51(10):2079-2095. <https://doi.org/10.1007/s40279-021-01490-1>
+- **Robbins 2010.** Robbins DW, Young WB, Behm DG, Payne WR. Agonist-antagonist paired set resistance training: a brief review. J Strength Cond Res. 2010;24(10):2873-2882. <https://doi.org/10.1519/JSC.0b013e3181f00bfc>
 - **App convention.** Practical convention chosen for this app. Not taken from a study; change it if it does not suit you.
 
 The journal references were checked against their DOI records on 2026-11-13. Rules marked "App convention" are practical choices made for this app, not findings from a study.

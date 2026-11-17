@@ -4,6 +4,9 @@
 //
 //   ready -> active -> rest -> active ... -> (optional) -> summary
 //
+// Two exercises marked as a pair are done in turns: after a set of one, a short
+// rest, then a set of the other, until one of them runs out of sets.
+//
 // One tap finishes a set: it is saved as planned and the rest starts. The set
 // can be nudged before the tap or during the rest, or undone. "rest" stores the
 // time it ends, not a countdown, so coming back to the tab shows the right time
@@ -12,7 +15,7 @@
 // offer: add one, or finish.
 
 import { TIME, PROGRESSION, TARGET_RIR, ACTIVITIES } from './rules.js';
-import { fmtLoadShort, dayOptional } from './planner.js';
+import { fmtLoadShort, dayOptional, pairRestSec } from './planner.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const touch = (s, now) => { s.updatedAt = now; return s; };
@@ -62,6 +65,7 @@ function sessionExercise(ex, ease = 0) {
     step,
     swappedFrom: null,
     ...(ex.optional ? { optional: true } : {}),
+    ...(ex.pair ? { pair: ex.pair } : {}),
     sets: Array.from({ length: ex.sets }, () => ({
       planned: { reps: ex.reps, load },
       target: { reps: ex.reps, load: eased },
@@ -124,6 +128,8 @@ export function beginSet(session, now = Date.now(), { auto = false } = {}) {
   const { set, exIdx, setIdx } = current(s);
   s.phase = 'active';
   s.setStartedAt = now;
+  // The rest that led up to this set, as planned: a full one, or the short one inside a pair.
+  if (s.rest && !s.rest.betweenExercises) set.restPlannedSec = s.rest.plannedSec;
   s.rest = null;
   set.startedAt = now;
   set.auto = auto;
@@ -199,12 +205,14 @@ export function finishSet(session, now = Date.now()) {
   if (d.load != null && d.load !== set.target.load) {
     for (const st of ex.sets) if (st.status === 'pending') st.target.load = d.load;
   }
-  const lastOfExercise = !ex.sets.some((st) => st.status === 'pending');
   if (!advance(s)) return wrapUp(s, now);
-  const restSec = lastOfExercise ? TIME.transitionSec : ex.restSec;
+  const next = s.exercises[s.cursor.ex];
+  const swap = next.key !== ex.key && !!ex.pair && next.pair === ex.pair; // the other exercise of the pair is up
+  const moving = next.key !== ex.key && !swap; // on to another station
+  const restSec = swap ? pairRestSec(ex, next) : moving ? TIME.transitionSec : ex.restSec;
   s.phase = 'rest';
-  s.rest = { startedAt: now, endsAt: now + restSec * 1000, plannedSec: restSec, betweenExercises: lastOfExercise };
-  ev(s, now, 'rest_start', restSec, lastOfExercise ? 'next_exercise' : 'next_set');
+  s.rest = { startedAt: now, endsAt: now + restSec * 1000, plannedSec: restSec, betweenExercises: moving, ...(swap ? { swap: true } : {}) };
+  ev(s, now, 'rest_start', restSec, swap ? 'other_of_pair' : moving ? 'next_exercise' : 'next_set');
   return touch(s, now);
 }
 
@@ -254,7 +262,19 @@ export function undoFinish(session, now = Date.now()) {
   return touch(s, now);
 }
 
+const firstPending = (ex) => ex.sets.findIndex((st) => st.status === 'pending');
+
+/** The other exercise of a pair. `live`: only when it still has sets to do. Returns its position, or -1. */
+export function mateIdx(s, exIdx = s.cursor.ex, live = true) {
+  const ex = s.exercises[exIdx];
+  if (!ex?.pair) return -1;
+  return s.exercises.findIndex((x, i) => i !== exIdx && x.pair === ex.pair && (!live || firstPending(x) >= 0));
+}
+
 function advance(s) {
+  // In a pair the two take turns while both have sets left.
+  const mate = mateIdx(s);
+  if (mate >= 0) { s.cursor = { ex: mate, set: firstPending(s.exercises[mate]) }; return true; }
   for (let e = s.cursor.ex; e < s.exercises.length; e++) {
     const idx = s.exercises[e].sets.findIndex((st) => st.status === 'pending');
     if (idx >= 0) { s.cursor = { ex: e, set: idx }; return true; }
@@ -296,12 +316,39 @@ export function postponeExercise(session, now = Date.now()) {
   if (!hasOthers(session)) return session;
   const s = clone(session);
   const at = s.cursor.ex;
+  const mate = s.exercises[mateIdx(s, at, false)] || null;
   const [ex] = s.exercises.splice(at, 1);
   ex.postponed = (ex.postponed || 0) + 1;
   s.exercises.push(ex);
   s.cursor = { ex: Math.min(at, s.exercises.length - 1), set: 0 };
+  // Put off, it is no longer done in turns: its partner carries on alone, and comes first if it has sets left.
+  if (mate) {
+    delete mate.pair; delete ex.pair;
+    if (firstPending(mate) >= 0) s.cursor = { ex: s.exercises.indexOf(mate), set: firstPending(mate) };
+  }
   ev(s, now, 'later', ex.key);
   return afterSkip(s, now);
+}
+
+/**
+ * Split the pair the current exercise is in, for today: the two are done one
+ * after the other, each with its own rests. For when one station is taken.
+ */
+export function unpair(session, now = Date.now()) {
+  const at = mateIdx(session, session.cursor.ex, false);
+  if (at < 0) return session;
+  const s = clone(session);
+  const { ex } = current(s);
+  const mate = s.exercises[at];
+  delete ex.pair; delete mate.pair;
+  // The one that comes first in the workout is finished first.
+  if (at < s.cursor.ex && firstPending(mate) >= 0 && s.phase !== 'active') {
+    s.cursor = { ex: at, set: firstPending(mate) };
+    s.draft = null; s.hint = null;
+  }
+  if (s.rest) delete s.rest.swap;
+  ev(s, now, 'unpair', ex.key, mate.key);
+  return touch(s, now);
 }
 
 /** Move to another exercise that still has sets to do. A set in progress is put down first. */
@@ -477,7 +524,10 @@ export function restStats(s) {
   let planned = 0; let actual = 0; let n = 0;
   for (const ex of s.exercises) {
     ex.sets.forEach((st, i) => {
-      if (i === 0 || st.status !== 'done' || !Number.isFinite(st.restBeforeSec) || ex.sets[i - 1].status !== 'done') return;
+      if (st.status !== 'done' || !Number.isFinite(st.restBeforeSec)) return;
+      // In a pair the rest before a set is the short one after the other exercise's set.
+      if (ex.pair && Number.isFinite(st.restPlannedSec)) { planned += st.restPlannedSec; actual += st.restBeforeSec; n++; return; }
+      if (i === 0 || ex.sets[i - 1].status !== 'done') return;
       planned += ex.restSec; actual += st.restBeforeSec; n++;
     });
   }
@@ -688,7 +738,8 @@ export function readLog(s) {
     else if (type === 'set_finish') text = `${setOf(d[0], d[1])} finished: ${d[2]} reps${d[3] != null ? ` at ${d[3]}` : ''}${d[4] != null ? `, ${d[4]} s under load` : ''}`;
     else if (type === 'adjust') text = `${setOf(d[0], d[1])}: ${d[2] === 'rir' ? 'reps left in the tank' : d[2] === 'load' ? 'weight' : 'reps'} ${d[3] ?? 'not set'} → ${d[4] ?? 'not set'}${d[5] === 'after_finish' ? ' during the rest' : ''}`;
     else if (type === 'undo') text = `${setOf(d[0], d[1])}: finish undone`;
-    else if (type === 'rest_start') text = `Rest of ${mmss(d[0])} started${d[1] === 'next_exercise' ? ', moving to the next exercise' : ''}`;
+    else if (type === 'rest_start') text = `Rest of ${mmss(d[0])} started${d[1] === 'next_exercise' ? ', moving to the next exercise' : d[1] === 'other_of_pair' ? ', then the other exercise of the pair' : ''}`;
+    else if (type === 'unpair') text = `${name(d[0])} and ${name(d[1])}: no longer done in turns today`;
     else if (type === 'rest_extend') text = `Rest made ${d[0]} s longer`;
     else if (type === 'rest_skip') text = 'Rest cut short';
     else if (type === 'skip_set') text = `${setOf(d[0], d[1])} skipped`;

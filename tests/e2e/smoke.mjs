@@ -2,6 +2,7 @@
 //
 //   node tests/e2e/smoke.mjs          run everything
 //   node tests/e2e/smoke.mjs --shots  also save screenshots to report/shots
+//   node tests/e2e/smoke.mjs --only=H one part only, by its letter
 //
 // Four parts:
 //   A  no Claude: built-in coach, rule-based plan, a full workout, history
@@ -25,6 +26,7 @@ import { canned } from './canned.mjs';
 import { RULES_VERSION } from '../../js/domain/rules.js';
 
 const SHOTS = process.argv.includes('--shots');
+const ONLY = (process.argv.find((x) => x.startsWith('--only=')) || '').slice(7); // one part by its letter, for a quick run
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const shotDir = join(ROOT, 'report', 'shots');
 if (SHOTS) mkdirSync(shotDir, { recursive: true });
@@ -91,6 +93,7 @@ async function say(page, text) {
 /** Run one part; if a step throws, record where the app was and move on to the next part. */
 let lastPage = null;
 async function guarded(fn) {
+  if (ONLY && !part.startsWith(ONLY)) return;
   try { await fn(); } catch (e) {
     let where = '';
     try { where = `${lastPage.url()} :: ${(await lastPage.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 400)}`; } catch { /* page gone */ }
@@ -128,6 +131,19 @@ async function restEndsIn(page, ms) {
   }, ms);
   await page.reload();
   await main(page).waitFor();
+}
+
+/**
+ * Tap a button that starts a workout. When the app offers to enter the missing
+ * weights first, carry on without: each is then asked for when it comes up.
+ */
+async function startWith(page, id) {
+  await page.getByTestId(id).click();
+  await skipWeights(page, id !== 'today-start');
+}
+async function skipWeights(page, orPick = false) {
+  await until(async () => page.url().includes('#workout') || (await page.getByTestId('weights-first').count()) > 0 || (orPick && (await page.getByTestId('today-pick').count()) > 0), 2500);
+  if (await page.getByTestId('weights-first').count()) await page.getByTestId('weights-skip').click();
 }
 
 /** Tap the main action and wait for the screen to move on. */
@@ -332,7 +348,7 @@ await guarded(async () => {
   await shot(page, '06-day');
 
   // --- workout: starting weight, set, result, rest
-  await page.getByTestId('start-day').click();
+  await startWith(page, 'start-day');
   await main(page).waitFor();
   check('workout has its own screen without the tab bar', (await page.getByRole('navigation', { name: 'Main' }).count()) === 0);
   check('a new exercise starts with a sketch of what to look for', (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch')) === 'dumbbells' && /General look of a dumbbell\. Yours may differ/.test(await page.getByTestId('sketch-note').textContent()));
@@ -530,7 +546,7 @@ await guarded(async () => {
     && /Up next · planned for/.test(await onList.first().textContent()) && /Lower body A/.test(await onList.first().textContent())
     && /Upper body A/.test(await onList.last().textContent()) && /done this round/.test(await onList.last().textContent()) && (await page.getByTestId('next-round').count()) === 1, await page.getByTestId('timeline').textContent());
   await shot(page, '29-plan-after-workout');
-  await page.getByTestId('train-now').click();
+  await startWith(page, 'train-now');
   await page.getByTestId('today-pick').waitFor();
   let pickText = await page.getByTestId('today-pick').textContent();
   check('"Train now" on an unplanned day shows what makes sense and why, before anything starts', /Lower body A/.test(pickText) && /2 days earlier than planned\. These muscles are rested/.test(pickText)
@@ -543,7 +559,7 @@ await guarded(async () => {
 
   await daysPass(page, 2); // now it is the planned day
   check('on the planned day the plan says "today"', /Up next · today/.test(await page.getByTestId('plan-session').first().textContent()));
-  await page.getByTestId('train-now').click();
+  await startWith(page, 'train-now');
   await main(page).waitFor();
   check('and "Train now" simply starts the next session', (await page.getByTestId('exercise-name').textContent()) === 'Goblet squat' && (await state(page)).sessions.slice(-1)[0].title === 'Lower body A');
   await page.getByRole('button', { name: 'End workout' }).click();
@@ -592,12 +608,13 @@ await guarded(async () => {
   check('and brought back', (await comeRound.count()) === 1 && (await onList.count()) === 6);
 
   await daysPass(page, 10); // twelve days since the last workout
-  await page.getByTestId('train-now').click();
+  await startWith(page, 'train-now');
   await page.getByTestId('today-pick').waitFor();
   pickText = await page.getByTestId('today-pick').textContent();
   check('after a long break the plan says so and offers a lighter session', /12 days since your last workout\. Loads are 10% lighter/.test(pickText) && (await page.getByTestId('ease').getAttribute('aria-checked')) === 'true', pickText);
   await page.getByTestId('today-other').click();
   await page.locator('.sheet button.row').filter({ hasText: 'Upper body B' }).click();
+  await skipWeights(page);
   await main(page).waitFor();
   st = await state(page);
   check('a hand-picked session starts, lighter today, and goes to the front of the plan', (await page.getByTestId('exercise-name').textContent()) === 'Dumbbell bench press' && (await page.getByTestId('target-load').textContent()).trim() === '18 kg'
@@ -737,7 +754,7 @@ await guarded(async () => {
 
   // in-session: rules at once, Claude a moment later
   api.state.delayMs = 900;
-  await page.getByTestId('train-now').click(); // the first session of the plan: nothing to review, it starts
+  await startWith(page, 'train-now'); // the first session of the plan: nothing to review, it starts
   await main(page).waitFor();
   await page.fill('#start-weight', '20'); await sleep(120); await tap(page);
   await tap(page);
@@ -781,12 +798,17 @@ await guarded(async () => {
   await page.getByRole('button', { name: 'End workout' }).click();
   await page.getByRole('button', { name: 'Finish and save' }).click();
   await page.getByRole('heading', { name: 'Workout saved' }).waitFor();
-  check('the summary is there at once from the rules, and says Claude is reading the workout', /sets done in \d+ min/.test(await page.getByTestId('update-message').textContent()) && /Claude is reading this now/.test(await page.getByTestId('checking').textContent()), await page.getByTestId('coach-summary').textContent());
+  st = await state(page);
+  const thinking = st.proposals.find((p) => p.mode === 'post_session');
+  check('at the end of a workout Claude reviews it: the summary says it is thinking, and the rules stay out of it', /Claude is thinking/.test(await page.getByTestId('checking').textContent())
+    && (await page.getByTestId('update-message').count()) === 0 && (await page.getByTestId('coach-summary').getByTestId('change').count()) === 0 && (await page.getByTestId('no-changes').count()) === 0
+    && thinking.checking === 'claude' && thinking.source === 'claude' && thinking.changes.length === 0 && st.plan.days[0].exercises[0].load.value === 20, JSON.stringify(thinking));
+  await shot(page, '43-thinking');
   await page.getByTestId('summary-source').filter({ hasText: 'From Claude' }).waitFor({ timeout: 5000 });
   api.state.reviewDelayMs = 0;
   const card = page.getByTestId('coach-summary').getByTestId('change').first();
   st = await state(page);
-  check("Claude's review then takes the place of the rule-based one: its summary, and its changes with the app's own old value", (await page.getByTestId('update-message').textContent()) === 'Solid session.'
+  check("Claude's answer then fills it in: its summary, and its changes with the app's own old value", (await page.getByTestId('update-message').textContent()) === 'Solid session.'
     && /Weight: 20 kg → 22 kg/.test(await card.textContent()) && /Test double/.test(await card.textContent()) && (await page.getByTestId('checking').count()) === 0, await page.getByTestId('coach-summary').textContent());
   check('and the change is already in the plan, with nothing to accept', /In the plan/.test(await card.textContent()) && st.plan.days[0].exercises[0].load.value === 22 && st.proposals.filter((p) => p.mode === 'post_session').length === 1
     && st.proposals.find((p) => p.mode === 'post_session').changes.every((c) => c.status === 'applied'), JSON.stringify(st.proposals.map((p) => p.changes.map((c) => [c.field, c.status]))));
@@ -803,7 +825,7 @@ await guarded(async () => {
     && /Updated .* by Claude/.test(await page.getByTestId('last-update').textContent()) && /Solid session/.test(await page.getByTestId('last-update').textContent())
     && /second session moves up/.test(st.proposals.find((p) => p.mode === 'post_session').schedule), JSON.stringify(st.plan.queue));
   check('a full cycle stays on show after the update', (await page.getByTestId('timeline').getByTestId('plan-session').count()) === 3 && /done this round/.test(await page.getByTestId('timeline').getByTestId('plan-session').last().textContent()));
-  await page.getByTestId('train-now').click();
+  await startWith(page, 'train-now');
   await page.getByTestId('today-pick').waitFor();
   check('off the planned day, the rule-based pick shows at once', /From the training rules/.test(await page.getByTestId('today-pick').textContent()) || /From Claude/.test(await page.getByTestId('today-pick').textContent()));
   await page.getByTestId('today-pick').getByText('From Claude').waitFor({ timeout: 5000 });
@@ -815,7 +837,7 @@ await guarded(async () => {
   check("Claude's pick replaces it, with its reason", /Full body/.test(aiPick) && /Test double: -\d+ days off plan/.test(aiPick) && /5% lighter today/.test(aiPick), aiPick);
   check('the rule-based pick stays one tap away', (await page.getByRole('button', { name: /Use the rule-based pick instead: Lower body/ }).count()) === 1);
   await shot(page, '32-train-now-claude');
-  await page.getByTestId('today-start').click();
+  await startWith(page, 'today-start');
   await main(page).waitFor();
   st = await state(page);
   check("starting accepts Claude's update: its order and rest days, minus the session it made up", st.plan.queue.order.slice(0, 2).join() === 'd3,d2' && st.plan.days[2].restAfter === 3 && st.plan.days[1].restAfter === 0
@@ -827,8 +849,8 @@ await guarded(async () => {
 
   // the list runs out: Claude plans the next run from the results
   for (const name of ['Lower body']) { await openSession(page, name); await page.getByTestId('skip-session').click(); await tab(page, 'Plan').click(); await page.getByTestId('timeline').waitFor(); }
-  await page.getByTestId('train-now').click();
-  await page.getByTestId('today-start').click();
+  await startWith(page, 'train-now');
+  await startWith(page, 'today-start');
   await main(page).waitFor();
   await runWorkout(page, { stop: async () => (await state(page)).sessions.slice(-1)[0].exercises[0].sets[0].status === 'done' });
   await page.getByRole('button', { name: 'End workout' }).click();
@@ -883,8 +905,8 @@ await guarded(async () => {
   await tab(page, 'Plan').click();
   await page.getByTestId('timeline').waitFor();
   await page.getByTestId('plan-session').first().click();
-  await page.getByTestId('start-day').click();
-  if (await until(() => page.getByTestId('today-start').isVisible(), 800)) await page.getByTestId('today-start').click();
+  await startWith(page, 'start-day');
+  if (await until(() => page.getByTestId('today-start').isVisible(), 800)) await startWith(page, 'today-start');
   await main(page).waitFor();
   await runWorkout(page, { stop: async () => (await state(page)).sessions.slice(-1)[0].exercises[0].sets[0].status === 'done' });
   await context.setOffline(true);
@@ -892,7 +914,7 @@ await guarded(async () => {
   await page.getByRole('button', { name: 'End workout' }).click();
   await page.getByRole('button', { name: 'Finish and save' }).click();
   await page.getByRole('heading', { name: 'Workout saved' }).waitFor();
-  check('with no connection the workout is saved and the rules update the plan', /No connection\. Claude reviews this workout/.test(await page.getByTestId('pending').textContent())
+  check('with no connection the workout is saved and the rules update the plan', /No connection, so the training rules updated the plan\. Claude reviews this workout/.test(await page.getByTestId('pending').textContent())
     && /From the training rules/.test(await page.getByTestId('summary-source').textContent()) && api.state.requests.length === sent, await page.getByTestId('coach-summary').textContent());
   await page.getByTestId('to-plan').click();
   check('the plan says it will be updated when the phone is online', /The plan will be updated when you are online/.test(await page.getByTestId('plan-pending').textContent()));
@@ -900,6 +922,26 @@ await guarded(async () => {
   await context.setOffline(false);
   check('back online, Claude reviews that workout and the notice goes', await until(async () => (await page.getByTestId('plan-pending').count()) === 0
     && (await state(page)).proposals.some((p) => p.mode === 'post_session' && p.source === 'claude' && !p.pending && p.message === 'Solid session.'), 8000), JSON.stringify((await state(page)).proposals.slice(-1)));
+
+  // Claude cannot be reached for another reason: the rules update the plan, the reason is said, and it can be asked again
+  await page.getByTestId('plan-session').first().click();
+  await startWith(page, 'start-day');
+  if (await until(() => page.getByTestId('today-start').isVisible(), 800)) await startWith(page, 'today-start');
+  await main(page).waitFor();
+  await runWorkout(page, { stop: async () => (await state(page)).sessions.slice(-1)[0].exercises[0].sets[0].status === 'done' });
+  api.state.fail = 401;
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Finish and save' }).click();
+  await page.getByRole('heading', { name: 'Workout saved' }).waitFor();
+  await page.getByTestId('review-failed').waitFor({ timeout: 8000 });
+  st = await state(page);
+  const failed = st.proposals.filter((p) => p.mode === 'post_session').slice(-1)[0];
+  check('when Claude fails at the end of a workout, the rules update the plan and the screen says why', /could not review this workout/.test(await page.getByTestId('review-failed').textContent()) && /rejected the API key/.test(await page.getByTestId('review-failed').textContent())
+    && /From the training rules/.test(await page.getByTestId('summary-source').textContent()) && failed.source === 'rules' && !failed.checking && !failed.pending && /sets done in \d+ min/.test(failed.message), JSON.stringify(failed));
+  api.state.fail = null;
+  await page.getByTestId('review-retry').click();
+  check('"Ask Claude again" gets its review after all', await until(async () => (await state(page)).proposals.some((p) => p.id === failed.id && p.source === 'claude' && !p.failed && p.message === 'Solid session.'), 8000)
+    && (await page.getByTestId('review-failed').count()) === 0, JSON.stringify((await state(page)).proposals.slice(-1)));
   check('no script errors in part B', errors.length === 0, errors.join(' | '));
   await context.close();
 });
@@ -937,7 +979,7 @@ await guarded(async () => {
     && /from the model's memory, not checked/.test(await page.getByTestId('gym-machines').textContent()) && /cannot search the web/.test(await page.getByTestId('gym-machines').textContent()));
   await page.getByRole('button', { name: 'Done' }).click();
   await tab(page, 'Plan').click();
-  await page.getByTestId('train-now').click();
+  await startWith(page, 'train-now');
   await page.fill('#start-weight', '22'); await sleep(120); await tap(page);
   await tap(page); await tap(page);
   await page.waitForFunction(() => Object.keys(JSON.parse(localStorage.getItem('__mockdb') || '{}')).some((k) => k.includes('/sessions/')), null, { timeout: 8000 });
@@ -1025,7 +1067,7 @@ await guarded(async () => {
   const old = (await state(page)).plan;
   check('a plan saved by the earlier version is carried over: same sessions, now a list with rest days', (await page.getByTestId('plan-session').count()) === 2 && /2 rest days/.test(await page.getByTestId('rest-gap').first().textContent())
     && (await page.getByTestId('train-now').textContent()).trim() === 'Train now' && old.days.length === 2 && old.days.every((d) => d.exercises.length >= 3));
-  await page.getByTestId('train-now').click();
+  await startWith(page, 'train-now');
   await main(page).waitFor();
   const up = (await state(page)).plan;
   check('and it trains straight away', up.perWeek === 2 && up.days.map((d) => d.restAfter).join('') === '23' && up.queue.order.join() === 'd1,d2' && !('weekday' in up.days[0]), JSON.stringify(up.queue));
@@ -1104,7 +1146,7 @@ await guarded(async () => {
   check('the plan request tells the model about the exact machine on the exercise', planReq.available_exercises.find((x) => x.id === 'leg_press').machine.model === 'Selection 900 Leg Press');
   await openSession(page, 'Lower body');
   check('the day preview names the machine and what it isolates', /Technogym Selection 900 Leg Press · isolates quadriceps first, then glutes/.test(await page.getByTestId('day-machine').first().textContent()), await page.getByTestId('day-machine').first().textContent());
-  await page.getByTestId('start-day').click();
+  await startWith(page, 'start-day');
   await main(page).waitFor();
   const about = page.getByTestId('machine-info');
   await about.locator('summary').click();
@@ -1129,7 +1171,7 @@ await guarded(async () => {
   await tab(page, 'Plan').click();
   await page.getByTestId('timeline').waitFor();
   await openSession(page, 'Upper body'); // picked by hand, out of turn
-  await page.getByTestId('start-day').click();
+  await startWith(page, 'start-day');
   await main(page).waitFor();
   await page.fill('#start-weight', '20'); await sleep(120); await tap(page);
   await tap(page);
@@ -1236,7 +1278,7 @@ await guarded(async () => {
   await shot(page, '40-day-optional');
 
   // The whole planned session, one tap per set.
-  await page.getByTestId('start-day').click();
+  await startWith(page, 'start-day');
   await main(page).waitFor();
   const planned = d1.exercises.reduce((n, x) => n + x.sets, 0);
   let lastLabel = '';
@@ -1305,6 +1347,155 @@ await guarded(async () => {
   check('no script errors in part G', errors.length === 0, errors.join(' | '));
   await context.close();
 });
+
+// ---------------------------------------------------------------------------
+// H  Version 1.3: weights offered before the workout, the step field, the band
+//    at the top that does not scroll ("Train" / "Push"), and pairs.
+// ---------------------------------------------------------------------------
+part = 'H pairs and the band';
+await guarded(async () => {
+  const { context, page, errors } = await newPage();
+  await page.goto(`${BASE}#coach`);
+  await page.getByText('Tell me about your goal').waitFor();
+  await say(page, "I want to build muscle. I've trained for a year. I can come four times a week for 60 minutes.");
+  await page.getByText(/movements you want to skip/).waitFor();
+  await page.getByRole('button', { name: 'No, nothing' }).click();
+  await page.getByTestId('build-plan').click();
+  await page.getByTestId('open-plan').click();
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor();
+  let st = await state(page);
+  const [A, B, C] = st.plan.days[0].exercises;
+  const min0 = st.plan.days[0].estMinutes;
+
+  // --- the step field: a typed 1 stays, also on the way to 1.25
+  await page.getByTestId('plan-session').first().click();
+  await page.getByTestId('edit-weight').first().click();
+  await page.fill('#weight-value', '20');
+  await page.getByTestId('weight-step-other').click();
+  check('"Other" opens the step field ready to type in', await until(() => page.evaluate(() => document.activeElement && document.activeElement.id === 'weight-step-value')));
+  await page.locator('#weight-step-value').pressSequentially('1', { delay: 60 });
+  await sleep(300);
+  check('a step of 1 can be typed: the 1 stays in the field', (await page.inputValue('#weight-step-value')) === '1', await page.inputValue('#weight-step-value'));
+  await page.locator('#weight-step-value').pressSequentially('.25', { delay: 60 });
+  await sleep(200);
+  check('and so can 1.25, one key at a time', (await page.inputValue('#weight-step-value')) === '1.25', await page.inputValue('#weight-step-value'));
+  await page.getByTestId('weight-save').click();
+  check('the weight and its step are saved together', await until(async () => { const w = (await state(page)).weights[A.exerciseId]; return w && w.value === 20 && w.step === 1.25; }), JSON.stringify((await state(page)).weights));
+  await page.getByRole('button', { name: 'Back' }).click();
+  await page.getByTestId('train-now').waitFor();
+
+  // --- pairs: one switch on the plan
+  const toggle = page.getByTestId('pairs-toggle');
+  check('the plan offers to pair exercises, and says what it saves', (await toggle.getAttribute('aria-checked')) === 'false' && /about \d+ min less a session/.test(await toggle.textContent()) && /both stations free/.test(await toggle.textContent()), await toggle.textContent());
+  await toggle.click();
+  st = await state(page);
+  const d1 = st.plan.days[0];
+  check('switched on, exercises that use different muscles are paired and the sessions get shorter', (await toggle.getAttribute('aria-checked')) === 'true' && st.profile.pairs === true
+    && d1.exercises[0].pair && d1.exercises[0].pair === d1.exercises[1].pair && d1.estMinutes <= min0 - 8 && d1.exercises.map((x) => x.exerciseId).join() === [A, B, C].map((x) => x.exerciseId).concat(d1.exercises.slice(3).map((x) => x.exerciseId)).join(),
+  `${d1.estMinutes} min against ${min0}`);
+  check('the next session shows its pairs', new RegExp(`${A.name} \\+ ${B.name}`).test(await page.getByTestId('plan-session').first().textContent()) && new RegExp(`${d1.estMinutes} min`).test(await page.getByTestId('plan-session').first().textContent()));
+  await shot(page, '44-pairs-switch');
+  await page.getByTestId('plan-session').first().click();
+  await page.getByTestId('day-pairs').waitFor();
+  const firstCard = page.getByTestId('day-exercise').first();
+  check('the session says which exercises are done in turns, why they fit, and the rest between them', /3 pairs in this session/.test(await page.getByTestId('day-pairs').textContent()) && (await page.getByTestId('pair-with').count()) === 6
+    && new RegExp(`In turns with ${B.name}: opposite muscles\\. Rest 1:10 min after each set`).test(await firstCard.textContent()) && (await page.locator('[data-testid=day-exercise][data-pair=""]').count()) === 1, await firstCard.textContent());
+  await shot(page, '45-day-pairs');
+
+  // --- before the workout: the exercises with no weight yet, one after another
+  await page.getByTestId('start-day').click();
+  const sheet = page.getByTestId('weights-first');
+  await sheet.waitFor();
+  const blank = d1.exercises.filter((x) => x.loadType !== 'bodyweight' && !x.load);
+  check('starting a session with weights missing offers to enter them first', new RegExp(`${blank.length} exercises in this session have no weight yet`).test(await sheet.textContent())
+    && (await page.getByTestId('weights-first-count').textContent()) === `1 of ${blank.length}` && (await page.getByTestId('weights-first-name').textContent()) === blank[0].name && !page.url().includes('#workout'), await sheet.textContent());
+  await shot(page, '46-weights-first');
+  await page.getByTestId('weights-first-save').click();
+  check('nothing is saved without a number', (await page.getByTestId('weights-first-count').textContent()) === `1 of ${blank.length}` && !(await state(page)).weights[blank[0].exerciseId]);
+  await page.fill('#first-weight', '30');
+  await page.getByTestId('first-step-other').click();
+  await page.locator('#first-step-value').pressSequentially('1', { delay: 60 });
+  await sleep(250);
+  await page.getByTestId('weights-first-save').click();
+  await until(async () => (await page.getByTestId('weights-first-count').textContent()) === `2 of ${blank.length}`);
+  st = await state(page);
+  check('a weight entered there is saved with its step, and the next exercise comes up with an empty field', st.weights[blank[0].exerciseId]?.value === 30 && st.weights[blank[0].exerciseId]?.step === 1
+    && st.plan.days[0].exercises.find((x) => x.exerciseId === blank[0].exerciseId).load.value === 30 && (await page.getByTestId('weights-first-name').textContent()) === blank[1].name && (await page.inputValue('#first-weight')) === '', JSON.stringify(st.weights));
+  await page.getByTestId('weights-first-next').click();
+  check('one can be skipped: it is asked for when it comes up', await until(async () => (await page.getByTestId('weights-first-count').textContent()) === `3 of ${blank.length}`) && !(await state(page)).weights[blank[1].exerciseId]);
+  await page.getByTestId('weights-skip').click();
+  await main(page).waitFor();
+  st = await state(page);
+  check('the workout starts with the weights that were entered', page.url().includes('#workout') && (await main(page).textContent()).trim() === 'Start set' && (await page.getByTestId('target-load').textContent()).trim() === '20 kg'
+    && st.sessions[0].exercises[1].sets[0].target.load === 30 && st.sessions[0].exercises[2].sets[0].target.load === null);
+
+  // --- the band at the top: it stays put, and says what to do
+  const band = page.getByTestId('now');
+  check('before the first set the band says "Ready"', (await page.getByTestId('now-word').textContent()) === 'Ready' && (await band.getAttribute('data-now')) === 'ready');
+  check('a paired exercise says who it takes turns with', new RegExp(`In turns with ${B.name}: a set here, 1:10 min rest, a set there`).test(await page.getByTestId('pair-line').textContent()), await page.getByTestId('pair-line').textContent());
+  await tap(page);
+  check('while a set runs the band says "Train", with the target and the set clock', (await page.getByTestId('now-word').textContent()) === 'Train' && /^Stop at \d+ · 00:0\d$/.test((await page.getByTestId('set-clock').textContent()).trim()), await band.textContent());
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await sleep(150);
+  const scrolled = await page.evaluate(() => ({ y: window.scrollY, top: document.querySelector('[data-testid=now]').getBoundingClientRect().top, bottom: document.querySelector('[data-testid=now]').getBoundingClientRect().bottom, h: window.innerHeight }));
+  check('the band does not scroll away with the page', scrolled.y > 40 && scrolled.top >= 0 && scrolled.bottom < scrolled.h / 2, JSON.stringify(scrolled));
+  await shot(page, '47-train');
+  await page.evaluate(() => window.scrollTo(0, 0));
+
+  // --- a pair in the workout: a set of one, a short rest, a set of the other
+  await tap(page);
+  st = await state(page);
+  let w = st.sessions[0];
+  check('after a set of the first exercise, the second of the pair is up', w.cursor.ex === 1 && w.cursor.set === 0 && w.rest.swap === true && w.rest.plannedSec === 70 && (await page.getByTestId('exercise-name').textContent()) === B.name);
+  const left = secs(await page.getByTestId('rest-timer').textContent());
+  check('the rest between them is the short one, counted down in the band', left <= 70 && left >= 66 && new RegExp(`Go to ${B.name}\\. It starts when this runs out`).test(await page.getByTestId('now-line').textContent())
+    && (await band.getAttribute('data-now')) === 'rest', `${left} ${await page.getByTestId('now-line').textContent()}`);
+  await shot(page, '48-pair-rest');
+  await restEndsIn(page, 1200);
+  check('when the time is up the set of the other exercise starts, and the band says "Train" in place of the clock', await until(async () => (await phase(page)) === 'active', 6000)
+    && (await page.getByTestId('now-word').textContent()) === 'Train' && /started by itself/.test(await page.getByTestId('set-clock').textContent()) && (await page.getByTestId('rest-timer').count()) === 0
+    && (await page.getByTestId('exercise-name').textContent()) === B.name, await band.textContent());
+  await tap(page); // finish B1
+  check('then back to the first one', (await state(page)).sessions[0].cursor.ex === 0 && (await state(page)).sessions[0].cursor.set === 1 && (await page.getByTestId('exercise-name').textContent()) === A.name);
+  await tap(page); await tap(page); // A2
+  await tap(page); await tap(page); // B2
+  await tap(page); // start A3, its last set
+  check('on a set that goes past its target the band says "Push"', (await page.getByTestId('now-word').textContent()) === 'Push' && /^Last set: \d+ or more · 00:0\d$/.test((await page.getByTestId('set-clock').textContent()).trim()), await band.textContent());
+  await shot(page, '49-push');
+  await tap(page); // finish A3; B3 is up
+
+  // --- the rest runs out with "start by itself" switched off: the word shows, the set waits for the tap
+  await page.evaluate(() => localStorage.setItem('seria.settings.v1', JSON.stringify({ ...JSON.parse(localStorage.getItem('seria.settings.v1') || '{}'), autoStart: false })));
+  await restEndsIn(page, 800);
+  check('with the automatic start off, the band still says what to do when the time comes', await until(async () => (await band.getAttribute('data-now')) === 'go', 5000)
+    && (await page.getByTestId('now-word').textContent()) === 'Push' && /Rest is over/.test(await page.getByTestId('now-line').textContent()) && (await phase(page)) === 'rest' && (await page.getByTestId('rest-timer').count()) === 0, await band.textContent());
+  await tap(page); await tap(page); // B3: the first pair is done
+  st = await state(page);
+  w = st.sessions[0];
+  check('when the pair is done the workout moves on to the next exercise', w.cursor.ex === 2 && w.rest.betweenExercises === true && !w.rest.swap && /Time to change station/.test(await page.getByTestId('now-line').textContent()), JSON.stringify(w.rest));
+  check('the rests inside a pair are saved as the short ones they were planned to be', w.exercises[0].sets[1].restPlannedSec === 70 && w.exercises[1].sets[0].restPlannedSec === 70 && w.log.filter((e) => e[1] === 'rest_start' && e[3] === 'other_of_pair').length === 5);
+
+  // --- a station is taken: split the pair for today
+  await page.getByTestId('busy').click();
+  check('"Machine busy?" offers to split a pair', /done in turns with/.test(await page.locator('.sheet').textContent()) && (await page.getByTestId('unpair').count()) === 1);
+  await page.getByTestId('unpair').click();
+  st = await state(page);
+  w = st.sessions[0];
+  check('split, the two are done one after the other today; the plan keeps the pair', !w.exercises[2].pair && !w.exercises[3].pair && !!w.exercises[4].pair && (await page.getByTestId('pair-line').count()) === 0
+    && !!st.plan.days[0].exercises[2].pair && w.log.some((e) => e[1] === 'unpair'), JSON.stringify(w.exercises.map((x) => x.pair || '-')));
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Finish and save' }).click();
+  await page.getByRole('heading', { name: 'Workout saved' }).waitFor();
+  check('the saved workout says which exercises were done in turns', (await page.getByTestId('session-pair').count()) === 2 && new RegExp(`Done in turns with ${B.name}`).test(await page.getByTestId('session-pair').first().textContent())
+    && /1:10 min planned/.test(await page.getByTestId('rest-stats').textContent()), await page.getByTestId('rest-stats').textContent());
+  await page.getByTestId('to-plan').click();
+  await page.getByTestId('pairs-toggle').click();
+  st = await state(page);
+  check('pairs can be switched off again: one exercise at a time, as before', st.profile.pairs === false && st.plan.days.every((d) => d.exercises.every((x) => !x.pair)) && (await page.getByTestId('pairs-toggle').getAttribute('aria-checked')) === 'false');
+  check('no script errors in part H', errors.length === 0, errors.join(' | '));
+  await context.close();
+});
+
 
 await browser.close();
 app.close();

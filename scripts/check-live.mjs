@@ -86,25 +86,45 @@ try {
   check('every session lists optional extras for the end, and the next one names them', extras.length === 6 && extras.every((n) => n >= 1 && n <= 2) && /^Optional at the end: \w/.test(await page.getByTestId('up-next-optional').textContent().catch(() => '')), extras.join());
   check('the plan reads as a list with one "Train now" button', (await page.getByTestId('rest-gap').count()) === 5 && (await page.getByTestId('train-now').textContent()).trim() === 'Train now');
 
-  // One full set, still offline: starting weight, start, one tap to finish, rest timer.
+  // Pairs: one switch on the plan; the saved plan follows.
+  await page.getByTestId('pairs-toggle').click();
+  const paired = await page.evaluate(() => { const s = JSON.parse(localStorage.getItem('seria.state.v1')); return [s.profile.pairs, s.plan.days.filter((d) => d.exercises.some((x) => x.pair)).length]; });
+  check('exercises can be paired to save time with one switch on the plan', paired[0] === true && paired[1] >= 4 && (await page.getByTestId('pairs-toggle').getAttribute('aria-checked')) === 'true', paired.join());
+
+  // One full set, still offline. First the offer to enter the missing weights, with a step of 1 typed by hand.
   await page.getByTestId('train-now').click();
+  await page.getByTestId('weights-first').waitFor({ timeout: 5000 });
+  const offered = (await page.getByTestId('weights-first-count').textContent()).trim();
+  await page.fill('#first-weight', '20');
+  await page.getByTestId('first-step-other').click();
+  await page.locator('#first-step-value').pressSequentially('1', { delay: 60 });
+  await sleep(250);
+  const stepKept = (await page.inputValue('#first-step-value')) === '1';
+  await page.getByTestId('weights-first-save').click();
+  await page.waitForFunction(() => /^2 of/.test(document.querySelector('[data-testid=weights-first-count]')?.textContent || ''), null, { timeout: 5000 });
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('seria.state.v1')).weights.db_bench_press);
+  check('starting a session offers to enter the missing weights first, and a step of 1 can be typed', /^1 of \d+$/.test(offered) && stepKept && saved?.value === 20 && saved?.step === 1, `${offered} ${JSON.stringify(saved)}`);
+  await page.getByTestId('weights-skip').click();
   const main = page.getByTestId('main-action');
   await main.waitFor();
   const sketchSeen = (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch').catch(() => '')) === 'dumbbells';
-  await page.fill('#start-weight', '20'); await sleep(150);
-  for (const label of ['Save starting weight', 'Start set', 'Finish set']) {
+  const words = [(await page.getByTestId('now-word').textContent()).trim()];
+  for (const label of ['Start set', 'Finish set']) {
     await page.waitForFunction((l) => document.querySelector('[data-testid=main-action]')?.textContent.trim() === l, label, { timeout: 5000 });
+    if (label === 'Finish set') words.push((await page.getByTestId('now-word').textContent()).trim());
     await main.click();
   }
+  check('the band at the top of the workout says what to do: "Ready", then "Train" while the set runs', words.join() === 'Ready,Train', words.join());
   check('the workout shows a sketch of the equipment for the first exercise', false || sketchSeen);
   await page.getByTestId('rest-timer').waitFor({ timeout: 5000 });
   await page.reload();
   await page.getByTestId('rest-timer').waitFor({ timeout: 15000 });
   check('a set can be logged offline with one tap and survives a reload mid-rest', /^\d\d:\d\d$/.test((await page.getByTestId('rest-timer').textContent()).trim()) && (await page.getByTestId('last-set').count()) === 1);
-  check('the new screens are in the release: weights, activities, the long view, optional extras', await page.evaluate(async () => {
+  check('the new screens are in the release: weights, activities, the long view, optional extras, pairs, the model thinking', await page.evaluate(async () => {
     const [w, p] = await Promise.all([fetch('js/ui/weights.js').then((r) => r.text()), fetch('js/ui/plan.js').then((r) => r.text())]);
     const k = await fetch('js/ui/workout.js').then((r) => r.text());
-    return w.includes('What you lift now') && p.includes('Log another activity') && p.includes('The long view') && k.includes('Feel like a bit more?');
+    return w.includes('What you lift now') && p.includes('Log another activity') && p.includes('The long view') && k.includes('Feel like a bit more?')
+      && p.includes('Pair exercises to save time') && p.includes('is thinking') && w.includes('Weights for this session');
   }));
   await context.setOffline(false);
   check('no script errors', errors.length === 0, errors.join(' | '));

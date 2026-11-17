@@ -7,7 +7,8 @@ import { openaiParams } from '../js/ai/openai.js';
 import { providerSays, ROOM } from '../js/ai/errors.js';
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT, LOOKUP_SYSTEM, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, lookupRequest, parseLookup, trainNowRequest, nextRunRequest, activityRequest } from '../js/ai/prompts.js';
 import { recommend, completeDay, queueState } from '../js/domain/schedule.js';
-import { emptyProfile, generatePlan, missingFields } from '../js/domain/planner.js';
+import { askAgain, reviewRunning, setWeight } from '../js/ai/coach.js';
+import { emptyProfile, generatePlan, missingFields, units } from '../js/domain/planner.js';
 import { emptyEquipment, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail, machineForExercise, machineLabel, isAvailable, isListed, EQUIPMENT, allExercises, SKETCH_IDS, sketchForExercise, sketchForEquipment, EXERCISES } from '../js/domain/catalog.js';
 import { SKETCHES } from '../js/ui/sketch.js';
 import { emptyState, hydrate } from '../js/store.js';
@@ -556,4 +557,88 @@ test('optional extras: the model is told about them, can pick them, and saved da
   assert.deepEqual(loaded.plan.days.map((d) => d.optional.map((o) => o.exerciseId)), plan.days.map((d) => d.optional.map((o) => o.exerciseId)));
   assert.deepEqual(loaded.plan.days.map((d) => d.exercises), plan.days.map((d) => d.exercises));
   assert.equal(loaded.plan.version, plan.version);
+});
+
+test('pairs: the switch re-pairs the saved plan, the reader knows the words, and the model is told', () => {
+  const st0 = freshApp();
+  const paired = (plan) => plan.days.reduce((n, d) => n + units(d.exercises).filter((u) => u.length === 2).length, 0);
+  assert.equal(paired(st0.plan), 0);
+  const mins = st0.plan.days.map((d) => d.estMinutes);
+  // Turning it on is one saved setting; the plan follows by itself.
+  store.set({ profile: { ...st0.profile, pairs: true } });
+  let st = store.getState();
+  assert.ok(paired(st.plan) > 0, 'the saved plan has pairs now');
+  assert.ok(st.plan.days.every((d, i) => d.estMinutes <= mins[i]) && st.plan.days.some((d, i) => d.estMinutes < mins[i]), 'and its sessions are shorter');
+  // A change to the plan keeps the pairs right: take one of a pair out, and its partner is on its own or re-paired by the rules.
+  const day = st.plan.days[0];
+  const first = units(day.exercises).find((u) => u.length === 2);
+  recordUpdate({ mode: 'coach', source: 'rules', changes: [{ id: 'c-rm', exerciseKey: first[0].key, exerciseName: first[0].name, field: 'remove', value: null, from: '', to: '', reason: 'test' }] });
+  st = store.getState();
+  const left = st.plan.days[0].exercises;
+  assert.ok(!left.some((x) => x.key === first[0].key));
+  assert.ok(units(left).every((u) => u.length === 1 || (u[0].pair === u[1].pair)), 'no exercise is left pointing at a partner that is gone');
+  assert.ok(left.filter((x) => x.pair).every((x) => left.filter((y) => y.pair === x.pair).length === 2));
+  // Saved data from before: a profile that asks for pairs and a plan without the marks gains them on load.
+  const bare = JSON.parse(JSON.stringify(st));
+  for (const d of bare.plan.days) for (const x of d.exercises) delete x.pair;
+  assert.ok(paired(hydrate(bare).plan) > 0);
+  store.set({ profile: { ...store.getState().profile, pairs: false } });
+  assert.equal(paired(store.getState().plan), 0, 'and off again');
+
+  // The built-in reader, and what a model sends back.
+  assert.equal(parseProfile('can you superset my exercises to save time').patch.pairs, true);
+  assert.equal(parseProfile('pair the exercises please').patch.pairs, true);
+  assert.equal(parseProfile('no supersets, one exercise at a time').patch.pairs, false);
+  assert.equal(parseProfile('three times a week').patch.pairs, undefined);
+  assert.equal(mergeAiProfile(emptyProfile(), { pair_exercises: true }, emptyEquipment()).pairs, true);
+  assert.equal(mergeAiProfile({ ...emptyProfile(), pairs: true }, { pair_exercises: null }, emptyEquipment()).pairs, true, 'left alone when the model says nothing');
+
+  // The model: the rules, the switch, and the pairs of the plan and of a workout.
+  assert.match(SYSTEM_PROMPT, /\[PAR-1\]/); assert.match(SYSTEM_PROMPT, /\[PAR-2\]/); assert.match(SYSTEM_PROMPT, /pair_exercises/);
+  assert.ok('pair_exercises' in OUTPUT_SCHEMA.properties.profile.anyOf[0].properties);
+  store.set({ profile: { ...store.getState().profile, pairs: true } });
+  st = store.getState();
+  const req = JSON.parse(interviewRequest({ profile: st.profile, equipment: st.equipment, plan: st.plan, chat: [], message: 'hi' }));
+  assert.equal(req.profile_so_far.pair_exercises, true);
+  const dayWithPair = st.plan.days.find((d) => units(d.exercises).some((u) => u.length === 2));
+  const sent = req.current_plan.sessions.find((x) => x.session_id === dayWithPair.id).exercises;
+  const withMate = sent.find((x) => x.paired_with);
+  assert.ok(withMate && sent.some((x) => x.exercise_key === withMate.paired_with && x.paired_with === withMate.exercise_key) && withMate.rest_seconds_in_the_pair >= 30);
+  const s = train(dayWithPair.id);
+  const after = JSON.parse(sessionRequest({ mode: 'after_session', profile: st.profile, equipment: st.equipment, plan: st.plan, session: s, past: [] }));
+  assert.ok(after.session.exercises.some((x) => x.done_in_turns_with), 'a workout says which exercises were done in turns');
+  assert.ok(s.exercises.some((x) => x.pair) && s.exercises.every((x) => x.sets.every((y) => y.status === 'done')), 'and a paired workout runs to the end');
+});
+
+test('review after a workout: one the model never answered gets the rule-based update, and waits for a connection only when a model is there', () => {
+  freshApp();
+  // A workout whose review was cut off while the model was thinking: the page was closed.
+  let s = startTraining('d1');
+  let t = s.startedAt;
+  while (s.status === 'active') {
+    if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t);
+    s = S.finishSet(S.beginSet(s, t += 1000), t += 1000);
+    if (s.phase === 'optional') s = S.endSession(s, t);
+  }
+  store.putSession(s);
+  store.set({ plan: completeDay(store.getState().plan, 'd1') });
+  const reps0 = store.getState().plan.days[0].exercises[0].reps;
+  const u = store.addUpdate({ mode: 'post_session', source: 'claude', sessionId: s.id, message: '', changes: [], checking: 'claude', pending: false });
+  assert.ok(reviewRunning(), 'shown as thinking');
+  assert.equal(store.getState().plan.days[0].exercises[0].reps, reps0, 'nothing changes while the model thinks');
+  retryPending(); // on the next start, with no model connected any more
+  const got = store.getState().proposals.find((p) => p.id === u.id);
+  assert.equal(got.source, 'rules'); assert.ok(!got.checking && !got.pending && !reviewRunning());
+  assert.match(got.message, /^All \d+ sets done/);
+  assert.ok(got.changes.length > 0 && got.changes.every((c) => c.status === 'applied'));
+  assert.equal(store.getState().plan.days[0].exercises[0].reps, reps0 + 1, 'the plan is not left without its update');
+  assert.equal(reviewSession(s.id).id, u.id, 'and it is not doubled');
+  askAgain(u.id); // nobody to ask: it settles again as it was
+  const again = store.getState().proposals.find((p) => p.id === u.id);
+  assert.ok(!again.pending && !again.checking && again.changes.length === got.changes.length);
+  // Weights set by hand before a workout land in the plan, so the walk-through leaves nothing to ask.
+  const blank = store.getState().plan.days[1].exercises.find((x) => x.loadType !== 'bodyweight' && !x.load);
+  setWeight(blank.exerciseId, blank.loadType, 30, 1.25);
+  const filled = store.getState().plan.days[1].exercises.find((x) => x.exerciseId === blank.exerciseId);
+  assert.deepEqual(filled.load, { value: 30, step: 1.25 });
 });

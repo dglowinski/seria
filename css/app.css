@@ -111,6 +111,17 @@ details.note > summary { cursor: pointer; }
 .metrics small { font-size: 13px; }
 .timer { font-size: 72px; line-height: 1; }
 .timer.over { color: var(--muted); }
+/* The workout's top bar holds a second row that does not scroll: the countdown, or the word for what to do now. */
+.top.stacked { flex-direction: column; align-items: stretch; gap: 6px; padding-bottom: 12px; }
+.now { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.now .timer { font-size: 60px; }
+.now .chips { flex-direction: column; flex: none; }
+.now .chip { justify-content: center; }
+.note.thinking { border-color: var(--accent); }
+.note.thinking b { display: flex; align-items: center; gap: 8px; }
+.note.thinking .dots span { background: var(--accent); }
+.dots { display: inline-flex; align-items: center; flex: none; }
+li.paired { border-left: 3px solid var(--accent); }
 .tag { font-size: 12px; font-weight: 700; letter-spacing: .04em; border-radius: 6px; padding: 2px 7px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .tag.good { color: var(--accent); border-color: var(--accent); }
 .tag.warn { color: var(--warn); border-color: var(--warn); }

@@ -4,22 +4,36 @@
 
 import { html, useState, useEffect, useStore, Sheet, Dock, NumberInput, go, toast, restText, dateText, plural } from './kit.js';
 import * as store from '../store.js';
-import { fmtLoad, loadMethod, timeBreakdown, brokenExercises, weeklySets, buildOutlook, num, dayOptional, optionalMinutes } from '../domain/planner.js';
+import { fmtLoad, loadMethod, timeBreakdown, brokenExercises, weeklySets, buildOutlook, num, dayOptional, optionalMinutes, blankWeights, pairSavings, pairMate, pairRestSec, oppositePair, units } from '../domain/planner.js';
 import { recommend, plannedNext, timeline, queueState, dayStatus, skipDay, unskipDay, daysBetween } from '../domain/schedule.js';
 import { describeChange, canUndo, isApplied, EDITABLE } from '../domain/progression.js';
 import { exerciseById, machineForExercise, machineLabel, sketchForExercise } from '../domain/catalog.js';
 import { Sketch } from './sketch.js';
 import { RULES_VERSION, ACTIVITIES, EFFORTS, SCHEDULE, activityGroups } from '../domain/rules.js';
-import { undoChange, redoChange, editChange, recordUpdate, reviewEquipment, startTraining, reviewToday, logActivity, reviewWaiting } from '../ai/coach.js';
+import { undoChange, redoChange, editChange, recordUpdate, reviewEquipment, startTraining, reviewToday, logActivity, reviewWaiting, reviewRunning, askAgain } from '../ai/coach.js';
 import { sourceName, aiReady, aiName } from '../ai/ai.js';
 import { primeAudio } from '../platform.js';
-import { WeightSheet } from './weights.js';
+import { WeightSheet, WeightsFirst } from './weights.js';
 
-/** Start a session and open the workout screen. */
-function begin(dayId, opts) {
+/**
+ * Start a session and open the workout screen. When the session has exercises
+ * with no weight yet and `offer` is given, it is called instead, so the screen
+ * can offer to enter them first; the start then comes from there.
+ */
+function begin(dayId, opts, offer) {
   primeAudio();
   if (store.activeSession()) { go('workout'); return; }
+  const day = store.getState().plan?.days.find((d) => d.id === dayId);
+  if (offer && blankWeights(day).length) { offer({ dayId, opts }); return; }
   if (startTraining(dayId, opts)) go('workout');
+}
+
+/** The offer to enter missing weights before a workout, for the screens that start one. */
+function WeightsOffer({ first, setFirst }) {
+  const day = first ? store.getState().plan?.days.find((d) => d.id === first.dayId) : null;
+  if (!day) return null;
+  return html`<${WeightsFirst} day=${day} onClose=${() => setFirst(null)}
+    onStart=${() => { setFirst(null); begin(first.dayId, first.opts); }} />`;
 }
 
 const restText1 = (n) => (n === 0 ? 'no rest day' : n === 1 ? '1 rest day' : `${n} rest days`);
@@ -31,7 +45,7 @@ const whenText = (inDays, at) => (inDays <= 0 ? 'Today' : inDays === 1 ? 'Tomorr
  * the rest of the plan follows from it. The rules answer at once; the connected
  * model reviews the pick and can replace it. Starting accepts the update.
  */
-function TrainNow({ plan, sessions, prefer, onClose }) {
+function TrainNow({ plan, sessions, prefer, onClose, onStart }) {
   const [rec] = useState(() => recommend(plan, sessions, Date.now(), prefer ? { prefer } : {}));
   const wantAi = aiReady() && !prefer;
   const [ai, setAi] = useState({ state: wantAi ? 'busy' : 'off', pick: null });
@@ -57,7 +71,7 @@ function TrainNow({ plan, sessions, prefer, onClose }) {
     // Changes the model made to later sessions go in with the start, and show in the list of changes.
     if (ai.pick && pick === ai.pick && ai.pick.changes.length) recordUpdate({ mode: 'coach', source: ai.pick.via, changes: ai.pick.changes, message: `Changed when you started ${pick.title}.` });
     onClose();
-    begin(pick.dayId, { order: pick.order, rests: pick.rests, easePct: lighter ? pick.easePct : 0, why: pick.reason });
+    onStart(pick.dayId, { order: pick.order, rests: pick.rests, easePct: lighter ? pick.easePct : 0, why: pick.reason });
   };
 
   return html`<${Sheet} title=${prefer ? 'Start this session' : 'Train now'} onClose=${onClose}>
@@ -131,6 +145,7 @@ export function PlanScreen() {
   const state = useStore();
   const { plan } = state;
   const [sheet, setSheet] = useState(null);
+  const [first, setFirst] = useState(null); // a start held back while missing weights are offered
   const active = store.activeSession(state);
   if (!plan) {
     return html`
@@ -156,12 +171,19 @@ export function PlanScreen() {
   const blank = new Set(plan.days.flatMap((d) => d.exercises).filter((ex) => ex.loadType !== 'bodyweight' && !ex.load).map((ex) => ex.exerciseId)).size;
   const recent = state.sessions.filter((x) => x.kind === 'activity' && now - x.startedAt < 3 * 864e5).sort((a, b) => b.startedAt - a.startedAt);
   const waiting = reviewWaiting(state);
+  const thinking = reviewRunning(state);
   const outlook = buildOutlook(plan);
+  const pairsOn = !!state.profile.pairs;
+  const saves = pairSavings(plan);
+  const togglePairs = () => {
+    store.set({ profile: { ...state.profile, pairs: !pairsOn } });
+    toast(pairsOn ? 'Pairs off. One exercise at a time' : saves > 0 ? `Pairs on. Sessions are about ${saves} min shorter` : 'Pairs on');
+  };
 
   const trainNow = () => {
     if (active) { go('workout'); return; }
     // On the planned day there is nothing to discuss: start. On any other day, show what makes sense now.
-    if (rec.onSchedule) begin(rec.dayId, { order: rec.order, why: rec.reason }); else setSheet('train');
+    if (rec.onSchedule) begin(rec.dayId, { order: rec.order, why: rec.reason }, setFirst); else setSheet('train');
   };
 
   return html`
@@ -170,6 +192,8 @@ export function PlanScreen() {
         <div class="stack tight"><p class="eyebrow">Plan</p><h2>Your plan</h2></div>
         <small class="right" data-testid="plan-shape">${plan.perWeek} a week · any days</small>
       </div>
+      ${thinking && html`<div class="note thinking small" data-testid="plan-checking" role="status"><b><span class="dots" aria-hidden="true"><span></span><span></span><span></span></span>${sourceName(thinking.checking === true ? 'claude' : thinking.checking)} is updating your plan</b>
+        It is going through your last workout. ${thinking.source === 'rules' ? 'The training rules have updated the plan for now; its changes take their place when it answers.' : 'The changes show here when it answers.'}</div>`}
       ${waiting && html`<p class="note warn small" data-testid="plan-pending"><b>The plan will be updated when you are online</b>Your last workout is saved and the training rules have updated the plan. ${aiName()} reviews it as soon as there is a connection.</p>`}
       ${plan.lastUpdate && now - plan.lastUpdate.at < 14 * 864e5 && html`<div class="note small" data-testid="last-update"><b>Updated ${dateText(plan.lastUpdate.at)} by ${sourceName(plan.lastUpdate.by)}</b>${plan.lastUpdate.text}
         ${state.proposals.length > 0 && html`<div class="chips" style="margin-top:8px"><button class="chip" data-testid="see-changes" onClick=${() => go('review')}>What changed</button></div>`}</div>`}
@@ -187,7 +211,7 @@ export function PlanScreen() {
             ${i === 0 ? html`
               <div class="spread"><span class="eyebrow">${dueIn <= 0 ? 'Up next · today' : `Up next · planned for ${whenText(item.inDays, item.at).toLowerCase()}`}</span><span class="small muted">${item.day.estMinutes} min</span></div>
               <h3>${item.day.title}</h3>
-              <p class="small muted">${item.day.exercises.map((x) => x.name).join(', ')}</p>
+              <p class="small muted">${units(item.day.exercises).map((u) => u.map((x) => x.name).join(' + ')).join(', ')}</p>
               ${dayOptional(item.day).length > 0 && html`<p class="small muted" data-testid="up-next-optional">Optional at the end: ${dayOptional(item.day).map((x) => x.name).join(', ')}</p>`}
               <p class="small muted" data-testid="up-next-reason">${planned.reason}${planned.notes.length ? ` ${planned.notes.join(' ')}` : ''}</p>` : html`
               <span class="stack tight"><b>${item.day.title}</b><span class="sub">${item.day.exercises.slice(0, 2).map((x) => x.name).join(', ')}${item.day.exercises.length > 2 ? ` +${item.day.exercises.length - 2}` : ''}</span></span>
@@ -200,6 +224,11 @@ export function PlanScreen() {
         ${recent.map((a) => html`<p class="small muted" data-testid="recent-activity">${a.title} ${agoText(a.startedAt, now)}: ${a.minutes} min, ${(EFFORTS[a.effort]?.label || '').toLowerCase()}${activityGroups(a).length ? '. Counted toward recovery.' : '.'}</p>`)}
         <button class="row" data-testid="log-activity" onClick=${() => setSheet('activity')}>
           <span class="stack tight"><b>Did something else?</b><span class="sub">Log a run, a ride or a game. The plan takes it into account.</span></span><span class="accent">Log</span></button>
+        ${(saves > 0 || pairsOn) && html`<button class=${`row ${pairsOn ? 'on' : ''}`} role="switch" aria-checked=${pairsOn} data-testid="pairs-toggle" onClick=${togglePairs}>
+          <span class="stack tight"><b>Pair exercises to save time</b><span class="sub">${pairsOn
+    ? `On${saves > 0 ? `: sessions are about ${saves} min shorter` : ''}. Two exercises that use different muscles are done in turns, so one rests while the other works. The sets feel harder, and you need both stations free.`
+    : `Two exercises that use different muscles are done in turns, so one rests while the other works. Same sets, about ${saves} min less a session. The sets feel harder, and you need both stations free.`}</span></span>
+          <span class="accent">${pairsOn ? 'On' : 'Off'}</span></button>`}
         <button class="row" data-testid="weights-link" onClick=${() => go('weights')}>
           <span class="stack tight"><b>Weights</b><span class="sub">${blank ? `${plural(blank, 'exercise')} in the plan ${blank === 1 ? 'has' : 'have'} no weight yet. Enter ${blank === 1 ? 'it' : 'them'} now, or when ${blank === 1 ? 'it comes' : 'they come'} up.` : 'What you lift on every exercise, and the step sizes'}</span></span><span class="accent">Open</span></button>
         ${state.proposals.length > 0 && html`<button class="row" onClick=${() => go('review')}>
@@ -226,14 +255,16 @@ export function PlanScreen() {
     <${Dock} aboveTabs>
       <button class="cta" data-testid="train-now" onClick=${trainNow}>${active ? 'Resume workout' : 'Train now'}</button>
     <//>
-    ${sheet === 'train' && html`<${TrainNow} plan=${plan} sessions=${state.sessions} onClose=${() => setSheet(null)} />`}
-    ${sheet === 'activity' && html`<${ActivitySheet} onClose=${() => setSheet(null)} />`}`;
+    ${sheet === 'train' && html`<${TrainNow} plan=${plan} sessions=${state.sessions} onClose=${() => setSheet(null)} onStart=${(id, opts) => begin(id, opts, setFirst)} />`}
+    ${sheet === 'activity' && html`<${ActivitySheet} onClose=${() => setSheet(null)} />`}
+    <${WeightsOffer} first=${first} setFirst=${setFirst} />`;
 }
 
 export function DayScreen({ dayId }) {
   const state = useStore();
   const [sheet, setSheet] = useState(false);
   const [weightFor, setWeightFor] = useState(null);
+  const [first, setFirst] = useState(null);
   const { plan } = state;
   const day = plan?.days.find((d) => d.id === dayId);
   const active = store.activeSession(state);
@@ -245,8 +276,9 @@ export function DayScreen({ dayId }) {
     if (active) { go('workout'); return; }
     // A hand-picked session starts at once unless there is something worth saying first.
     const r = recommend(plan, state.sessions, Date.now(), { prefer: day.id });
-    if (!r.notes.length && !r.easePct) begin(day.id, { order: r.order, why: r.reason }); else setSheet(true);
+    if (!r.notes.length && !r.easePct) begin(day.id, { order: r.order, why: r.reason }, setFirst); else setSheet(true);
   };
+  const pairs = units(day.exercises).filter((u) => u.length === 2);
   return html`
     <main class="main with-tabs with-dock">
       <div class="stack tight">
@@ -258,17 +290,20 @@ export function DayScreen({ dayId }) {
         ${status === 'todo' && html`<button class="chip" data-testid="skip-session" onClick=${() => { store.set({ plan: skipDay(plan, day.id) }); toast('Skipped. It comes back in the next run'); }}>Skip this time</button>`}
         ${status === 'skipped' && html`<button class="chip accent" data-testid="unskip-session" onClick=${() => { store.set({ plan: unskipDay(plan, day.id) }); toast('Back in the plan'); }}>Bring it back</button>`}
       </div>
+      ${pairs.length > 0 && html`<p class="note small" data-testid="day-pairs"><b>${plural(pairs.length, 'pair')} in this session</b>The two exercises of a pair are done in turns: a set of one, a short rest, a set of the other. One rests while the other works, so the session is shorter for the same sets. If a station is taken, "Machine busy?" in the workout splits the pair for the day.</p>`}
       <ol class="stack">
         ${day.exercises.map((ex, i) => {
           const lift = exerciseById(state.equipment, ex.exerciseId);
           const m = machineForExercise(state.equipment, lift);
           const look = sketchForExercise(state.equipment, lift);
+          const mate = pairMate(day.exercises, ex);
           return html`
-          <li class="panel" style="border-radius:16px;padding:14px;gap:6px">
+          <li class=${`panel ${mate ? 'paired' : ''}`} style="border-radius:16px;padding:14px;gap:6px" data-testid="day-exercise" data-pair=${mate ? ex.pair : ''}>
             <div class="spread"><h4>${i + 1}. ${ex.name}</h4><span class="tag">${ex.tier}</span></div>
+            ${mate && html`<p class="small" data-testid="pair-with"><span class="tag good">pair</span> In turns with ${mate.name}: ${oppositePair(ex, mate) ? 'opposite muscles' : 'different parts of the body'}. Rest ${restText(pairRestSec(ex, mate))} after each set.</p>`}
             <div class="spread" style="align-items:flex-start"><p class="small muted grow">${ex.equipment} · ${ex.zone}</p>${look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}</div>
             ${m && html`<p class="small muted" data-testid="day-machine">${machineLabel(m) || m.name}${m.isolates ? ` · isolates ${m.isolates.replace(/\.$/, '').toLowerCase()}` : ''}</p>`}
-            <p><b>${ex.sets} × ${ex.reps} reps</b> <span class="muted small">(range ${ex.repLo}-${ex.repHi}) · rest ${restText(ex.restSec)}</span></p>
+            <p><b>${ex.sets} × ${ex.reps} reps</b> <span class="muted small">(range ${ex.repLo}-${ex.repHi}) · ${mate ? `rest alone ${restText(ex.restSec)}` : `rest ${restText(ex.restSec)}`}</span></p>
             <div class="spread"><p class="small grow">${ex.load ? html`<b>${fmtLoad(ex.loadType, ex.load.value)}</b> <span class="muted">· step ${num(ex.load.step)}</span>` : html`<span class="muted">Weight: ${loadMethod(ex)}</span>`}</p>
               <button class="chip" data-testid="edit-weight" aria-label=${`Set the weight for ${ex.name}`} onClick=${() => setWeightFor(ex.exerciseId)}>${ex.load ? 'Change' : 'Set weight'}</button></div>
           </li>`;
@@ -300,8 +335,9 @@ export function DayScreen({ dayId }) {
         ${active ? 'Resume the workout in progress' : 'Start this session'}
       </button>
     <//>
-    ${sheet && html`<${TrainNow} plan=${plan} sessions=${state.sessions} prefer=${day.id} onClose=${() => setSheet(false)} />`}
-    ${weightFor && html`<${WeightSheet} exerciseId=${weightFor} onClose=${() => setWeightFor(null)} />`}`;
+    ${sheet && html`<${TrainNow} plan=${plan} sessions=${state.sessions} prefer=${day.id} onClose=${() => setSheet(false)} onStart=${(id, opts) => begin(id, opts, setFirst)} />`}
+    ${weightFor && html`<${WeightSheet} exerciseId=${weightFor} onClose=${() => setWeightFor(null)} />`}
+    <${WeightsOffer} first=${first} setFirst=${setFirst} />`;
 }
 
 const MODE_TITLE = { post_session: 'After your workout', equipment: 'Your equipment changed', coach: 'From the coach', activity: 'After another activity' };
@@ -348,15 +384,25 @@ export function ChangeCard({ p, c }) {
 /** One update to the plan: the summary in words, then each change. */
 export function UpdateBlock({ p, bare = false }) {
   const session = p.sessionId ? store.sessionById(p.sessionId) : null;
+  const who = sourceName(p.checking === true ? 'claude' : p.checking || p.source);
+  // Asking again only makes sense for the latest workout: for older ones the plan has moved on.
+  const retry = !!p.failed && aiReady() && store.doneWorkouts()[0]?.id === p.sessionId;
   return html`<section class="stack" data-testid="update" data-mode=${p.mode}>
     ${!bare && html`<div class="spread"><h3>${MODE_TITLE[p.mode] || 'Update'}</h3><span class="tag" data-testid="update-source">From ${sourceName(p.source)}</span></div>
       ${session && html`<p class="small muted">${session.title} · ${dateText(session.startedAt)}</p>`}`}
     ${p.message && html`<p class="small" data-testid="update-message">${p.message}</p>`}
     ${p.schedule && p.schedule !== p.message && html`<p class="small muted">${p.schedule}</p>`}
-    ${p.checking && html`<p class="small muted" data-testid="checking">${sourceName(p.checking === true ? 'claude' : p.checking)} is reading this now. Its summary and changes take the place of these when it answers.</p>`}
-    ${p.pending && html`<p class="note warn small" data-testid="pending">No connection. ${aiName()} reviews this workout and updates the plan when you are back online.</p>`}
+    ${p.checking && html`<div class="note thinking" data-testid="checking" role="status">
+      <b><span class="dots" aria-hidden="true"><span></span><span></span><span></span></span>${who} is thinking</b>
+      <span class="small muted">${p.source === 'rules'
+    ? `${who} is going through this workout now. Its summary and changes take the place of the ones below when it answers.`
+    : `${who} is comparing what you did with the plan and your earlier workouts, and then updates the plan. This can take a minute. You do not have to wait here: the result is saved and shows on the plan.`}</span>
+    </div>`}
+    ${p.pending && html`<p class="note warn small" data-testid="pending">No connection, so the training rules updated the plan. ${aiName()} reviews this workout and updates the plan when you are back online.</p>`}
+    ${p.failed && html`<div class="note warn small" data-testid="review-failed"><b>The AI coach could not review this workout</b>${p.failed} The training rules updated the plan instead.
+      ${retry && html`<div class="chips" style="margin-top:8px"><button class="chip accent" data-testid="review-retry" onClick=${() => askAgain(p.id)}>Ask ${aiName()} again</button></div>`}</div>`}
     ${p.changes.length ? p.changes.map((c) => html`<${ChangeCard} key=${c.id} p=${p} c=${c} />`)
-      : p.mode === 'post_session' ? html`<p class="note" data-testid="no-changes">No changes. Your results do not call for any, so the plan stays as it is.</p>` : ''}
+      : p.mode === 'post_session' && !(p.checking && p.source !== 'rules') ? html`<p class="note" data-testid="no-changes">No changes. Your results do not call for any, so the plan stays as it is.</p>` : ''}
   </section>`;
 }
 

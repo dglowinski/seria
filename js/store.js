@@ -5,7 +5,7 @@
 // Device settings (API key, sound...) live under a second key and are never
 // exported or synced.
 
-import { emptyProfile, upgradePlan, fillOptional } from './domain/planner.js';
+import { emptyProfile, upgradePlan, fillOptional, fillPairs } from './domain/planner.js';
 import { emptyEquipment } from './domain/catalog.js';
 
 const KEY = 'seria.state.v1';
@@ -72,7 +72,7 @@ export function hydrate(raw) {
   s.plan = upgradePlan(s.plan); // plans saved before cycles existed keep their sessions and gain a cycle
   if (!s.weights || typeof s.weights !== 'object') s.weights = {};
   // A plan saved before optional extras existed gets them here, picked by the rules; one that has them keeps them.
-  if (s.plan) { try { s.plan = fillOptional(s.plan, s.profile, s.equipment, s.weights); } catch { /* the plan stays as saved */ } }
+  if (s.plan) { try { s.plan = fillPairs(fillOptional(s.plan, s.profile, s.equipment, s.weights), s.profile); } catch { /* the plan stays as saved */ } }
   s.schema = SCHEMA;
   if (s.activeSessionId && !s.sessions.some((x) => x.id === s.activeSessionId && x.status === 'active')) s.activeSessionId = null;
   // A workout left on the old "enter the result" step carries on as a set in progress: one tap finishes it.
@@ -105,6 +105,8 @@ export function set(patch, info = {}) {
   const p = typeof patch === 'function' ? patch(state) : patch;
   if (!p) return state;
   state = { ...state, ...p, updatedAt: info.keepTime ? state.updatedAt : Date.now() };
+  // Pairs follow the plan's exercises and the user's choice, whatever changed either (rule PAR-1).
+  if (state.plan && ('plan' in p || 'profile' in p)) state.plan = fillPairs(state.plan, state.profile);
   if (state.chat.length > CHAT_CAP) state.chat = state.chat.slice(-CHAT_CAP);
   if (state.proposals.length > PROPOSAL_CAP) state.proposals = state.proposals.slice(-PROPOSAL_CAP);
   storageOk = write(KEY, state);

@@ -43,16 +43,23 @@ const shots = [
   ['33-next-run', 'The next run', 'When the list is done, the coach plans what comes next from your results.'],
   ['06-day', 'Session preview', 'Order, equipment, sets, reps, rest, and how the time adds up.'],
   ['40-day-optional', 'Optional extras', 'Each session lists up to two extras for the end, with the reason each one fits.'],
+  ['44-pairs-switch', 'Pairs: one switch', 'On the Plan tab. It says what pairing saves, and what it costs: harder sets, two stations.'],
+  ['45-day-pairs', 'A session with pairs', 'Which exercises are done in turns, why they fit, and the rest between them.'],
   ['05-equipment', 'Equipment', 'Machines you add. Free weights, bench and bar are on by default.'],
   ['05-gym-text', 'Describe your gym', 'Name the machines or paste any text. It is read and saved, and you see what was added.'],
   ['17c-machines-identified', 'Machines by maker', 'Name the maker and the exact machines are identified. Each says whether it was found on the web or comes from memory.'],
   ['27-workout-machine', 'The machine, mid-workout', 'A sketch of its general look, how it works and what it isolates.'],
+  ['46-weights-first', 'Weights before the workout', 'Exercises with no weight yet are offered one by one. Fill in or skip.'],
   ['07-starting-weight', 'Starting an exercise', 'A sketch of what to look for, and, with no history yet, your first weight.'],
   ['08-set-active', 'Set in progress', 'One button: Finish set. It saves the planned reps; −1 and +1 nudge them first.'],
+  ['47-train', 'The band at the top', 'It does not scroll. While a set runs it says "Train", with the target and the set clock.'],
+  ['49-push', '"Push"', 'On the last set of an exercise, which goes past its target, the band says "Push".'],
+  ['48-pair-rest', 'A pair, mid-workout', 'After a set of one, a short rest counts down in the band, then the other one is up.'],
   ['37-overview', 'The whole workout', 'Tap the header to see every exercise and jump to any of them.'],
   ['10-rest', 'Rest', 'The set just saved stays in reach: nudge, change weight, undo. The next set starts by itself when the rest runs out.'],
   ['11-swap', 'Machine busy? Not now', 'Come back to it later, do another exercise instead, or drop it for today.'],
   ['41-optional-step', 'Feel like a bit more?', 'When the planned sets are done, the extras are offered. One tap takes one; "Finish workout" leaves them.'],
+  ['43-thinking', 'The model reviews the workout', 'At the end it says the model is thinking. The plan changes when it answers; the rules step in only if it cannot be reached.'],
   ['12-summary', 'Summary', 'How it went, in words, and what it changed in the plan. Nothing to accept.'],
   ['42-optional-saved', 'An extra, saved', 'The summary names the extra that was done, and it moves on in the plan like any other exercise.'],
   ['13-proposals', 'Undo or edit', 'Each change can be undone, made again, or corrected by hand.'],
@@ -106,6 +113,17 @@ const v11 = [
   ['Changes are made, not proposed.', 'After a workout, from the chat and when equipment changes, the plan is updated without asking. "What changed" lists every change with its reason, an Undo and an Edit.'],
   ['A signal with the screen off.', 'A web page cannot vibrate behind a dark screen, so the app sends a notification when the rest ends (stand-alone app). The beep is scheduled ahead on the audio clock. Settings has a test button. Not tried on a real phone.'],
   ['The long view.', 'A plain-words outlook on the Plan tab: what this round holds, how it gets harder, what changes round to round, what happens when it stalls, and what would be added with more time. A connected model adds its own.'],
+];
+
+// Version 1.3: notes from the gym.
+const v13 = [
+  ['Weights before the workout.', 'When the session you start has exercises with no weight yet, the app offers to go through them one by one first. Each can be filled in, with its step, or skipped; skipped ones are asked for when they come up, as before.'],
+  ['Two muscle groups in turns: is it a good idea?', 'Yes, for saving time, with limits. A 2025 review of 19 studies found that pairing exercises shortens the session without cutting the work done, and that strength and muscle gains over weeks were no different from doing one exercise at a time. The price: the sets feel harder. Pairs of opposite muscles even allowed more reps; pairs that share a muscle cost reps.'],
+  ['Pairs, as a switch on the Plan tab.', 'Off unless you turn it on. Two neighbouring exercises that use different muscles are done in turns, with a short rest after each set (45% of the longer planned rest, at least 30 s), so each muscle still gets its planned rest. Squats, hip hinges and the main lifts of a strength plan are never paired. The switch says how many minutes it saves; a plan built with pairs on uses that time for work that would otherwise be left out. "Machine busy?" splits a pair for the day.'],
+  ['"Train" or "Push" when the time comes.', 'The rest countdown no longer just disappears. When the rest is over, and while a set runs, its place shows what to do: "Train", or "Push" on the last set of an exercise, the one that goes past its target.'],
+  ['The timer does not scroll away.', 'The countdown and that word sit in the top bar of the workout, which stays put while the page scrolls.'],
+  ['The step field takes a 1.', 'Typing a step size under "Other" used to wipe a 1 (and a 2, 5 or 10) as it was typed, because those are also the preset sizes. So 1, 1.25, 12.5 or 15 could not be entered. Fixed, and the field is ready to type in as soon as "Other" is tapped.'],
+  ['The model reviews the workout, and you see it.', 'With a model connected and the phone online, the end of a workout shows "Claude is thinking" and the plan changes when it answers. The training rules step in only when it cannot be reached. With no connection they update the plan and the plan says it will be updated when online; that review is then asked for by itself. If the model fails for another reason the screen now says why, and "Ask again" tries once more.'],
 ];
 
 // Version 1.2: optional extras.
@@ -263,6 +281,12 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
       <div class="rowx head"><span>The design says</span><span>Status</span><span>The app does</span></div>
       ${spec.map(([a, s, b]) => `<div class="rowx"><span>${esc(a)}</span><span><span class="pill ${s === 'changed' ? 'mostly' : s}">${s === 'done' ? 'Done' : s === 'changed' ? 'Changed' : 'Mostly'}</span></span><span class="muted">${esc(b)}</span></div>`).join('\n      ')}
     </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">New in version 1.3</p>
+    <h2>Your notes from the gym, built</h2>
+    <div>${v13.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
   </section>
 
   <section>

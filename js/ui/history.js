@@ -86,6 +86,9 @@ export function SessionScreen({ sessionId }) {
   const update = state.proposals.find((p) => p.mode === 'post_session' && p.sessionId === session.id);
   const ex = edit ? session.exercises[edit.ex] : null;
   const log = readLog(session);
+  // The other exercise of a pair, when sets of both were really done.
+  const didSome = (e) => e.sets.some((st) => st.status === 'done');
+  const turnsWith = (x) => (x.pair && didSome(x) && session.exercises.find((y) => y !== x && y.pair === x.pair && didSome(y))) || null;
 
   return html`
     <main class=${`main with-tabs ${state.plan ? 'with-dock' : ''}`}>
@@ -99,7 +102,8 @@ export function SessionScreen({ sessionId }) {
         ${sum.skipped > 0 && html`<div><strong>${sum.skipped}</strong><small>skipped</small></div>`}
       </div>
       ${update && html`<div class="stack" data-testid="coach-summary">
-        <div class="stack tight"><h3>${fresh ? 'Summary and what changes' : 'What it changed in the plan'}</h3><span class="tag" style="align-self:flex-start" data-testid="summary-source">From ${sourceName(update.source)}</span></div>
+        <div class="stack tight"><h3>${fresh ? 'Summary and what changes' : 'What it changed in the plan'}</h3>
+          ${!(update.checking && update.source !== 'rules') && html`<span class="tag" style="align-self:flex-start" data-testid="summary-source">From ${sourceName(update.source)}</span>`}</div>
         <${UpdateBlock} p=${update} bare />
       </div>`}
       <div class="note">
@@ -112,6 +116,7 @@ export function SessionScreen({ sessionId }) {
         return html`<section class="stack" data-testid="session-exercise">
           <div class="spread"><h4>${x.name}</h4><span class=${`tag ${l.verdict === 'as planned' || l.verdict === 'above plan' ? 'good' : 'warn'}`}>${l.verdict}</span></div>
           <p class="small muted">Plan ${l.plan} · did ${l.doneText}${l.notes.length ? `. ${l.notes.join('. ')}.` : ''}</p>
+          ${turnsWith(x) && html`<p class="small muted" data-testid="session-pair">Done in turns with ${turnsWith(x).name}.</p>`}
           <div class="sets">
             ${x.sets.map((st, si) => html`
               <button class=${`set ${st.status === 'skipped' ? 'skipped' : ''}`} onClick=${() => setEdit({ ex: xi, set: si })}
