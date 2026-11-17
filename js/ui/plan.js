@@ -4,7 +4,7 @@
 
 import { html, useState, useEffect, useStore, Sheet, Dock, NumberInput, go, toast, restText, dateText, plural } from './kit.js';
 import * as store from '../store.js';
-import { fmtLoad, loadMethod, timeBreakdown, brokenExercises, weeklySets, buildOutlook, num } from '../domain/planner.js';
+import { fmtLoad, loadMethod, timeBreakdown, brokenExercises, weeklySets, buildOutlook, num, dayOptional, optionalMinutes } from '../domain/planner.js';
 import { recommend, plannedNext, timeline, queueState, dayStatus, skipDay, unskipDay, daysBetween } from '../domain/schedule.js';
 import { describeChange, canUndo, isApplied, EDITABLE } from '../domain/progression.js';
 import { exerciseById, machineForExercise, machineLabel, sketchForExercise } from '../domain/catalog.js';
@@ -188,12 +188,13 @@ export function PlanScreen() {
               <div class="spread"><span class="eyebrow">${dueIn <= 0 ? 'Up next · today' : `Up next · planned for ${whenText(item.inDays, item.at).toLowerCase()}`}</span><span class="small muted">${item.day.estMinutes} min</span></div>
               <h3>${item.day.title}</h3>
               <p class="small muted">${item.day.exercises.map((x) => x.name).join(', ')}</p>
+              ${dayOptional(item.day).length > 0 && html`<p class="small muted" data-testid="up-next-optional">Optional at the end: ${dayOptional(item.day).map((x) => x.name).join(', ')}</p>`}
               <p class="small muted" data-testid="up-next-reason">${planned.reason}${planned.notes.length ? ` ${planned.notes.join(' ')}` : ''}</p>` : html`
               <span class="stack tight"><b>${item.day.title}</b><span class="sub">${item.day.exercises.slice(0, 2).map((x) => x.name).join(', ')}${item.day.exercises.length > 2 ? ` +${item.day.exercises.length - 2}` : ''}</span></span>
               <span class="stack tight right"><span class="sub">${whenText(item.inDays, item.at)}</span><span class="sub">${item.again ? (item.skipped ? 'skipped this round' : 'done this round') : `${item.day.estMinutes} min`}</span></span>`}
           </button></li>`)}
       </ol>
-      <p class="muted small" data-testid="plan-note">The days are a guide. Train whenever you can: on another day, "Train now" shows what makes sense and moves the rest of the plan. The list always shows a full cycle: a session you finish moves to the end, with its numbers updated from your results.</p>
+      <p class="muted small" data-testid="plan-note">The days are a guide. Train whenever you can: on another day, "Train now" shows what makes sense and moves the rest of the plan. The list always shows a full cycle: a session you finish moves to the end, with its numbers updated from your results. Each session also lists optional extras for a day when you have more in you; open a session to see them.</p>
 
       <div class="stack tight">
         ${recent.map((a) => html`<p class="small muted" data-testid="recent-activity">${a.title} ${agoText(a.startedAt, now)}: ${a.minutes} min, ${(EFFORTS[a.effort]?.label || '').toLowerCase()}${activityGroups(a).length ? '. Counted toward recovery.' : '.'}</p>`)}
@@ -238,6 +239,7 @@ export function DayScreen({ dayId }) {
   const active = store.activeSession(state);
   if (!day) return html`<main class="main with-tabs"><p class="muted">That session is not in the plan any more.</p><a class="link" href="#plan">Back to the plan</a></main>`;
   const t = timeBreakdown(day.exercises);
+  const optional = dayOptional(day);
   const status = queueState(plan).queue.length ? dayStatus(plan, day.id) : 'todo';
   const startThis = () => {
     if (active) { go('workout'); return; }
@@ -272,6 +274,26 @@ export function DayScreen({ dayId }) {
           </li>`;
         })}
       </ol>
+      ${optional.length > 0 && html`<section class="stack" data-testid="day-optional">
+        <div class="stack tight">
+          <h3>Optional extras</h3>
+          <p class="small muted">For a day when you have more in you. When the planned sets are done, the workout offers these; add one or just finish. They are not counted in the ${day.estMinutes} min, and skipping them changes nothing.</p>
+        </div>
+        <ol class="stack">
+          ${optional.map((ex) => {
+            const look = sketchForExercise(state.equipment, exerciseById(state.equipment, ex.exerciseId));
+            return html`
+            <li class="panel" style="border-radius:16px;padding:14px;gap:6px;border-style:dashed" data-testid="optional-exercise">
+              <div class="spread"><h4>${ex.name}</h4><span class="tag">optional</span></div>
+              <div class="spread" style="align-items:flex-start"><p class="small muted grow">${ex.equipment} · ${ex.zone}</p>${look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}</div>
+              <p><b>${ex.sets} × ${ex.reps} reps</b> <span class="muted small">(range ${ex.repLo}-${ex.repHi}) · rest ${restText(ex.restSec)} · about ${optionalMinutes(ex)} min</span></p>
+              ${ex.why && html`<p class="small" data-testid="optional-why">${ex.why}</p>`}
+              <div class="spread"><p class="small grow">${ex.load ? html`<b>${fmtLoad(ex.loadType, ex.load.value)}</b> <span class="muted">· step ${num(ex.load.step)}</span>` : html`<span class="muted">Weight: ${loadMethod(ex)}</span>`}</p>
+                <button class="chip" aria-label=${`Set the weight for ${ex.name}`} onClick=${() => setWeightFor(ex.exerciseId)}>${ex.load ? 'Change' : 'Set weight'}</button></div>
+            </li>`;
+          })}
+        </ol>
+      </section>`}
     </main>
     <${Dock} aboveTabs>
       <button class="cta" data-testid="start-day" onClick=${startThis}>

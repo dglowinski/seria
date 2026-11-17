@@ -1,5 +1,7 @@
 // The workout screen. One main action at the bottom, one tap per set:
 //   Start set -> Finish set -> (rest, then the next set starts by itself) -> Finish set ...
+// When the planned sets are done and the session has optional extras, one more
+// step offers them: add one, or finish.
 // A finished set is saved as planned; it can be nudged by a rep before the tap
 // or during the rest, or undone. Every tap is saved at once and written to the
 // workout's log; a reload lands back on the same step.
@@ -7,7 +9,7 @@
 import { html, useState, useEffect, useRef, useStore, Sheet, Dock, Icon, clock, go, toast, NumberInput, restText, flags } from './kit.js';
 import * as store from '../store.js';
 import * as S from '../domain/session.js';
-import { fmtLoad, fmtLoadShort, num } from '../domain/planner.js';
+import { fmtLoad, fmtLoadShort, num, optionalMinutes } from '../domain/planner.js';
 import { LOAD_TYPES, PROGRESSION } from '../domain/rules.js';
 import { substitutesFor, exerciseById, equipmentNames, zoneOf, machineForExercise, sketchForExercise } from '../domain/catalog.js';
 import { MachineInfo } from './equipment.js';
@@ -187,7 +189,8 @@ export function Workout() {
   const lastSetOverall = c.total - c.done - c.skipped === 1;
   const picked = pick.key === ex.key ? pick : { key: ex.key, value: null, step: PROGRESSION.defaultStep[ex.loadType] };
   const hint = session.hint?.applied && S.hintApplies(session, session.hint) ? session.hint : null;
-  const last = waiting ? S.lastSet(session) : null;
+  const offer = S.optionalLeft(session); // optional extras not taken yet
+  const last = waiting || phase === 'optional' ? S.lastSet(session) : null;
   const cue = S.effortCue(ex, setIdx, state.plan?.level);
 
   const put = (next, extra) => store.putSession(next, extra);
@@ -222,6 +225,14 @@ export function Workout() {
   const endNow = () => { const next = S.endSession(session); put(next); setSheet(null); done(next); };
   const discard = () => { cancelBeep(); setSheet(null); store.removeSession(session.id); go('plan', '', { replace: true }); toast('Workout discarded'); };
 
+  // Take an optional extra: after the planned sets it comes up at once, earlier it waits at the end.
+  const takeOptional = (o) => {
+    cancelBeep();
+    put(S.addOptional(session, o.key));
+    setSheet(null);
+    toast(phase === 'optional' ? `${o.name}: optional extra` : `${o.name} added at the end`);
+  };
+
   const swapTo = (cat) => {
     const known = state.weights[cat.id];
     put(S.substitute(session, {
@@ -234,7 +245,7 @@ export function Workout() {
   };
 
   const mainLabel = waiting && needW ? 'Save starting weight'
-    : phase === 'active' ? (lastSetOverall ? 'Finish set and end workout' : 'Finish set')
+    : phase === 'active' ? (lastSetOverall && !offer.length ? 'Finish set and end workout' : 'Finish set')
       : resting && !session.rest.betweenExercises && left > 0 ? 'Start next set now' : 'Start set';
 
   const draft = session.draft;
@@ -247,6 +258,65 @@ export function Workout() {
   const look = sketchForExercise(state.equipment, thisLift); // what the equipment looks like, for finding it
   const setElapsed = phase === 'active' && session.setStartedAt ? Math.max(now, Date.now()) - session.setStartedAt : 0;
   const others = S.hasOthers(session);
+
+  const endSheet = sheet === 'end' && html`<${Sheet} title="End this workout?" onClose=${() => setSheet(null)}>
+      <p class="muted small">${c.done} of ${c.total} sets done. Sets you have not done are saved as skipped.</p>
+      <button class="cta" onClick=${endNow} disabled=${c.done === 0}>Finish and save</button>
+      <button class="cta danger" onClick=${discard}>Discard workout</button>
+      <button class="cta ghost" onClick=${() => setSheet(null)}>Keep going</button>
+    <//>`;
+
+  const allSheet = sheet === 'all' && html`<${Sheet} title="This workout" onClose=${() => setSheet(null)}>
+      <p class="small muted">${c.done} of ${c.total} sets done. Tap an exercise to go to it.</p>
+      <div class="stack" data-testid="overview">
+        ${session.exercises.map((x, i) => {
+          const d = x.sets.filter((st) => st.status === 'done').length;
+          const pending = x.sets.some((st) => st.status === 'pending');
+          const here = i === exIdx && phase !== 'optional';
+          const status = here ? 'Now' : x.dropped ? 'Dropped' : !pending ? 'Done' : x.postponed ? 'Later' : 'To do';
+          return html`<button class=${`row ${here ? 'on' : ''}`} disabled=${!pending || here}
+            onClick=${() => { cancelBeep(); put(S.goToExercise(session, i)); setSheet(null); }}>
+            <span class="stack tight grow"><b>${i + 1}. ${x.name}</b><span class="sub">${d} of ${x.sets.length} sets done${x.optional ? ' · optional extra' : ''}${x.swappedFrom ? ` · swapped in for ${x.swappedFrom.name}` : ''}</span></span>
+            <span class=${`tag ${status === 'Now' || status === 'Done' ? 'good' : ''}`}>${status}</span>
+          </button>`;
+        })}
+      </div>
+      ${offer.length > 0 && html`<div class="stack" data-testid="overview-optional">
+        <div class="stack tight"><p class="eyebrow">Optional extras</p>
+          <p class="small muted">If you feel like more today, add one. It goes to the end of the workout.</p></div>
+        ${offer.map((o) => html`<${OptionalRow} o=${o} eq=${state.equipment} label="Add" onUse=${() => takeOptional(o)} />`)}
+      </div>`}
+    <//>`;
+
+  // Every planned set is done and the session has optional extras: offer them, or finish.
+  if (phase === 'optional') {
+    return html`
+      <header class="top">
+        <div class="top-title">
+          <button class="icon-btn" aria-label="End workout" onClick=${() => setSheet('end')}><${Icon} name="close" /></button>
+          <div class="stack tight"><b>Workout</b></div>
+        </div>
+        <button class="chip" data-testid="progress" aria-label="See the whole workout" onClick=${() => setSheet('all')}>All sets done ▾</button>
+      </header>
+      <main class="main with-dock" data-phase="optional">
+        <div class="bar" aria-hidden="true"><i style="width:100%"></i></div>
+        ${last && html`<${LastSet} key=${`${last.ex.key}-${last.setIdx}`} last=${last} onAdjust=${adjust}
+          onUndo=${() => { put(S.undoFinish(session)); toast('Set is open again'); }} />`}
+        <div class="stack tight">
+          <p class="eyebrow">Planned sets done</p>
+          <h3>Feel like a bit more?</h3>
+          <p class="small muted">These are optional. They fit today's session and your plan, and skipping them changes nothing.</p>
+        </div>
+        <div class="stack" data-testid="optional-list">
+          ${offer.map((o) => html`<${OptionalRow} o=${o} eq=${state.equipment} label="Do it" onUse=${() => takeOptional(o)} />`)}
+        </div>
+      </main>
+      <${Dock}>
+        <button class="cta" data-testid="main-action" onClick=${endNow}>Finish workout</button>
+      <//>
+      ${endSheet}
+      ${allSheet}`;
+  }
 
   return html`
     <header class="top">
@@ -277,7 +347,7 @@ export function Workout() {
           ${waiting && html`<p class="eyebrow">${firstOfExercise ? (c.done + c.skipped === 0 ? 'First exercise' : 'Next exercise') : 'Next set'}</p>`}
           ${phase === 'active' && html`<p class="eyebrow" data-testid="set-clock">Set in progress · ${clock(setElapsed)}${set.auto ? ' · started by itself' : ''}</p>`}
           <h3 data-testid="exercise-name">${ex.name}</h3>
-          <p class="muted small">${ex.zone} · set ${setIdx + 1} of ${ex.sets.length}${ex.swappedFrom ? ` · swapped in for ${ex.swappedFrom.name}` : ''}${ex.postponed ? ' · put off earlier' : ''}</p>
+          <p class="muted small">${ex.zone} · set ${setIdx + 1} of ${ex.sets.length}${ex.optional ? ' · optional extra' : ''}${ex.swappedFrom ? ` · swapped in for ${ex.swappedFrom.name}` : ''}${ex.postponed ? ' · put off earlier' : ''}</p>
           ${waiting && session.easePct > 0 && c.done + c.skipped === 0 && html`<p class="small muted" data-testid="eased">Loads are ${session.easePct}% lighter today to ease back in. The plan keeps its numbers.</p>`}
           ${waiting && firstOfExercise && html`<p class="muted small">${ex.equipment} · ${ex.sets.length} sets · rest ${restText(ex.restSec)}</p>`}
         </div>
@@ -330,12 +400,7 @@ export function Workout() {
       <button class="cta" data-testid="main-action" onClick=${onMain}>${mainLabel}</button>
     <//>
 
-    ${sheet === 'end' && html`<${Sheet} title="End this workout?" onClose=${() => setSheet(null)}>
-      <p class="muted small">${c.done} of ${c.total} sets done. Sets you have not done are saved as skipped.</p>
-      <button class="cta" onClick=${endNow} disabled=${c.done === 0}>Finish and save</button>
-      <button class="cta danger" onClick=${discard}>Discard workout</button>
-      <button class="cta ghost" onClick=${() => setSheet(null)}>Keep going</button>
-    <//>`}
+    ${endSheet}
 
     ${sheet === 'busy' && html`<${Sheet} title="Machine busy, or not now?" onClose=${() => setSheet(null)}>
       <button class="cta" data-testid="later" disabled=${!others} onClick=${() => { move(S.postponeExercise(session)); setSheet(null); toast(`${ex.name} comes back at the end`); }}>Come back to it later</button>
@@ -351,25 +416,23 @@ export function Workout() {
       <button class="cta danger" data-testid="drop" onClick=${() => { setSheet(null); move(S.dropExercise(session)); toast(`${ex.name} dropped for today`); }}>Drop it for today</button>
     <//>`}
 
-    ${sheet === 'all' && html`<${Sheet} title="This workout" onClose=${() => setSheet(null)}>
-      <p class="small muted">${c.done} of ${c.total} sets done. Tap an exercise to go to it.</p>
-      <div class="stack" data-testid="overview">
-        ${session.exercises.map((x, i) => {
-          const d = x.sets.filter((st) => st.status === 'done').length;
-          const pending = x.sets.some((st) => st.status === 'pending');
-          const status = i === exIdx ? 'Now' : x.dropped ? 'Dropped' : !pending ? 'Done' : x.postponed ? 'Later' : 'To do';
-          return html`<button class=${`row ${i === exIdx ? 'on' : ''}`} disabled=${!pending || i === exIdx}
-            onClick=${() => { cancelBeep(); put(S.goToExercise(session, i)); setSheet(null); }}>
-            <span class="stack tight grow"><b>${i + 1}. ${x.name}</b><span class="sub">${d} of ${x.sets.length} sets done${x.swappedFrom ? ` · swapped in for ${x.swappedFrom.name}` : ''}</span></span>
-            <span class=${`tag ${status === 'Now' || status === 'Done' ? 'good' : ''}`}>${status}</span>
-          </button>`;
-        })}
-      </div>
-    <//>`}
+    ${allSheet}
 
     ${editing?.actual && html`<${EditSet} ex=${ex} st=${editing} index=${sheet.edit} onClose=${() => setSheet(null)}
       onSave=${(a) => { put(S.editSet(session, exIdx, sheet.edit, a)); setSheet(null); toast('Set corrected'); }} />`}
   `;
+}
+
+/** One optional extra: what it is, how long it takes and why it fits. */
+function OptionalRow({ o, eq, label, onUse }) {
+  const look = sketchForExercise(eq, exerciseById(eq, o.exerciseId));
+  return html`<button class="row" data-testid="optional-row" onClick=${onUse}>
+    ${look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}
+    <span class="stack tight grow"><b>${o.name}</b>
+      <span class="sub">${o.sets} × ${o.reps} reps · about ${optionalMinutes(o)} min</span>
+      ${o.why && html`<span class="sub">${o.why}</span>`}</span>
+    <span class="accent">${label}</span>
+  </button>`;
 }
 
 function SubRow({ cat, eq, onUse }) {

@@ -38,9 +38,10 @@ The plan is a running list, not a calendar: train this, rest a day, train that, 
 - **After ten days away,** the first session back is 10% lighter. The plan keeps its numbers.
 
 - **Other activity counts.** "Did something else?" on the Plan tab logs a run, a ride, a game: what it was, how long, how hard. About 30 minutes at a moderate effort counts as work for the muscles it uses, so leg sessions wait 48 hours after a hard run. Short, easy activity changes nothing. It shows in History next to the workouts.
+- **Optional extras.** Each session lists up to two extra exercises for a day when you have more in you. They are picked to fit the session and the plan: first what was left out of that session for time, then a muscle group that is short of its weekly sets, then a small muscle group with no direct work, always in the part of the body the session already trains. They are not counted in the session time. Open a session to see them, each with its reason.
 - **The long view.** The Plan tab has a part called "The long view": how the training is meant to develop, in words. What this round holds, how it gets harder, what changes from one round to the next, what happens when it stalls, and what would be added with more time. A connected model adds its own reading when it builds the plan.
 
-The rules behind this are in `js/domain/schedule.js` and in the "A plan that moves" and "Training on any day" parts of `docs/training-rules.md`.
+The rules behind this are in `js/domain/schedule.js` and in the "A plan that moves" and "Training on any day" parts of `docs/training-rules.md`. The optional extras are picked by `fillOptional()` in `js/domain/planner.js` (rule OPT-1); a plan saved before they existed gets them the next time the app starts.
 
 ## A workout, tap by tap
 
@@ -50,6 +51,7 @@ The rules behind this are in `js/domain/schedule.js` and in the "A plan that mov
 - **Machine busy? Not now.** Come back to the exercise later (it moves to the end of the workout), do another one instead (same movement first, then same muscles), or drop it for today.
 - **The whole workout at a glance.** Tap "Exercise 2 of 5" at the top to see every exercise and jump to any that still has sets to do.
 - **A missed set changes the sets to come at once,** with the reason and an Undo on screen.
+- **Feel like a bit more?** When the planned sets are done, the workout offers the session's optional extras. "Do it" brings one up as the next exercise; "Finish workout" ends without them. You can also add one earlier from the workout overview, and it waits at the end. An extra you do is saved and moves on like any other exercise; one you leave is not a miss.
 - **Everything is logged with its time:** when each set started and ended, how long rests really were, every nudge, undo, skip and swap, and when the screen went off. The summary compares your rests with the plan, and "Every step, with times" in History shows the log.
 - **After the workout** you get a summary in words. With a model connected it writes the summary and reviews the changes; until it answers, and whenever there is no connection, the training rules do both. With no connection the plan says "will be updated when you are online", and the model's review is asked for as soon as the phone is back online.
 - **Correcting a workout later.** Fix a set in History and, if it is your latest workout, the plan is worked out again from the corrected numbers. Deleting the latest workout takes its changes back and puts its session on the list again.

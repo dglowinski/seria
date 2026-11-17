@@ -2,15 +2,17 @@
 // returns a new one, so the UI can save after every step and a reload picks up
 // exactly where the user left off.
 //
-//   ready -> active -> rest -> active ... -> summary
+//   ready -> active -> rest -> active ... -> (optional) -> summary
 //
 // One tap finishes a set: it is saved as planned and the rest starts. The set
 // can be nudged before the tap or during the rest, or undone. "rest" stores the
 // time it ends, not a countdown, so coming back to the tab shows the right time
-// left, and the next set can start by itself from that moment.
+// left, and the next set can start by itself from that moment. "optional" is
+// the step after the last planned set, when the session has optional extras on
+// offer: add one, or finish.
 
 import { TIME, PROGRESSION, TARGET_RIR, ACTIVITIES } from './rules.js';
-import { fmtLoadShort } from './planner.js';
+import { fmtLoadShort, dayOptional } from './planner.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const touch = (s, now) => { s.updatedAt = now; return s; };
@@ -34,6 +36,7 @@ export function startSession(plan, dayId, now = Date.now(), opts = {}) {
     budgetMin: plan.minutes, estMinutes: day.estMinutes,
     startedAt: now, endedAt: null, updatedAt: now, status: 'active',
     exercises: day.exercises.map((ex) => sessionExercise(ex, ease)),
+    optional: dayOptional(day).map(clone), // on offer for the end of this workout; one that is taken joins `exercises`
     cursor: { ex: 0, set: 0 },
     phase: 'ready',
     setStartedAt: null,
@@ -58,6 +61,7 @@ function sessionExercise(ex, ease = 0) {
     repLo: ex.repLo, repHi: ex.repHi, restSec: ex.restSec,
     step,
     swappedFrom: null,
+    ...(ex.optional ? { optional: true } : {}),
     sets: Array.from({ length: ex.sets }, () => ({
       planned: { reps: ex.reps, load },
       target: { reps: ex.reps, load: eased },
@@ -114,6 +118,7 @@ export function setStartingWeight(session, value, step, now = Date.now()) {
  * The set remembers when it started and how long the rest before it really was.
  */
 export function beginSet(session, now = Date.now(), { auto = false } = {}) {
+  if (session.phase === 'optional') return session; // every set is done; only an extra or the end can follow
   if (needsWeight(session)) throw new Error('Pick a starting weight first.');
   const s = clone(session);
   const { set, exIdx, setIdx } = current(s);
@@ -171,6 +176,7 @@ export function editDraft(session, patch, now = Date.now()) {
  * ran) and the rest starts. After the last set of the workout, it ends.
  */
 export function finishSet(session, now = Date.now()) {
+  if (session.phase === 'optional') return session;
   const s = clone(session);
   const { ex, set, exIdx, setIdx } = current(s);
   const d = s.draft || { reps: set.target.reps, load: set.target.load, rir: null };
@@ -194,7 +200,7 @@ export function finishSet(session, now = Date.now()) {
     for (const st of ex.sets) if (st.status === 'pending') st.target.load = d.load;
   }
   const lastOfExercise = !ex.sets.some((st) => st.status === 'pending');
-  if (!advance(s)) return endSession(s, now);
+  if (!advance(s)) return wrapUp(s, now);
   const restSec = lastOfExercise ? TIME.transitionSec : ex.restSec;
   s.phase = 'rest';
   s.rest = { startedAt: now, endsAt: now + restSec * 1000, plannedSec: restSec, betweenExercises: lastOfExercise };
@@ -231,7 +237,7 @@ export function adjustLast(session, patch, now = Date.now()) {
 export function undoFinish(session, now = Date.now()) {
   const s = clone(session);
   const L = lastSet(s);
-  if (!L || s.phase !== 'rest') return session;
+  if (!L || s.phase === 'active') return session;
   revertHint(s);
   s.hintUndone = false;
   const a = L.set.actual;
@@ -391,6 +397,8 @@ function advanceIfCursorDone(s) {
 export function endSession(session, now = Date.now()) {
   const s = session.status === 'active' ? clone(session) : session;
   for (const ex of s.exercises) for (const st of ex.sets) if (st.status === 'pending') st.status = 'skipped';
+  // An optional extra that was added but never started leaves no trace: not doing it is not a miss.
+  s.exercises = s.exercises.filter((ex) => !(ex.optional && !ex.sets.some((st) => st.status === 'done')));
   s.status = 'done';
   s.endedAt = s.endedAt || now;
   s.phase = 'summary';
@@ -400,6 +408,45 @@ export function endSession(session, now = Date.now()) {
   s.hint = null;
   s.last = null;
   ev(s, now, 'end');
+  return touch(s, now);
+}
+
+// ---------------------------------------------------------------- optional extras
+
+/** The session's optional exercises that are still on offer: not in the workout yet. */
+export function optionalLeft(s) {
+  if (s.status !== 'active') return [];
+  return (s.optional || []).filter((o) => !s.exercises.some((x) => x.key === o.key || x.exerciseId === o.exerciseId || x.swappedFrom?.exerciseId === o.exerciseId));
+}
+
+// The planned sets are through. With optional extras still on offer the workout
+// stays open on that step: add one, or finish. With none, it ends.
+function wrapUp(s, now) {
+  if (!optionalLeft(s).length) return endSession(s, now);
+  s.phase = 'optional';
+  s.rest = null;
+  ev(s, now, 'optional_offer');
+  return touch(s, now);
+}
+
+/**
+ * Take one of the optional extras. It joins the end of the workout as an
+ * exercise of its own. Taken after the planned sets are done, it comes up at
+ * once; taken earlier, it waits its turn at the end.
+ */
+export function addOptional(session, key, now = Date.now()) {
+  const o = optionalLeft(session).find((x) => x.key === key);
+  if (!o) return session;
+  const s = clone(session);
+  s.exercises.push(sessionExercise(o, s.easePct || 0));
+  ev(s, now, 'optional_add', o.key);
+  if (s.phase === 'optional') {
+    s.cursor = { ex: s.exercises.length - 1, set: 0 };
+    s.phase = 'ready';
+    s.rest = null;
+    s.draft = null;
+    s.setStartedAt = null;
+  }
   return touch(s, now);
 }
 
@@ -588,6 +635,7 @@ export function exerciseSummary(ex) {
   if (p0.load == null && ex.loadType !== 'bodyweight' && done.length) notes.push('Starting weight chosen');
   if (skipped) notes.push(`${skipped} set${skipped === 1 ? '' : 's'} skipped`);
   if (ex.swappedFrom) notes.push(`Swapped in for ${ex.swappedFrom.name}`);
+  if (ex.optional) notes.push('Optional extra');
   if (done.some((st) => st.actual.edited)) notes.push('Corrected by hand');
   let verdict = 'as planned';
   if (!done.length) verdict = 'skipped';
@@ -654,6 +702,8 @@ export function readLog(s) {
     else if (type === 'hint_undo') text = 'That change was undone';
     else if (type === 'screen_off') text = 'Screen off, or the app left';
     else if (type === 'screen_on') text = 'Back on screen';
+    else if (type === 'optional_offer') text = 'Planned sets done. Optional extras on offer';
+    else if (type === 'optional_add') text = `${name(d[0])} added as an optional extra`;
     else if (type === 'end') text = 'Workout ended';
     if (text) out.push({ at: mmss(t), text });
   }

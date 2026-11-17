@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-15T17:27:10.593Z",
+  "ranAt": "2026-11-17T09:52:06.241Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 225,
-  "passed": 225,
+  "total": 245,
+  "passed": 245,
   "failed": 0,
   "results": [
     {
@@ -751,6 +751,12 @@
     },
     {
       "part": "B Claude API",
+      "name": "optional extras: the model's pick is kept after a check against the catalog; sessions it left empty are filled by the rules",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "B Claude API",
       "name": "gym text goes to Claude with the equipment catalog",
       "ok": true,
       "detail": ""
@@ -1352,6 +1358,120 @@
     {
       "part": "F OpenAI API",
       "name": "no script errors in part F",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "every session of a new plan lists one or two optional extras, none of them already in the session",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "the next session on the plan names its optional extras",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "the session screen shows them apart from the plan, with sets, time and the reason",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "they do not change the time of the session",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "after the last planned set the workout stays open and offers the extras",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "the last planned set says \"Finish set\", not \"end workout\", while extras are on offer",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "each offer says what it is, how long it takes and why it fits",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "the set just saved can still be nudged from here",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "+1 on that card is saved",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "a reload lands back on the same step",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "\"Do it\" brings the extra up as the next exercise, marked optional",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "when it is done, the one that is left is offered again",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "the workout overview lists the extra as done and offers the other one",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "an extra can also be added from the overview",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "the saved workout holds the extra that was done, and nothing of the one that was not",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "the summary names it, and the record marks it as an optional extra",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "an extra that was done moves on in the plan like any other exercise, and stays optional",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "a plan saved by an older version shows optional extras after the update, with nothing to rebuild",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "G optional extras",
+      "name": "no script errors in part G",
       "ok": true,
       "detail": ""
     }

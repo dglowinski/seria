@@ -2,7 +2,7 @@
 // answered from the cache at once and refreshed in the background, so the app
 // opens with no signal and picks up a new version on the next start.
 // Bump VERSION whenever files change.
-const VERSION = 'seria-1.1.0';
+const VERSION = 'seria-1.2.0';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css', 'css/standalone.css',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',

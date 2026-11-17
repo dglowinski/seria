@@ -1,6 +1,6 @@
-# Seria training rules, version 1.3.0
+# Seria training rules, version 1.4.0
 
-Last updated 2026-11-15. Generated from `js/domain/rules.js` with `npm run rules-doc`. Do not edit by hand: change the rules file, bump `RULES_VERSION`, and run the script again.
+Last updated 2026-11-17. Generated from `js/domain/rules.js` with `npm run rules-doc`. Do not edit by hand: change the rules file, bump `RULES_VERSION`, and run the script again.
 
 This is the one set of rules behind the app. Three things read it:
 
@@ -132,6 +132,13 @@ Seria is not medical advice. Stop if something hurts and see a professional.
 
 - Source: App convention
 - In the code: `TIME`
+
+## Optional extras
+
+**OPT-1.** Each session lists up to two optional exercises for the end, for days with time and energy left. They train the same part of the body as the session, so they add sets without tiring what the next session needs fresh. The choice, in order: what was left out of that session for time; a big muscle group that is under its weekly set target; a small muscle group with no direct work that week; then more single-joint work for what was just trained. They are done for 2 sets, are not counted in the session time, and skipping them changes nothing. When done, they are recorded and progress like any other exercise.
+
+- Source: Schoenfeld 2017 (volume); App convention
+- In the code: `OPTIONAL`, `fillOptional()`
 
 ## Starting weight
 

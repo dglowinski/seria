@@ -4,7 +4,7 @@
 
 import { rulesAsText, RULES_VERSION, GOALS, levelFor, ACTIVITIES, activityGroups } from '../domain/rules.js';
 import { allExercises, canDo, equipmentList, isAvailable, isListed, PATTERNS, EQUIPMENT, LOADING, machineDetail, machineForExercise } from '../domain/catalog.js';
-import { WEEKDAYS, clampMinutes, sessionsPerWeek, cycleWeeks } from '../domain/planner.js';
+import { WEEKDAYS, clampMinutes, sessionsPerWeek, cycleWeeks, dayOptional } from '../domain/planner.js';
 import { queueState, recommend, timeline, doneGroups, daysBetween } from '../domain/schedule.js';
 import { GROUP_OF, SKETCH_IDS } from '../domain/catalog.js';
 
@@ -14,7 +14,7 @@ Each request gives you what the app has on record: goal and experience, training
 
 Modes
 - interview: read the conversation and the user's latest message. Return the full profile as you now understand it, keeping earlier values unless the user changed them. If something a plan needs is missing (goal, experience, sessions per week, minutes per session), ask one or two specific questions in "questions" and set ready_for_plan to false. Ask once about movements to skip, limitations and favourite exercises if the user has not said. When nothing is missing, set ready_for_plan to true; the app then shows the assumptions and the user confirms. If a plan exists and the user asks to change it, return the change in "changes" instead of a new plan; say in "message" what you changed.
-- new_plan: build the plan in "plan": the sessions to do, in order, sessions_per_week of them for each of weeks_ahead weeks, each with its week number and rest_days_after, the days of rest before the next one (rests in one week add up to 7 minus the sessions that week). Use only exercise ids from available_exercises. Keep each session within the minutes per session, using the time model in the rules. Give the matching session of every week the same main lifts so they can progress, and let the secondary and accessory exercises take turns, so what did not fit one week is trained the next. Order each session as the rules say. Titles name the body parts, with no weekday and no letter. Fill "outlook" as described under The long view. If a plan truly cannot be built because information is missing, return questions and set plan to null.
+- new_plan: build the plan in "plan": the sessions to do, in order, sessions_per_week of them for each of weeks_ahead weeks, each with its week number and rest_days_after, the days of rest before the next one (rests in one week add up to 7 minus the sessions that week). Use only exercise ids from available_exercises. Keep each session within the minutes per session, using the time model in the rules. Give the matching session of every week the same main lifts so they can progress, and let the secondary and accessory exercises take turns, so what did not fit one week is trained the next. Order each session as the rules say. Titles name the body parts, with no weekday and no letter. Give every session its optional_exercises as described under Optional extras. Fill "outlook" as described under The long view. If a plan truly cannot be built because information is missing, return questions and set plan to null.
 - next_run: the user has finished the sessions on the list. Plan the next run in "plan", in the same form as new_plan, from what the records show: keep what is progressing, change what has stalled or was skipped again and again, and keep the main lifts unless the results say otherwise. Say in "message", in one or two sentences, what changes and why, and fill "outlook" again for the round ahead.
 - train_now: the user wants to train today, and today is not the day the plan had for the next session. You get the list with what is done, skipped and still to do, the recent workouts with dates and sets done per muscle group, the hours since each muscle group was trained, how many days early or late today is, and the pick the app's own rules made. Decide what makes sense today and fill "schedule": first_session_id is the session to do now, from those still to do (stay with the app's pick unless the records give a reason not to); reason is one or two short sentences for the user; order lists the other sessions still to do in the order they should now follow; rest_days gives the days of rest after each of them, starting with today's, in that same order; ease_percent is how much lighter today's loads should be (0 to 20, usually 0; about 10 after ten days or more away). Follow the recovery rules in the library. If the content of later sessions should change because of this, add those as "changes"; otherwise leave changes empty.
 - in_session: the user is in the middle of a workout. Compare the sets done so far with their targets and take reps in reserve into account when given. Return changes only for sets and exercises that are not done yet, using fields "load", "reps" or "rest". Changes listed under already_applied were made by the app's own rules a moment ago: return a change for the same exercise and field only when you would set a different value; yours then replaces it.
@@ -29,6 +29,9 @@ The app makes your changes at once, without asking, and shows each one to the us
 
 Machines
 Equipment and exercises can come with the exact machine behind them: maker, model, how it works, what it isolates and how it is loaded. When that is given, use it: pick and order exercises by what the machine really trains, mention the machine by name when it matters, and read loads the way the machine is loaded (plates the user adds, or a weight stack).
+
+Optional extras
+Each session can list up to two optional exercises that the user may add at the end on a day with time and energy left (rule OPT-1). In new_plan and next_run fill optional_exercises for every session. Pick what makes sense for that session and for the plan as a whole, from the same part of the body the session trains, so it does not tire what the next session needs fresh: first what you had to leave out of that session for time, then a muscle group that is short of its weekly sets, then a small muscle group with no direct work. Give each 2 sets, do not count them in the session's minutes, never repeat an exercise that is already in that session, and say in "why", in one short sentence for the user, why it fits. In a plan you are given they are listed per session under optional_at_the_end; you can change one through "changes" by its exercise_key, like any other exercise. In a session, an exercise marked optional_extra is one the user chose to add; read its results like any other. An optional exercise that was not done is not a miss and is never a reason for a change.
 
 The long view
 In new_plan and next_run, fill "outlook": four to six plain sentences for the user on how this training develops over the next two to three months. Say what this round focuses on, how the loads and reps are meant to move, how long a round is and what changes from one round to the next, and which exercises or extra sets you would add later or with more time. Base it on the profile and the rules; promise no numbers the records cannot support. In every other mode set outlook to null.
@@ -68,6 +71,11 @@ export const OUTPUT_SCHEMA = obj({
         exercise_id: str(),
         role: { type: 'string', enum: ['main', 'secondary', 'accessory'] },
         sets: int, rep_low: int, rep_high: int, rest_seconds: int,
+      })),
+      optional_exercises: list(obj({
+        exercise_id: str(),
+        sets: int, rep_low: int, rep_high: int, rest_seconds: int,
+        why: str('One short sentence for the user: why this fits the session and the plan.'),
       })),
     })),
     notes: list(str()),
@@ -147,6 +155,11 @@ const planOut = (plan) => {
         sets: ex.sets, target_reps: ex.reps, rep_range: [ex.repLo, ex.repHi], rest_seconds: ex.restSec,
         load_unit: ex.loadType, load: ex.load?.value ?? null, load_step: ex.load?.step ?? null,
       })),
+      // Not part of the session's time: the user may add these at the end.
+      optional_at_the_end: dayOptional(d).map((ex) => ({
+        exercise_key: ex.key, exercise_id: ex.exerciseId, name: ex.name, sets: ex.sets, target_reps: ex.reps, rep_range: [ex.repLo, ex.repHi],
+        rest_seconds: ex.restSec, load_unit: ex.loadType, load: ex.load?.value ?? null, why: ex.why || null,
+      })),
     })),
   };
 };
@@ -167,9 +180,11 @@ const sessionOut = (s) => ({
     exercise_key: ex.key, exercise_id: ex.exerciseId, name: ex.name, load_unit: ex.loadType, load_step: ex.step,
     rep_range: [ex.repLo, ex.repHi], rest_seconds: ex.restSec,
     swapped_in_for: ex.swappedFrom?.name || null,
-    put_off_until_later: !!ex.postponed, dropped_for_today: !!ex.dropped,
+    put_off_until_later: !!ex.postponed, dropped_for_today: !!ex.dropped, optional_extra: !!ex.optional,
     sets: ex.sets.map(setOut),
   })),
+  // Optional extras offered with this session that the user did not take. Not a miss.
+  optional_extras_not_taken: (s.optional || []).filter((o) => !s.exercises.some((x) => x.key === o.key)).map((o) => o.name),
 });
 
 /** Earlier results for the exercises in this session, newest first, at most 3 each. */

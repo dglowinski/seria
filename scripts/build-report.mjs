@@ -42,6 +42,7 @@ const shots = [
   ['32-train-now-claude', 'Train now, reviewed', 'With a model connected it reviews the pick against your history.'],
   ['33-next-run', 'The next run', 'When the list is done, the coach plans what comes next from your results.'],
   ['06-day', 'Session preview', 'Order, equipment, sets, reps, rest, and how the time adds up.'],
+  ['40-day-optional', 'Optional extras', 'Each session lists up to two extras for the end, with the reason each one fits.'],
   ['05-equipment', 'Equipment', 'Machines you add. Free weights, bench and bar are on by default.'],
   ['05-gym-text', 'Describe your gym', 'Name the machines or paste any text. It is read and saved, and you see what was added.'],
   ['17c-machines-identified', 'Machines by maker', 'Name the maker and the exact machines are identified. Each says whether it was found on the web or comes from memory.'],
@@ -51,7 +52,9 @@ const shots = [
   ['37-overview', 'The whole workout', 'Tap the header to see every exercise and jump to any of them.'],
   ['10-rest', 'Rest', 'The set just saved stays in reach: nudge, change weight, undo. The next set starts by itself when the rest runs out.'],
   ['11-swap', 'Machine busy? Not now', 'Come back to it later, do another exercise instead, or drop it for today.'],
+  ['41-optional-step', 'Feel like a bit more?', 'When the planned sets are done, the extras are offered. One tap takes one; "Finish workout" leaves them.'],
   ['12-summary', 'Summary', 'How it went, in words, and what it changed in the plan. Nothing to accept.'],
+  ['42-optional-saved', 'An extra, saved', 'The summary names the extra that was done, and it moves on in the plan like any other exercise.'],
   ['13-proposals', 'Undo or edit', 'Each change can be undone, made again, or corrected by hand.'],
   ['29-plan-after-workout', 'A full cycle, always', 'The finished session moves to the end of the list, with its numbers updated.'],
   ['34-activity', 'Another activity', 'A run, a ride, a game: what, how long, how hard. The sheet says what it means for the plan.'],
@@ -103,6 +106,15 @@ const v11 = [
   ['Changes are made, not proposed.', 'After a workout, from the chat and when equipment changes, the plan is updated without asking. "What changed" lists every change with its reason, an Undo and an Edit.'],
   ['A signal with the screen off.', 'A web page cannot vibrate behind a dark screen, so the app sends a notification when the rest ends (stand-alone app). The beep is scheduled ahead on the audio clock. Settings has a test button. Not tried on a real phone.'],
   ['The long view.', 'A plain-words outlook on the Plan tab: what this round holds, how it gets harder, what changes round to round, what happens when it stalls, and what would be added with more time. A connected model adds its own.'],
+];
+
+// Version 1.2: optional extras.
+const v12 = [
+  ['Extras listed with every session.', 'Each session has up to two optional exercises for the end, 2 sets each, outside the session time. Open a session to see them; the next session on the plan names them too.'],
+  ['Picked to make sense for the plan.', 'A new rule (OPT-1) picks them: first what was left out of that session for time, then a muscle group short of its weekly sets, then a small muscle group with no direct work, then more single-joint work. Always in the part of the body the session already trains, so the next session finds its muscles fresh. Each one shows its reason.'],
+  ['Offered when the planned sets are done.', 'The workout stays open on one more step: "Do it" brings an extra up as the next exercise, "Finish workout" ends without them. An extra can also be added earlier from the workout overview; it waits at the end.'],
+  ['Done or left, both are fine.', 'An extra that is done is saved, named in the summary, and moves on in the plan like any other exercise. One that is left, or added and not started, leaves no trace and is never counted as a miss.'],
+  ['Nothing to rebuild.', 'A plan saved before this version gets its extras the next time the app starts. When equipment goes, an extra that needed it gives way to another. A connected model picks the extras itself when it builds a plan, and the app checks them.'],
 ];
 
 const changes = [
@@ -251,6 +263,12 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
       <div class="rowx head"><span>The design says</span><span>Status</span><span>The app does</span></div>
       ${spec.map(([a, s, b]) => `<div class="rowx"><span>${esc(a)}</span><span><span class="pill ${s === 'changed' ? 'mostly' : s}">${s === 'done' ? 'Done' : s === 'changed' ? 'Changed' : 'Mostly'}</span></span><span class="muted">${esc(b)}</span></div>`).join('\n      ')}
     </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">New in version 1.2</p>
+    <h2>Optional extras for the end of a session</h2>
+    <div>${v12.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
   </section>
 
   <section>

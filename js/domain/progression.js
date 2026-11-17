@@ -4,7 +4,7 @@
 // made at once; each keeps what it replaced, so it can be undone.
 
 import { PROGRESSION } from './rules.js';
-import { fmtLoadShort, refreshPlan } from './planner.js';
+import { fmtLoadShort, refreshPlan, allEntries } from './planner.js';
 import { summarize } from './session.js';
 import { allExercises, canDo, equipmentNames, zoneOf, substitutesFor } from './catalog.js';
 
@@ -119,7 +119,8 @@ export function postSessionChanges(session, plan, past = []) {
   if (!plan) return changes;
   if (session.easePct > 0) return changes; // a deliberately lighter comeback session says nothing about the plan
   for (const ex of session.exercises) {
-    const entries = plan.days.flatMap((d) => d.exercises.filter((p) => p.exerciseId === ex.exerciseId).map((p) => ({ d, p })));
+    // Optional extras count too: one that was done moves on like any other exercise.
+    const entries = plan.days.flatMap((d) => allEntries(d).filter((p) => p.exerciseId === ex.exerciseId).map((p) => ({ d, p })));
     if (!entries.length) continue;
     const planEx = entries[0].p;
     const f = facts(ex);
@@ -235,8 +236,9 @@ export function applyPlanChange(plan, change, equipment, weights = {}) {
   const w = { ...weights };
   const undo = { planId: plan.id, items: [], weights: {}, days: [] };
   const targets = [];
+  // A session's optional extras can be changed like its own exercises.
   for (const d of next.days) {
-    for (const ex of d.exercises) {
+    for (const ex of allEntries(d)) {
       const byKey = change.exerciseKey && ex.key === change.exerciseKey;
       const byId = !change.exerciseKey && change.exerciseId && ex.exerciseId === change.exerciseId;
       if (byKey || byId) targets.push({ d, ex });
@@ -245,10 +247,11 @@ export function applyPlanChange(plan, change, equipment, weights = {}) {
   // A load belongs to the exercise, wherever it shows up in the week.
   if (change.field === 'load' && change.exerciseKey && targets.length) {
     const id = targets[0].ex.exerciseId;
-    for (const d of next.days) for (const ex of d.exercises) if (ex.exerciseId === id && !targets.some((t) => t.ex === ex)) targets.push({ d, ex });
+    for (const d of next.days) for (const ex of allEntries(d)) if (ex.exerciseId === id && !targets.some((t) => t.ex === ex)) targets.push({ d, ex });
   }
   for (const { d, ex } of targets) {
-    const item = { dayId: d.id, key: ex.key, index: d.exercises.indexOf(ex), field: change.field };
+    const list = (d.optional || []).includes(ex) ? 'optional' : 'exercises';
+    const item = { dayId: d.id, key: ex.key, index: d[list].indexOf(ex), field: change.field, list };
     if (change.field === 'load') {
       item.before = { load: ex.load ? { ...ex.load } : null, reps: ex.reps };
       if (!(ex.exerciseId in undo.weights)) undo.weights[ex.exerciseId] = w[ex.exerciseId] ? { ...w[ex.exerciseId] } : null;
@@ -269,7 +272,7 @@ export function applyPlanChange(plan, change, equipment, weights = {}) {
       ex.restSec = clampInt(change.value, 20, 360);
     } else if (change.field === 'remove') {
       item.before = clone(ex);
-      d.exercises = d.exercises.filter((x) => x !== ex);
+      d[list] = d[list].filter((x) => x !== ex);
     } else if (change.field === 'exercise') {
       const cat = allExercises(equipment).find((x) => x.id === change.value);
       if (!cat) continue;
@@ -319,12 +322,13 @@ export function undoPlanChange(plan, change, weights = {}) {
     const d = next.days.find((x) => x.id === it.dayId);
     if (!d) continue;
     if (it.field === 'remove') {
-      if (d.exercises.some((x) => x.key === it.key)) continue;
-      d.exercises.splice(Math.min(it.index, d.exercises.length), 0, clone(it.before));
+      const list = d[it.list || 'exercises'] || (d[it.list] = []);
+      if (list.some((x) => x.key === it.key)) continue;
+      list.splice(Math.min(it.index, list.length), 0, clone(it.before));
       touched++;
       continue;
     }
-    const ex = d.exercises.find((x) => x.key === it.key);
+    const ex = allEntries(d).find((x) => x.key === it.key);
     if (!ex) continue;
     if (it.field === 'load') {
       if (ex.load?.value !== change.value) continue;
@@ -362,7 +366,7 @@ export const EDITABLE = ['load', 'reps', 'sets', 'rest'];
 export function withValue(plan, change, value) {
   const v = Number(value);
   if (!EDITABLE.includes(change.field) || !Number.isFinite(v) || v < 0) return null;
-  const ex = plan?.days.flatMap((d) => d.exercises).find((x) => (change.exerciseKey ? x.key === change.exerciseKey : x.exerciseId === change.exerciseId));
+  const ex = plan?.days.flatMap(allEntries).find((x) => (change.exerciseKey ? x.key === change.exerciseKey : x.exerciseId === change.exerciseId));
   if (!ex) return null;
   const next = { ...change, undo: undefined };
   if (change.field === 'load') {
@@ -391,6 +395,8 @@ export function ruleSummary(session, changes = []) {
   parts.push(sum.done === sum.total
     ? `All ${sum.total} sets done in ${sum.minutes} min.`
     : `${sum.done} of ${sum.total} sets done in ${sum.minutes} min${sum.skipped ? `, ${sum.skipped} skipped` : ''}.`);
+  const extra = session.exercises.filter((x) => x.optional && x.sets.some((st) => st.status === 'done')).map((x) => x.name);
+  if (extra.length) parts.push(`That includes the optional ${extra.join(' and ')}.`);
   if (sum.onPlan) parts.push('Everything went to plan.');
   else parts.push(`${sum.highlights.slice(0, 2).join('; ')}${sum.highlights.length > 2 ? `, and ${sum.highlights.length - 2} more` : ''}.`);
   if (sum.rests && sum.rests.actual > sum.rests.planned * 1.3) parts.push(`Rests between sets ran to ${secText(sum.rests.actual)} on average against ${secText(sum.rests.planned)} planned.`);
@@ -432,13 +438,14 @@ export function fromAiChanges(raw, { plan, session, equipment, mode }) {
       out.push({ id: uid('chg'), scope: 'set', exerciseKey: ex.key, exerciseName: ex.name, setIndexes: pending.map((p) => p.i), field, from, to, value: v, reason });
       continue;
     }
-    const found = plan?.days.flatMap((d) => d.exercises.map((ex) => ({ d, ex }))).find(({ ex }) => ex.key === r.exercise_key);
+    const found = plan?.days.flatMap((d) => allEntries(d).map((ex) => ({ d, ex }))).find(({ ex }) => ex.key === r.exercise_key);
     if (!found) continue;
     const { d, ex } = found;
     const base = { id: uid('chg'), scope: 'exercise', exerciseKey: ex.key, exerciseName: ex.name, dayIds: [d.id], reason };
     if (field === 'exercise') {
       const cat = all.find((x) => x.id === r.new_exercise_id);
-      if (!cat || !canDo(equipment, cat) || cat.id === ex.exerciseId || d.exercises.some((x) => x.exerciseId === cat.id)) continue;
+      // An optional extra must not repeat anything in its session; a session exercise may take the place of one of its extras.
+      if (!cat || !canDo(equipment, cat) || cat.id === ex.exerciseId || (ex.optional ? allEntries(d) : d.exercises).some((x) => x.exerciseId === cat.id)) continue;
       out.push({ ...base, field, from: ex.name, to: cat.name, value: cat.id });
     } else if (field === 'remove') {
       out.push({ ...base, field, from: ex.name, to: 'Removed', value: null });

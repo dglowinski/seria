@@ -52,9 +52,11 @@ export function canned(payload) {
   }
   if (mode === 'new_plan' || mode === 'next_run') {
     const have = new Set(payload.available_exercises.map((x) => x.id));
-    const day = (title, rest, ids) => ({
+    // `extra`: optional exercises for the end of the session. One is made up, to be dropped by the app.
+    const day = (title, rest, ids, extra = []) => ({
       week: 1, title, rest_days_after: rest,
       exercises: ids.filter((id) => id === 'ghost_lift' || have.has(id)).map((id, i) => ({ exercise_id: id, role: i < 2 ? 'main' : 'accessory', sets: 3, rep_low: 8, rep_high: 10, rest_seconds: 90 })),
+      optional_exercises: extra.map((id) => ({ exercise_id: id, sets: 2, rep_low: 10, rep_high: 12, rest_seconds: 60, why: `Test double: ${id} fits the end of this session.` })),
     });
     if (mode === 'next_run') {
       return {
@@ -77,7 +79,7 @@ export function canned(payload) {
       outlook: 'Test double: eight weeks of steady pressing and pulling. Reps climb first, then the load.',
       plan: {
         days: [
-          day('Upper body', 1, ['db_bench_press', 'db_row', 'ghost_lift', 'db_shoulder_press', 'pull_up']),
+          day('Upper body', 1, ['db_bench_press', 'db_row', 'ghost_lift', 'db_shoulder_press', 'pull_up'], ['ghost_extra', 'hammer_curl']),
           day('Lower body', 1, ['leg_press', 'goblet_squat', 'bb_rdl', 'db_split_squat', 'db_calf_raise']),
           day('Full body', 2, ['incline_db_press', 'chin_up', 'db_reverse_lunge', 'db_curl']),
         ],

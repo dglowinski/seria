@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RULES, SOURCES, PRESCRIPTION, prescribe, levelFor, rulesAsText, RULES_VERSION, activityGroups } from '../js/domain/rules.js';
 import { emptyEquipment, isAvailable, substitutesFor, allExercises, EXERCISES, EQUIPMENT, canDo } from '../js/domain/catalog.js';
-import { generatePlan, emptyProfile, missingFields, dayMinutes, buildAssumptions, normalizePlan, brokenExercises, weeklySets, upgradePlan, buildOutlook } from '../js/domain/planner.js';
+import { generatePlan, emptyProfile, missingFields, dayMinutes, buildAssumptions, normalizePlan, brokenExercises, weeklySets, upgradePlan, buildOutlook, fillOptional, dayOptional, allEntries, optionalMinutes } from '../js/domain/planner.js';
+import { GROUP_OF } from '../js/domain/catalog.js';
+import { OPTIONAL, TEMPLATES } from '../js/domain/rules.js';
 import * as K from '../js/domain/schedule.js';
 import * as S from '../js/domain/session.js';
 import { inSessionHint, postSessionChanges, applyPlanChange, undoPlanChange, canUndo, withValue, ruleSummary, lowerLoad, equipmentChanges, fromAiChanges } from '../js/domain/progression.js';
@@ -228,6 +230,7 @@ test('session: last set of an exercise moves to the next one; finishing gives a 
     const before = { ...s.cursor };
     s = S.beginSet(s, t += 1000);
     s = S.finishSet(s, t += 2000);
+    if (s.phase === 'optional') { s = S.endSession(s, t); break; } // the planned sets are through; no extras today
     if (s.status === 'active' && s.cursor.ex !== before.ex) assert.ok(s.rest.betweenExercises);
   }
   assert.equal(s.status, 'done'); assert.equal(s.phase, 'summary');
@@ -322,6 +325,7 @@ function doSession(plan, dayId, start, repsFor) {
     const { ex, set, setIdx } = S.current(s);
     s = S.beginSet(s, t += 1000); const r = repsFor(ex, set, setIdx); if (r != null) s = S.editDraft(s, { reps: r });
     s = S.finishSet(s, t += 1000);
+    if (s.phase === 'optional') s = S.endSession(s, t); // no optional extras today
   }
   return s;
 }
@@ -496,6 +500,7 @@ function did(plan, dayId, when) {
   while (s.status === 'active') {
     if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t);
     s = S.beginSet(s, t += 1000); s = S.finishSet(s, t += 1000);
+    if (s.phase === 'optional') s = S.endSession(s, t); // no optional extras today
   }
   return s;
 }
@@ -650,7 +655,7 @@ test('easing back in: today is lighter, the plan keeps its numbers, and no concl
   assert.equal(s.exercises[0].sets[0].planned.load, 20); assert.equal(s.exercises[0].sets[0].target.load, 18, '10% off, rounded to the 2 kg step');
   assert.equal(s.exercises[1].sets[0].target.load, 37.5, '42.5 less 10%, rounded to the 2.5 kg step');
   assert.match(s.exercises[0].sets[0].note, /Eased by 10%/);
-  while (s.status === 'active') { if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, T0); s = S.beginSet(s, T0); s = S.finishSet(s, T0 + 2); }
+  while (s.status === 'active') { if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, T0); s = S.beginSet(s, T0); s = S.finishSet(s, T0 + 2); if (s.phase === 'optional') s = S.endSession(s, T0 + 3); }
   assert.deepEqual(postSessionChanges(s, plan, []), [], 'a lighter comeback session proposes nothing');
   assert.equal(S.startSession(plan, 'd1', T0).exercises[0].sets[0].target.load, 20);
 });
@@ -668,4 +673,215 @@ test('plans saved in older shapes are brought up to date without losing anything
   assert.deepEqual(upgradePlan(cyc).queue, { run: 2, order: ['d2', 'd1', 'd3'], done: ['d2'], skipped: [] });
   assert.equal(upgradePlan(fresh), fresh, 'a current plan is left alone'); assert.equal(upgradePlan(null), null);
   assert.equal(K.recommend(up, [], at(0)).dayId, 'd1');
+});
+
+// ---------------------------------------------------------------- optional extras
+
+const PART = {
+  push_h: 'push', push_v: 'push', chest_fly: 'push', triceps: 'push', delt_side: 'push',
+  pull_h: 'pull', pull_v: 'pull', biceps: 'pull', delt_rear: 'pull',
+  squat: 'legs', hinge: 'legs', lunge: 'legs', glute: 'legs', knee_ext: 'legs', knee_flex: 'legs', calf: 'legs', core: 'core',
+};
+
+test('optional extras: every session lists up to two that fit it, outside its time and weekly sets', () => {
+  for (let n = 1; n <= 6; n++) {
+    for (const [goal, minutes] of [['strength', 50], ['muscle', 45], ['general', 30]]) {
+      const eq = emptyEquipment();
+      const p = profile({ goal, daysPerWeek: n, days: [], minutes });
+      const plan = generatePlan(p, eq, {}, T0);
+      const keys = new Set();
+      for (const d of plan.days) {
+        const opt = dayOptional(d);
+        assert.ok(opt.length >= 1 && opt.length <= OPTIONAL.perSession, `${n}/wk ${goal} ${d.title}: ${opt.length} extras`);
+        const parts = new Set(d.exercises.map((x) => PART[x.pattern]));
+        for (const o of opt) {
+          assert.equal(o.optional, true); assert.ok(o.why.length > 10, 'says why it fits');
+          assert.ok(o.sets >= 1 && o.sets <= OPTIONAL.sets); assert.ok(o.reps >= o.repLo && o.reps <= o.repHi);
+          assert.ok(!d.exercises.some((x) => x.exerciseId === o.exerciseId), 'never repeats an exercise of the session');
+          assert.ok(o.pattern === 'core' || parts.has(PART[o.pattern]), `${d.title}: ${o.name} stays in the part of the body the session trains`);
+          assert.ok(canDo(eq, allExercises(eq).find((x) => x.id === o.exerciseId)));
+          assert.ok(!keys.has(o.key) && /^d\d+x\d+$/.test(o.key)); keys.add(o.key);
+          assert.ok(optionalMinutes(o) >= 3 && optionalMinutes(o) <= 12);
+        }
+        assert.equal(new Set(opt.map((o) => GROUP_OF[o.pattern])).size, opt.length, 'two extras, two muscle groups');
+        assert.equal(d.estMinutes, dayMinutes(d.exercises), 'not counted in the session time');
+        assert.ok(d.estMinutes <= Math.max(minutes, 33));
+      }
+      const bare = { ...plan, days: plan.days.map((d) => ({ ...d, optional: [] })) };
+      assert.deepEqual(weeklySets(plan), weeklySets(bare), 'not counted in the weekly sets');
+    }
+  }
+});
+
+test('optional extras: what was left out for time comes first, then what the week is short of', () => {
+  // 30 minutes: an upper session keeps three lifts; the next ones in its template are the extras.
+  const short = generatePlan(profile({ minutes: 30 }), emptyEquipment(), {}, T0);
+  const upper = short.days[0];
+  const have = new Set(upper.exercises.map((x) => x.pattern));
+  const missing = TEMPLATES.upper.map(([p]) => p).filter((p) => !have.has(p));
+  assert.deepEqual(upper.optional.map((o) => o.pattern), missing.slice(0, 2));
+  for (const o of upper.optional) assert.match(o.why, /Left out of this session to fit 30 min/);
+  // Plenty of time, nothing left out: a muscle group short of its weekly sets, or a small one with no direct work.
+  const eq = emptyEquipment(); Object.assign(eq.items, { cable: true });
+  const long = generatePlan(profile({ goal: 'muscle', daysPerWeek: 4, days: [], minutes: 90 }), eq, {}, T0);
+  const up = long.days.find((d) => d.kind === 'upper');
+  assert.equal(TEMPLATES.upper.filter(([p]) => !up.exercises.some((x) => x.pattern === p)).length, 0, 'the whole template fits');
+  assert.ok(up.optional.every((o) => /under the target|trains the .* directly|Extra sets for/.test(o.why)), up.optional.map((o) => o.why).join(' | '));
+  assert.ok(up.optional.some((o) => o.pattern === 'delt_rear'), 'rear delts have no slot in an upper session, so they are offered');
+  // Limits and skips are honoured, and novices are not handed hard bodyweight lifts.
+  const careful = generatePlan(profile({ months: 2, minutes: 30, avoid: ['db_curl'], avoidTags: ['shoulder'] }), emptyEquipment(), {}, T0);
+  for (const d of careful.days) for (const o of d.optional) {
+    const cat = EXERCISES.find((x) => x.id === o.exerciseId);
+    assert.ok(o.exerciseId !== 'db_curl' && !cat.tags.includes('shoulder') && !cat.hard, `${o.name} should not be offered`);
+  }
+});
+
+test('optional extras: saved plans gain them, the list follows the equipment, and a shorter list is left alone', () => {
+  const eq = emptyEquipment(); Object.assign(eq.items, { cable: true, leg_extension: true });
+  const p = profile({ goal: 'muscle', daysPerWeek: 4, days: [], minutes: 60 });
+  const plan = generatePlan(p, eq, { db_curl: { value: 12, step: 2 } }, T0);
+  assert.equal(fillOptional(plan, p, eq), plan, 'nothing to do the second time');
+  // A plan from before the feature: no list at all.
+  const old = { ...plan, days: plan.days.map(({ optional, ...d }) => d) };
+  const up = fillOptional(old, p, eq, { db_curl: { value: 12, step: 2 } });
+  assert.deepEqual(up.days.map((d) => d.optional.map((o) => o.exerciseId)), plan.days.map((d) => d.optional.map((o) => o.exerciseId)));
+  assert.equal(up.version, old.version, 'not a change to the plan itself');
+  // The cable station goes: extras that needed it give way to others, the rest stay.
+  const usedCable = plan.days.flatMap((d) => d.optional).filter((o) => /cable/i.test(o.equipment));
+  assert.ok(usedCable.length > 0);
+  const noCable = { ...eq, items: { ...eq.items, cable: false } };
+  const after = fillOptional(plan, p, noCable);
+  for (const d of after.days) {
+    assert.ok(d.optional.every((o) => !/cable/i.test(o.equipment)));
+    assert.equal(new Set(d.optional.map((o) => o.key)).size, d.optional.length, 'keys stay unique');
+  }
+  assert.ok(after.days.every((d, i) => d.optional.length === plan.days[i].optional.length), 'each lost extra is replaced');
+  // One taken off the list by a change stays off: only a lost entry is filled in again.
+  const key = plan.days[0].optional[0].key;
+  const cut = applyPlanChange(plan, { id: 'c1', exerciseKey: key, field: 'remove', value: null }, eq, {});
+  assert.equal(cut.plan.days[0].optional.length, plan.days[0].optional.length - 1);
+  assert.equal(fillOptional(cut.plan, p, eq), cut.plan);
+  const back = undoPlanChange(cut.plan, { id: 'c1', exerciseKey: key, field: 'remove', value: null, status: 'applied', undo: cut.undo }, {});
+  assert.deepEqual(back.plan.days[0].optional.map((o) => o.key), plan.days[0].optional.map((o) => o.key), 'undo puts it back in its place');
+  // An exercise that moves into the session itself is no longer shown as its extra.
+  const o = plan.days[0].optional[0];
+  const moved = { ...plan, days: plan.days.map((d, i) => (i ? d : { ...d, exercises: [...d.exercises, { ...o, key: 'd1e99', optional: undefined }] })) };
+  assert.ok(!dayOptional(moved.days[0]).some((x) => x.exerciseId === o.exerciseId));
+  // The same exercise elsewhere in the plan shares its weight.
+  const curl = plan.days.flatMap(allEntries).filter((x) => x.exerciseId === 'db_curl');
+  assert.ok(curl.every((x) => x.load?.value === 12));
+});
+
+test('optional extras in a workout: offered after the last planned set, taken or left, never a miss', () => {
+  const plan = generatePlan(profile({ minutes: 30 }), emptyEquipment(), {}, T0);
+  const day = plan.days[0];
+  let s = S.startSession(plan, 'd1', T0); let t = T0;
+  assert.deepEqual(s.optional.map((o) => o.key), day.optional.map((o) => o.key));
+  const planned = S.counts(s).total;
+  const run = () => { while (s.status === 'active' && s.phase !== 'optional') { if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t); s = S.beginSet(s, t += 1000); s = S.finishSet(s, t += 1000); } };
+  run();
+  assert.equal(s.status, 'active'); assert.equal(s.phase, 'optional'); assert.equal(s.rest, null);
+  assert.equal(S.counts(s).done, planned);
+  assert.equal(S.optionalLeft(s).length, 2);
+  assert.equal(S.beginSet(s, t), s, 'no set can start on this step'); assert.equal(S.finishSet(s, t), s);
+  // The last set can still be nudged or undone from here.
+  const lastReps = S.lastSet(s).set.actual.reps;
+  assert.equal(S.lastSet(S.adjustLast(s, { reps: lastReps + 2 }, t)).set.actual.reps, lastReps + 2);
+  const undone = S.undoFinish(s, t);
+  assert.equal(undone.phase, 'active'); assert.equal(S.counts(undone).done, planned - 1);
+  assert.equal(S.finishSet(undone, t + 5).phase, 'optional');
+  // Leaving them: the workout ends with the planned sets only.
+  const plain = S.endSession(s, t + 10);
+  assert.equal(plain.status, 'done'); assert.equal(S.counts(plain).total, planned); assert.ok(S.summarize(plain).onPlan);
+  assert.deepEqual(S.optionalLeft(plain), []);
+  // Taking one: it comes up at once as an exercise of its own.
+  const first = s.optional[0];
+  s = S.addOptional(s, first.key, t += 1000);
+  assert.equal(s.phase, 'ready'); assert.equal(S.current(s).ex.exerciseId, first.exerciseId); assert.equal(S.current(s).ex.optional, true);
+  assert.equal(S.current(s).ex.sets.length, first.sets); assert.equal(S.optionalLeft(s).length, 1);
+  assert.equal(S.addOptional(s, first.key, t), s, 'not twice');
+  run();
+  assert.equal(s.phase, 'optional', 'one more is still on offer');
+  // The second is added and then not done: it leaves no trace.
+  const second = s.optional[1];
+  s = S.addOptional(s, second.key, t += 1000);
+  const done = S.endSession(s, t += 1000);
+  assert.equal(done.status, 'done');
+  assert.ok(done.exercises.some((x) => x.exerciseId === first.exerciseId) && !done.exercises.some((x) => x.exerciseId === second.exerciseId));
+  const sum = S.summarize(done);
+  assert.equal(sum.done, planned + first.sets); assert.equal(sum.skipped, 0); assert.ok(sum.onPlan);
+  assert.ok(S.exerciseSummary(done.exercises.find((x) => x.optional)).notes.includes('Optional extra'));
+  assert.match(ruleSummary(done, []), new RegExp(`includes the optional ${first.name}`));
+  const log = S.readLog(done).map((l) => l.text);
+  assert.ok(log.some((l) => /Optional extras on offer/.test(l)) && log.some((l) => l === `${first.name} added as an optional extra`));
+  // Taken early from the overview, an extra waits at the end; the workout then ends after it, with one left on offer first.
+  let e = S.startSession(plan, 'd1', T0);
+  e = S.addOptional(e, first.key, T0 + 5);
+  assert.equal(e.cursor.ex, 0); assert.equal(e.exercises[e.exercises.length - 1].exerciseId, first.exerciseId);
+  // A session with no extras ends on its last set as before.
+  const none = S.startSession({ ...plan, days: plan.days.map((d) => ({ ...d, optional: [] })) }, 'd1', T0);
+  s = none; t = T0; run();
+  assert.equal(s.status, 'done');
+  // Skipping to the end means "done for today": no offer.
+  let k = S.startSession(plan, 'd1', T0);
+  while (k.status === 'active') k = S.dropExercise(k, T0 + 9);
+  assert.equal(k.phase, 'summary');
+});
+
+test('optional extras: one that was done moves on like any other exercise', () => {
+  const eq = emptyEquipment();
+  const plan = generatePlan(profile({ minutes: 30 }), eq, { db_curl: { value: 10, step: 2 } }, T0);
+  const o = plan.days[0].optional.find((x) => x.exerciseId === 'db_curl');
+  assert.ok(o, 'the dumbbell curl is an extra of the first session');
+  let s = S.startSession(plan, 'd1', T0); let t = T0;
+  const run = (reps) => { while (s.status === 'active' && s.phase !== 'optional') { if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t); s = S.beginSet(s, t += 1000); if (S.current(s).ex.optional && reps) s = S.editDraft(s, { reps }); s = S.finishSet(s, t += 1000); } };
+  run();
+  s = S.addOptional(s, o.key, t);
+  run(o.repHi); // top of the range on every set
+  s = S.endSession(s, t += 1000);
+  const changes = postSessionChanges(s, plan, []);
+  const c = changes.find((x) => x.exerciseId === 'db_curl');
+  assert.ok(c && c.field === 'load' && c.value === 12, JSON.stringify(c));
+  const res = applyPlanChange(plan, c, eq, { db_curl: { value: 10, step: 2 } });
+  const entry = () => res.plan.days[0].optional.find((x) => x.exerciseId === 'db_curl');
+  assert.equal(entry().load.value, 12); assert.equal(entry().reps, o.repLo);
+  assert.equal(res.weights.db_curl.value, 12);
+  const undone = undoPlanChange(res.plan, { ...c, status: 'applied', undo: res.undo }, res.weights);
+  assert.equal(undone.plan.days[0].optional.find((x) => x.exerciseId === 'db_curl').load.value, 10);
+  // By hand: the number can be corrected, and a model can change or swap an extra by its key.
+  assert.equal(withValue(plan, { exerciseKey: o.key, field: 'reps', value: 9 }, 11).value, 11);
+  const ai = fromAiChanges([
+    { exercise_key: o.key, field: 'sets', new_value: 3, reason: 'more' },
+    { exercise_key: o.key, field: 'exercise', new_exercise_id: plan.days[0].exercises[0].exerciseId, new_value: null, reason: 'dup' },
+    { exercise_key: o.key, field: 'exercise', new_exercise_id: 'hammer_curl', new_value: null, reason: 'swap' },
+  ], { plan, equipment: eq, mode: 'after_session' });
+  assert.deepEqual(ai.map((x) => `${x.field}:${x.value}`), ['sets:3', 'exercise:hammer_curl'], 'an extra never repeats its own session');
+  const swapped = applyPlanChange(plan, ai[1], eq, {});
+  assert.equal(swapped.plan.days[0].optional.find((x) => x.key === o.key).exerciseId, 'hammer_curl');
+});
+
+test('optional extras: a model can pick them per session; where it gives none, the rules do', () => {
+  const eq = emptyEquipment();
+  const ex = (id) => ({ exercise_id: id, role: 'main', sets: 3, rep_low: 8, rep_high: 10, rest_seconds: 90 });
+  const raw = {
+    days: [
+      { week: 1, title: 'Upper body', rest_days_after: 1, exercises: [ex('db_bench_press'), ex('db_row')],
+        optional_exercises: [
+          { exercise_id: 'db_bench_press', sets: 2, rep_low: 10, rep_high: 12, rest_seconds: 60, why: 'already in the session' },
+          { exercise_id: 'no_such_lift', sets: 2, rep_low: 10, rep_high: 12, rest_seconds: 60, why: 'made up' },
+          { exercise_id: 'hammer_curl', sets: 9, rep_low: 10, rep_high: 12, rest_seconds: 60, why: 'Your arms get little direct work.' },
+          { exercise_id: 'db_lateral_raise', sets: 2, rep_low: 12, rep_high: 15, rest_seconds: 45, why: '' },
+          { exercise_id: 'crunch', sets: 2, rep_low: 12, rep_high: 15, rest_seconds: 45, why: 'one too many' },
+        ] },
+      { week: 1, title: 'Lower body', rest_days_after: 2, exercises: [ex('goblet_squat'), ex('db_rdl')] },
+    ],
+    notes: [],
+  };
+  const { plan } = normalizePlan(raw, profile({ daysPerWeek: 2, days: [] }), eq, {}, T0);
+  const [up, low] = plan.days;
+  assert.deepEqual(up.optional.map((o) => `${o.key}:${o.exerciseId}:${o.sets}`), ['d1x1:hammer_curl:4', 'd1x2:db_lateral_raise:2'], 'checked against the catalog and the session, at most two, numbers clamped');
+  assert.equal(up.optional[0].why, 'Your arms get little direct work.'); assert.ok(up.optional[1].why.length > 5, 'a missing reason is filled in');
+  assert.ok(up.optional.every((o) => o.optional === true));
+  assert.ok(low.optional.length >= 1 && low.optional.every((o) => PART[o.pattern] === 'legs' || o.pattern === 'core'), 'the rules fill the session the model left empty');
+  assert.equal(up.estMinutes, dayMinutes(up.exercises));
 });

@@ -82,6 +82,8 @@ try {
   await page.getByRole('heading', { name: 'Your plan' }).waitFor({ timeout: 8000 });
   const made = await page.evaluate(() => { const p = JSON.parse(localStorage.getItem('seria.state.v1')).plan; return `${p.perWeek}/${p.days.length}/${p.days.map((d) => d.restAfter).join('')}`; });
   check('with the network off it still starts and builds a plan: sessions with rest days, no fixed weekdays', made === '3/6/112112', made);
+  const extras = await page.evaluate(() => JSON.parse(localStorage.getItem('seria.state.v1')).plan.days.map((d) => (d.optional || []).length));
+  check('every session lists optional extras for the end, and the next one names them', extras.length === 6 && extras.every((n) => n >= 1 && n <= 2) && /^Optional at the end: \w/.test(await page.getByTestId('up-next-optional').textContent().catch(() => '')), extras.join());
   check('the plan reads as a list with one "Train now" button', (await page.getByTestId('rest-gap').count()) === 5 && (await page.getByTestId('train-now').textContent()).trim() === 'Train now');
 
   // One full set, still offline: starting weight, start, one tap to finish, rest timer.
@@ -99,9 +101,10 @@ try {
   await page.reload();
   await page.getByTestId('rest-timer').waitFor({ timeout: 15000 });
   check('a set can be logged offline with one tap and survives a reload mid-rest', /^\d\d:\d\d$/.test((await page.getByTestId('rest-timer').textContent()).trim()) && (await page.getByTestId('last-set').count()) === 1);
-  check('the new screens are in the release: weights, activities, the long view', await page.evaluate(async () => {
+  check('the new screens are in the release: weights, activities, the long view, optional extras', await page.evaluate(async () => {
     const [w, p] = await Promise.all([fetch('js/ui/weights.js').then((r) => r.text()), fetch('js/ui/plan.js').then((r) => r.text())]);
-    return w.includes('What you lift now') && p.includes('Log another activity') && p.includes('The long view');
+    const k = await fetch('js/ui/workout.js').then((r) => r.text());
+    return w.includes('What you lift now') && p.includes('Log another activity') && p.includes('The long view') && k.includes('Feel like a bit more?');
   }));
   await context.setOffline(false);
   check('no script errors', errors.length === 0, errors.join(' | '));

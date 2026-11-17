@@ -143,7 +143,7 @@ test('train now and next run: the model gets the list, the history and the app\'
   let plan = generatePlan(profile, eq, { db_bench_press: { value: 20, step: 2 } });
   const t0 = new Date(2026, 10, 9, 18).getTime();
   let w = S.startSession(plan, 'd1', t0);
-  while (w.status === 'active') { if (S.needsWeight(w)) w = S.setStartingWeight(w, 20, 2, t0); w = S.beginSet(w, t0); w = S.finishSet(w, t0 + 2); }
+  while (w.status === 'active') { if (S.needsWeight(w)) w = S.setStartingWeight(w, 20, 2, t0); w = S.beginSet(w, t0); w = S.finishSet(w, t0 + 2); if (w.phase === 'optional') w = S.endSession(w, t0 + 3); }
   plan = completeDay(plan, 'd1');
   const now = t0 + 26 * 3600e3; // the next evening: a day early
   const pick = recommend(plan, [w], now);
@@ -355,6 +355,7 @@ function train(dayId, repsFor = () => null, start = Date.now() - 3600e3) {
     const { ex, set } = S.current(s);
     s = S.beginSet(s, t += 1000); const r = repsFor(ex, set); if (r != null) s = S.editDraft(s, { reps: r });
     s = S.finishSet(s, t += 1000);
+    if (s.phase === 'optional') s = S.endSession(s, t); // no optional extras today
   }
   store.putSession(s);
   afterWorkout(s);
@@ -525,4 +526,34 @@ test('offline: a review that waits is shown as waiting, and dropped when no mode
   assert.equal(store.getState().plan.days[0].exercises[0].sets, 2);
   const made = recordUpdate({ mode: 'coach', source: 'claude', changes: [{ id: 'c-x', exerciseKey: 'nope', exerciseName: 'gone', field: 'sets', value: 3, from: '', to: '', reason: 'r' }] });
   assert.equal(made.changes[0].status, 'stale', 'a change that points at nothing is written down, not made');
+});
+
+test('optional extras: the model is told about them, can pick them, and saved data gains them on load', () => {
+  const profile = { ...emptyProfile(), goal: 'strength', months: 12, daysPerWeek: 3, minutes: 50 };
+  const eq = emptyEquipment();
+  const plan = generatePlan(profile, eq);
+  // What the model is sent.
+  assert.match(SYSTEM_PROMPT, /Optional extras\n/); assert.match(SYSTEM_PROMPT, /\[OPT-1\]/);
+  const dayProps = OUTPUT_SCHEMA.properties.plan.anyOf[0].properties.days.items;
+  assert.ok(dayProps.required.includes('optional_exercises'));
+  assert.deepEqual(dayProps.properties.optional_exercises.items.required, ['exercise_id', 'sets', 'rep_low', 'rep_high', 'rest_seconds', 'why']);
+  const req = JSON.parse(interviewRequest({ profile, equipment: eq, plan, chat: [], message: 'hi' }));
+  const sent = req.current_plan.sessions[0].optional_at_the_end;
+  assert.deepEqual(sent.map((x) => x.exercise_key), plan.days[0].optional.map((o) => o.key));
+  assert.ok(sent.every((x) => x.why && x.sets <= 2));
+  // A finished workout says which exercise was an extra and which extras were left.
+  let w = S.startSession(plan, 'd1', Date.now() - 3600e3); let t = w.startedAt;
+  while (w.phase !== 'optional') { if (S.needsWeight(w)) w = S.setStartingWeight(w, 20, 2, t); w = S.beginSet(w, t += 1000); w = S.finishSet(w, t += 1000); }
+  w = S.addOptional(w, w.optional[0].key, t);
+  while (w.phase !== 'optional') { if (S.needsWeight(w)) w = S.setStartingWeight(w, 10, 2, t); w = S.beginSet(w, t += 1000); w = S.finishSet(w, t += 1000); }
+  w = S.endSession(w, t += 1000);
+  const after = JSON.parse(sessionRequest({ mode: 'after_session', profile, equipment: eq, plan, session: w, past: [] }));
+  assert.equal(after.session.exercises.filter((x) => x.optional_extra).length, 1);
+  assert.deepEqual(after.session.optional_extras_not_taken, [plan.days[0].optional[1].name]);
+  // Loading data saved by an older version of the app: the plan gains its extras, nothing else moves.
+  const old = { ...emptyState(), profile, equipment: eq, plan: { ...plan, days: plan.days.map(({ optional, ...d }) => d) } };
+  const loaded = hydrate(JSON.parse(JSON.stringify(old)));
+  assert.deepEqual(loaded.plan.days.map((d) => d.optional.map((o) => o.exerciseId)), plan.days.map((d) => d.optional.map((o) => o.exerciseId)));
+  assert.deepEqual(loaded.plan.days.map((d) => d.exercises), plan.days.map((d) => d.exercises));
+  assert.equal(loaded.plan.version, plan.version);
 });

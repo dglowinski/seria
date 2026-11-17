@@ -11,7 +11,7 @@ import { recommend, setOrder, setRests, completeDay, uncompleteDay, queueState, 
 import { KEYWORDS, allExercises, canDo, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail } from '../domain/catalog.js';
 import {
   WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_NAMES, missingFields, generatePlan, normalizePlan, fitToBudget, refreshPlan, fmtMonths,
-  trainingDays, clampMinutes, setPlanLoad,
+  trainingDays, clampMinutes, setPlanLoad, fillOptional, allEntries,
 } from '../domain/planner.js';
 import { inSessionHint, postSessionChanges, equipmentChanges, applyPlanChange, undoPlanChange, withValue, fromAiChanges, ruleSummary, isApplied } from '../domain/progression.js';
 import { applyHint, withoutHint, startSession, newActivity } from '../domain/session.js';
@@ -314,7 +314,7 @@ export async function buildPlan() {
       if (out.plan) {
         const res = normalizePlan(out.plan, st.profile, st.equipment, st.weights);
         for (const d of res.plan.days) fitToBudget(d.exercises, res.plan.minutes);
-        plan = refreshPlan({ ...res.plan, source: src, outlook: out.outlook ? { text: out.outlook, by: src } : null });
+        plan = fillOptional(refreshPlan({ ...res.plan, source: src, outlook: out.outlook ? { text: out.outlook, by: src } : null }), st.profile, st.equipment, st.weights);
         via = src;
       } else if (out.questions.length) {
         store.say('coach', [out.message, ...out.questions].filter(Boolean).join('\n'), { via: src });
@@ -412,8 +412,8 @@ export function planNextRun() {
       for (const d of res.plan.days) fitToBudget(d.exercises, res.plan.minutes);
       // Rep targets already earned carry over to the same exercise in the new run.
       const reps = {};
-      for (const d of now.plan.days) for (const ex of d.exercises) reps[ex.exerciseId] = ex.reps;
-      for (const d of res.plan.days) for (const ex of d.exercises) if (reps[ex.exerciseId]) ex.reps = Math.min(Math.max(reps[ex.exerciseId], ex.repLo), ex.repHi);
+      for (const d of now.plan.days) for (const ex of allEntries(d)) reps[ex.exerciseId] = ex.reps;
+      for (const d of res.plan.days) for (const ex of allEntries(d)) if (reps[ex.exerciseId]) ex.reps = Math.min(Math.max(reps[ex.exerciseId], ex.repLo), ex.repHi);
       const next = refreshPlan({ ...res.plan, source: src, version: (now.plan.version || 1) + 1, outlook: out.outlook ? { text: out.outlook, by: src } : now.plan.outlook || null });
       next.queue = { ...next.queue, run: queueState(now.plan).run + 1 };
       next.lastUpdate = { at: Date.now(), by: src, text: out.message || 'The next run is planned from your results.' };
@@ -697,6 +697,7 @@ export function afterSetSaved(sessionBefore, exRef, setIdx) {
   hintCtl?.abort();
   hintCtl = null;
   if (!aiReady() || isOffline()) return;
+  if (!session.exercises.some((x) => x.sets.some((y) => y.status === 'pending'))) return; // no sets left to change
   const st = ex.sets[setIdx];
   if (!st?.actual) return;
   const off = st.actual.reps !== st.target.reps || st.actual.load !== st.target.load || (st.actual.rir != null && (st.actual.rir <= 0 || st.actual.rir >= 3));
@@ -771,8 +772,11 @@ export function logActivity(input) {
  * "Swap them" button) makes it anyway.
  */
 export function reviewEquipment({ force = false } = {}) {
-  const st = store.getState();
+  let st = store.getState();
   if (!st.plan || store.activeSession(st)) return null;
+  // Optional extras follow the equipment list quietly: one that can no longer be done gives way to another.
+  const filled = fillOptional(st.plan, st.profile, st.equipment, st.weights);
+  if (filled !== st.plan) { store.set({ plan: filled }); st = store.getState(); }
   const undone = new Set(st.proposals.filter((p) => p.mode === 'equipment').flatMap((p) => p.changes.filter((c) => c.status === 'undone').map((c) => c.exerciseKey)));
   const changes = equipmentChanges(st.plan, st.equipment, st.profile).filter((c) => force || !undone.has(c.exerciseKey));
   if (!changes.length) return null;
@@ -867,7 +871,7 @@ export function setWeight(exerciseId, loadType, value, step) {
   const v = Math.max(0, Math.round(Number(value) * 100) / 100);
   const stp = Number(step) > 0 ? Number(step) : 2.5;
   const weights = { ...st.weights, [exerciseId]: { value: v, step: stp, type: loadType, at: Date.now(), by: 'hand' } };
-  const inPlan = st.plan?.days.some((d) => d.exercises.some((ex) => ex.exerciseId === exerciseId));
+  const inPlan = st.plan?.days.some((d) => allEntries(d).some((ex) => ex.exerciseId === exerciseId));
   store.set({ weights, ...(inPlan ? { plan: setPlanLoad(st.plan, exerciseId, { value: v, step: stp }) } : {}) });
 }
 
@@ -875,7 +879,7 @@ export function setWeight(exerciseId, loadType, value, step) {
 export function rememberWeight(exerciseId, loadType, value, step) {
   const st = store.getState();
   const weights = { ...st.weights, [exerciseId]: { value, step, type: loadType, at: Date.now() } };
-  const hasBlank = st.plan?.days.some((d) => d.exercises.some((ex) => ex.exerciseId === exerciseId && !ex.load));
+  const hasBlank = st.plan?.days.some((d) => allEntries(d).some((ex) => ex.exerciseId === exerciseId && !ex.load));
   return { weights, ...(hasBlank ? { plan: setPlanLoad(st.plan, exerciseId, { value, step }) } : {}) };
 }
 

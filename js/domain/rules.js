@@ -8,8 +8,8 @@
 // Bump RULES_VERSION when a number or a rule changes. Plans and sessions store
 // the version they were made with.
 
-export const RULES_VERSION = '1.3.0';
-export const RULES_UPDATED = '2026-11-15';
+export const RULES_VERSION = '1.4.0';
+export const RULES_UPDATED = '2026-11-17';
 
 export const SOURCES = {
   acsm2009: {
@@ -231,6 +231,10 @@ export const TIME = {
   minSets: 2,
 };
 
+// Optional extras: exercises listed with a session that can be added at the
+// end on a day with time and energy left. They sit outside the time budget.
+export const OPTIONAL = { perSession: 2, sets: 2 };
+
 // Progression and result reading.
 export const PROGRESSION = {
   // Raise the load when every set reaches the top of the rep range.
@@ -368,6 +372,11 @@ export const RULES = [
     sources: ['practice'], uses: ['TIME'],
   },
   {
+    id: 'OPT-1', area: 'Optional extras',
+    text: 'Each session lists up to two optional exercises for the end, for days with time and energy left. They train the same part of the body as the session, so they add sets without tiring what the next session needs fresh. The choice, in order: what was left out of that session for time; a big muscle group that is under its weekly set target; a small muscle group with no direct work that week; then more single-joint work for what was just trained. They are done for 2 sets, are not counted in the session time, and skipping them changes nothing. When done, they are recorded and progress like any other exercise.',
+    sources: ['schoenfeld2017volume', 'practice'], uses: ['OPTIONAL', 'fillOptional()'],
+  },
+  {
     id: 'LOD-1', area: 'Starting weight',
     text: 'With no history for an exercise, the user picks a starting weight: one they could lift for about 2 reps more than the target with good form. Loads are recorded as weight per dumbbell, total weight (bar included), machine setting, or bodyweight plus added weight.',
     sources: ['helms2016', 'practice'], uses: ['LOAD_TYPES'],
@@ -447,5 +456,6 @@ export function rulesAsText() {
   lines.push(`Planned ahead: ${RUN.minWeeks}-${RUN.maxWeeks} weeks of sessions. Recovery: ${SCHEDULE.recoverHours} h per muscle group. Coming back after ${SCHEDULE.breakDays}+ days: ${SCHEDULE.easePct}% lighter.`);
   lines.push(`Time model: warm-up ${(TIME.warmupGeneralSec + TIME.warmupRampSec) / 60} min, each set ${TIME.setBaseSec}s + ${TIME.secPerRep}s per rep, ${TIME.transitionSec}s between exercises.`);
   lines.push(`Default load steps (kg): ${Object.entries(PROGRESSION.defaultStep).map(([k, v]) => `${k} ${v}`).join(', ')}.`);
+  lines.push(`Optional extras: up to ${OPTIONAL.perSession} per session, ${OPTIONAL.sets} sets each, outside the time budget.`);
   return lines.join('\n');
 }

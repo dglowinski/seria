@@ -5,7 +5,7 @@
 // Device settings (API key, sound...) live under a second key and are never
 // exported or synced.
 
-import { emptyProfile, upgradePlan } from './domain/planner.js';
+import { emptyProfile, upgradePlan, fillOptional } from './domain/planner.js';
 import { emptyEquipment } from './domain/catalog.js';
 
 const KEY = 'seria.state.v1';
@@ -71,6 +71,8 @@ export function hydrate(raw) {
   for (const k of ['sessions', 'deletedSessions', 'chat', 'proposals']) if (!Array.isArray(s[k])) s[k] = [];
   s.plan = upgradePlan(s.plan); // plans saved before cycles existed keep their sessions and gain a cycle
   if (!s.weights || typeof s.weights !== 'object') s.weights = {};
+  // A plan saved before optional extras existed gets them here, picked by the rules; one that has them keeps them.
+  if (s.plan) { try { s.plan = fillOptional(s.plan, s.profile, s.equipment, s.weights); } catch { /* the plan stays as saved */ } }
   s.schema = SCHEMA;
   if (s.activeSessionId && !s.sessions.some((x) => x.id === s.activeSessionId && x.status === 'active')) s.activeSessionId = null;
   // A workout left on the old "enter the result" step carries on as a set in progress: one tap finishes it.

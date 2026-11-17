@@ -327,7 +327,7 @@ await guarded(async () => {
   const dayText = await page.locator('main').textContent();
   check('day preview: order, equipment, sets, reps, rest, how to pick the weight, time parts',
     /1\. Dumbbell bench press/.test(dayText) && /Dumbbells, Bench/.test(dayText) && /\d × \d+ reps/.test(dayText) && /rest 3:00 min/.test(dayText) && /You pick it in the first session/.test(dayText) && /warm-up 8, sets \d+, rests \d+, moving between stations \d+/.test(dayText), dayText.slice(0, 300));
-  check('each exercise in the preview has a sketch of its equipment', (await page.locator('main svg.sketch').count()) === 4 && (await page.locator('main svg.sketch').first().getAttribute('data-sketch')) === 'dumbbells'
+  check('each exercise in the preview has a sketch of its equipment', (await page.locator('main > ol svg.sketch').count()) === 4 && (await page.locator('main svg.sketch').first().getAttribute('data-sketch')) === 'dumbbells'
     && (await page.locator('main svg.sketch').nth(1).getAttribute('data-sketch')) === 'barbell' && (await page.locator('main svg.sketch').first().getAttribute('aria-hidden')) === 'true');
   await shot(page, '06-day');
 
@@ -685,6 +685,9 @@ await guarded(async () => {
   st = await state(page);
   check('plan built by Claude, cleaned against the catalog', st.plan.source === 'claude' && st.plan.days.length === 3 && !JSON.stringify(st.plan).includes('ghost_lift') && st.plan.days.every((d) => d.estMinutes <= 50));
   check('plan screen says who built it', /Built by Claude/.test(await page.locator('main').textContent()));
+  check('optional extras: the model\'s pick is kept after a check against the catalog; sessions it left empty are filled by the rules',
+    st.plan.days[0].optional.map((o) => o.exerciseId).join() === 'hammer_curl' && /^Test double/.test(st.plan.days[0].optional[0].why) && st.plan.days.slice(1).every((d) => d.optional.length >= 1) && !JSON.stringify(st.plan).includes('ghost_extra'),
+    JSON.stringify(st.plan.days.map((d) => d.optional.map((o) => o.exerciseId))));
 
   // describing the gym: Claude reads it, the app checks it
   await tab(page, 'Equipment').click();
@@ -1196,6 +1199,110 @@ await guarded(async () => {
   check('the OpenAI key is still there when you switch back', (await page.inputValue('#openai-key')) === 'sk-test-openai-key');
   check('keys are kept apart from the app data and backups', !/sk-test-openai/.test(await page.evaluate(() => localStorage.getItem('seria.state.v1') || '')));
   check('no script errors in part F', errors.length === 0, errors.join(' | '));
+  await context.close();
+});
+
+// ---------------------------------------------------------------------------
+// G  Optional extras: listed with each session, offered when the planned sets
+//    are done, taken or left.
+// ---------------------------------------------------------------------------
+part = 'G optional extras';
+await guarded(async () => {
+  const { context, page, errors } = await newPage();
+  await page.goto(`${BASE}#coach`);
+  await page.getByText('Tell me about your goal').waitFor();
+  await say(page, "I want to build strength. I've trained for a year. I can come three times a week for 50 minutes.");
+  await page.getByText(/movements you want to skip/).waitFor();
+  await page.getByRole('button', { name: 'No, nothing' }).click();
+  await page.getByTestId('build-plan').click();
+  await page.getByTestId('open-plan').click();
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor();
+  let st = await state(page);
+  const d1 = st.plan.days[0];
+  const names = d1.optional.map((o) => o.name);
+  check('every session of a new plan lists one or two optional extras, none of them already in the session',
+    st.plan.days.every((d) => d.optional.length >= 1 && d.optional.length <= 2 && d.optional.every((o) => o.optional && o.why && !d.exercises.some((x) => x.exerciseId === o.exerciseId))),
+    JSON.stringify(st.plan.days.map((d) => d.optional.map((o) => o.name))));
+  check('the next session on the plan names its optional extras', (await page.getByTestId('up-next-optional').textContent()) === `Optional at the end: ${names.join(', ')}`, await page.getByTestId('up-next-optional').textContent());
+
+  await openSession(page, d1.title);
+  const box = page.getByTestId('day-optional');
+  const boxText = await box.textContent();
+  check('the session screen shows them apart from the plan, with sets, time and the reason',
+    (await box.getByTestId('optional-exercise').count()) === names.length && names.every((n) => boxText.includes(n)) && /Optional extras/.test(boxText) && /not counted in the \d+ min/.test(boxText)
+    && /2 × \d+ reps/.test(boxText) && /about \d+ min/.test(boxText) && (await box.getByTestId('optional-why').first().textContent()) === d1.optional[0].why, boxText.slice(0, 400));
+  check('they do not change the time of the session', new RegExp(`About ${d1.estMinutes} min`).test(await page.locator('main').textContent()) && d1.estMinutes <= 50);
+  await box.scrollIntoViewIfNeeded();
+  await shot(page, '40-day-optional');
+
+  // The whole planned session, one tap per set.
+  await page.getByTestId('start-day').click();
+  await main(page).waitFor();
+  const planned = d1.exercises.reduce((n, x) => n + x.sets, 0);
+  let lastLabel = '';
+  await runWorkout(page, { stop: async () => { const w = (await state(page)).sessions[0]; if (w.phase === 'active') lastLabel = (await main(page).textContent()).trim(); return w.phase === 'optional'; } });
+  st = await state(page);
+  check('after the last planned set the workout stays open and offers the extras', st.sessions[0].status === 'active' && st.sessions[0].phase === 'optional' && (await phase(page)) === 'optional'
+    && (await page.getByRole('heading', { name: 'Feel like a bit more?' }).isVisible()) && (await page.getByTestId('optional-list').getByTestId('optional-row').count()) === names.length
+    && (await main(page).textContent()).trim() === 'Finish workout', `${st.sessions[0].phase} ${(await main(page).textContent()).trim()}`);
+  check('the last planned set says "Finish set", not "end workout", while extras are on offer', lastLabel === 'Finish set', lastLabel);
+  check('each offer says what it is, how long it takes and why it fits', new RegExp(`${names[0]}.*2 × \\d+ reps · about \\d+ min`).test(await page.getByTestId('optional-row').first().textContent())
+    && (await page.getByTestId('optional-row').first().textContent()).includes(d1.optional[0].why), await page.getByTestId('optional-row').first().textContent());
+  check('the set just saved can still be nudged from here', (await page.getByTestId('last-set').count()) === 1);
+  const repsBefore = Number(await page.getByTestId('last-reps').textContent());
+  await page.getByTestId('last-set').getByRole('button', { name: '1 rep more' }).click();
+  check('+1 on that card is saved', await until(async () => { const w = (await state(page)).sessions[0]; const x = w.exercises[w.exercises.length - 1]; return x.sets[x.sets.length - 1].actual.reps === repsBefore + 1; }));
+  await shot(page, '41-optional-step');
+  await page.reload();
+  await page.getByRole('heading', { name: 'Feel like a bit more?' }).waitFor();
+  check('a reload lands back on the same step', (await page.getByTestId('optional-row').count()) === names.length);
+
+  // Take the first one.
+  await page.getByTestId('optional-row').first().click();
+  await until(async () => (await page.getByTestId('exercise-name').count()) === 1);
+  check('"Do it" brings the extra up as the next exercise, marked optional', (await page.getByTestId('exercise-name').textContent()) === names[0] && /optional extra/.test(await page.locator('main').textContent())
+    && (await state(page)).sessions[0].exercises.slice(-1)[0].optional === true);
+  await runWorkout(page, { weight: '10', stop: async () => (await state(page)).sessions[0].phase === 'optional' });
+  st = await state(page);
+  check('when it is done, the one that is left is offered again', (await page.getByTestId('optional-row').count()) === names.length - 1 && st.sessions[0].exercises.slice(-1)[0].sets.every((x) => x.status === 'done'));
+  // Add the other one, then finish without doing it.
+  if (names.length > 1) {
+    await page.getByTestId('progress').click();
+    check('the workout overview lists the extra as done and offers the other one', /optional extra/.test(await page.getByTestId('overview').textContent()) && (await page.getByTestId('overview-optional').getByTestId('optional-row').count()) === 1);
+    await page.getByTestId('overview-optional').getByTestId('optional-row').first().click();
+    await until(async () => (await page.getByTestId('exercise-name').count()) === 1);
+    check('an extra can also be added from the overview', (await page.getByTestId('exercise-name').textContent()) === names[1]);
+    await page.getByRole('button', { name: 'End workout' }).click();
+    await page.getByRole('button', { name: 'Finish and save' }).click();
+  } else {
+    await main(page).click();
+  }
+  await page.getByRole('heading', { name: 'Workout saved' }).waitFor();
+  st = await state(page);
+  const w = st.sessions[0];
+  const extra = w.exercises.filter((x) => x.optional);
+  const upd = st.proposals.find((p) => p.sessionId === w.id);
+  check('the saved workout holds the extra that was done, and nothing of the one that was not', w.status === 'done' && extra.length === 1 && extra[0].name === names[0] && extra[0].sets.every((x) => x.status === 'done')
+    && w.exercises.reduce((n, x) => n + x.sets.length, 0) === planned + extra[0].sets.length && (await page.getByTestId('sum-sets').textContent()).trim() === `${planned + extra[0].sets.length} / ${planned + extra[0].sets.length}`,
+    `${extra.map((x) => x.name)} ${await page.getByTestId('sum-sets').textContent()}`);
+  check('the summary names it, and the record marks it as an optional extra', new RegExp(`includes the optional ${names[0]}`).test(upd.message) && /Optional extra/.test(await page.getByTestId('session-exercise').last().textContent()), upd.message);
+  const entry = st.plan.days[0].optional.find((o) => o.name === names[0]);
+  const change = upd.changes.find((c) => c.exerciseName === names[0]);
+  check('an extra that was done moves on in the plan like any other exercise, and stays optional', !!change && change.status === 'applied' && entry.optional === true && (entry.reps === d1.optional[0].reps + 1 || entry.load?.value > 10),
+    JSON.stringify({ change, reps: entry.reps, load: entry.load }));
+  await shot(page, '42-optional-saved');
+
+  // A plan saved before the feature existed gains its extras when the app starts.
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('seria.state.v1'));
+    for (const d of s.plan.days) delete d.optional;
+    localStorage.setItem('seria.state.v1', JSON.stringify(s));
+  });
+  await page.goto(`${BASE}#plan`);
+  await page.reload();
+  await page.getByTestId('train-now').waitFor();
+  check('a plan saved by an older version shows optional extras after the update, with nothing to rebuild', (await page.getByTestId('up-next-optional').count()) === 1 && /Optional at the end: \w/.test(await page.getByTestId('up-next-optional').textContent()));
+  check('no script errors in part G', errors.length === 0, errors.join(' | '));
   await context.close();
 });
 

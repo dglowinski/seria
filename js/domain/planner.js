@@ -4,10 +4,10 @@
 
 import {
   SPLITS, TEMPLATES, DAY_TITLES, PATTERN_FALLBACK, TIME, MAX_DAYS, GOALS, TARGET_RIR, CYCLE,
-  RULES_VERSION, PROGRESSION, WEEKLY_SETS, SCHEDULE, prescribe, levelFor, setSeconds, defaultCycleWeeks,
+  RULES_VERSION, PROGRESSION, WEEKLY_SETS, SCHEDULE, OPTIONAL, prescribe, levelFor, setSeconds, defaultCycleWeeks,
 } from './rules.js';
 import { newRun, restPattern } from './schedule.js';
-import { allExercises, canDo, zoneOf, equipmentNames, isLowerPattern, equipmentList, isAvailable, GROUP_OF, MAIN_GROUPS } from './catalog.js';
+import { allExercises, canDo, zoneOf, equipmentNames, isLowerPattern, equipmentList, isAvailable, GROUP_OF, MAIN_GROUPS, PATTERNS } from './catalog.js';
 
 export const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const WEEKDAY_NAMES = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
@@ -297,7 +297,7 @@ export function generatePlan(profile, equipment, weights = {}, now = Date.now())
     notes,
   };
   plan.queue = newRun(plan);
-  return plan;
+  return fillOptional(plan, profile, equipment, weights);
 }
 
 /** "Upper body A", "Upper body B"...: a letter when a kind of session comes up more than once in the cycle. */
@@ -363,6 +363,142 @@ export function fmtMonths(m) {
   return `${y} years`;
 }
 
+// ---------------------------------------------------------------- optional extras
+// Each session lists up to two exercises that can be added at the end on a day
+// with time and energy left (rule OPT-1). They are kept apart from the
+// session's own exercises: not counted in its time or in the weekly sets.
+
+/** Every entry of a session: its exercises, then its optional extras. */
+export const allEntries = (day) => [...day.exercises, ...(day.optional || [])];
+
+/** The optional extras to show for a session: never one the session itself already holds. */
+export const dayOptional = (day) => (day?.optional || []).filter((o) => !day.exercises.some((x) => x.exerciseId === o.exerciseId));
+
+/** Minutes an optional exercise adds, the walk to it included. */
+export const optionalMinutes = (ex) => Math.max(1, Math.round((exerciseSeconds(ex) + TIME.transitionSec) / 60));
+
+// The part of the body a movement belongs to. An extra stays in the parts the
+// session already works, so it never tires what the next session needs fresh.
+const REGION = {
+  push_h: 'push', push_v: 'push', chest_fly: 'push', triceps: 'push', delt_side: 'push',
+  pull_h: 'pull', pull_v: 'pull', biceps: 'pull', delt_rear: 'pull',
+  squat: 'legs', hinge: 'legs', lunge: 'legs', glute: 'legs', knee_ext: 'legs', knee_flex: 'legs', calf: 'legs',
+  core: 'core',
+};
+// Movements that add sets for a big muscle group that is under its weekly target.
+const MORE_FOR = {
+  Chest: ['chest_fly', 'push_h'], Back: ['pull_h', 'pull_v'], Shoulders: ['delt_side', 'delt_rear'],
+  Quads: ['knee_ext', 'lunge'], 'Hamstrings and glutes': ['knee_flex', 'glute'],
+};
+// Small muscle groups that often get no slot of their own.
+const SMALL = ['delt_rear', 'biceps', 'triceps', 'delt_side', 'calf', 'core'];
+// Single-joint work, easy to add when tired.
+const SINGLE = ['biceps', 'triceps', 'delt_side', 'delt_rear', 'chest_fly', 'knee_ext', 'knee_flex', 'calf', 'glute', 'core'];
+
+/**
+ * The movements that would make sense as extras for one session, best first,
+ * each with the reason in words. `offered` counts how often a movement is
+ * already an extra elsewhere, so the sessions of a week do not all get the same.
+ */
+function optionalWants(plan, day, offered = {}) {
+  const regions = new Set(day.exercises.map((x) => REGION[x.pattern]).filter(Boolean));
+  const fits = (p) => p === 'core' || regions.has(REGION[p]);
+  const inDay = new Set(day.exercises.map((x) => x.pattern));
+  const inWeek = new Set(plan.days.filter((d) => (d.week || 1) === (day.week || 1)).flatMap((d) => d.exercises.map((x) => x.pattern)));
+  const out = [];
+  const add = (pattern, tier, why, step) => { if (fits(pattern) && !out.some((w) => w.pattern === pattern)) out.push({ pattern, tier, why, step, again: inDay.has(pattern), n: out.length }); };
+  // 1. In this kind of session by the rules, but not in this one: it was left out for time.
+  const forTime = plan.minutes ? `Left out of this session to fit ${plan.minutes} min.` : 'Left out of this session for time.';
+  for (const [pattern, tier] of TEMPLATES[day.kind] || []) if (!inDay.has(pattern)) add(pattern, tier, forTime, 1);
+  // 2. A big muscle group that is under its weekly sets.
+  const vol = weeklySets(plan);
+  for (const r of vol.rows.filter((x) => x.low).sort((a, b) => a.sets - b.sets)) {
+    for (const p of MORE_FOR[r.group] || []) add(p, 'accessory', `${r.group} ${/s$/.test(r.group) ? 'get' : 'gets'} ${r.sets} set${r.sets === 1 ? '' : 's'} a week in this plan, under the target of ${vol.target[0]}.`, 2);
+  }
+  // 3. A small muscle group nothing in this week trains directly.
+  for (const p of SMALL) if (!inWeek.has(p)) add(p, 'accessory', `Nothing in this week of the plan trains the ${PATTERNS[p].toLowerCase()} directly.`, 3);
+  // 4. More single-joint work for the part of the body just trained.
+  for (const p of SINGLE) {
+    add(p, 'accessory', p === 'core' ? 'Core work fits at the end of any session.'
+      : `Extra sets for the ${(GROUP_OF[p] || PATTERNS[p]).toLowerCase()}, in the same part of the body as this session.`, 4);
+  }
+  // Steps 1 and 2 keep their order. In 3 and 4 a movement the session does not have yet goes first,
+  // and the sessions take turns, so they do not all get the same extras.
+  const turn = (w) => (w.step >= 3 ? (w.again ? 100 : 0) + (offered[w.pattern] || 0) : 0);
+  return out.sort((a, b) => a.step - b.step || turn(a) - turn(b) || a.n - b.n);
+}
+
+function pickOptional(pattern, ctx) {
+  const pool = ctx.all.filter((x) => x.pattern === pattern
+    && canDo(ctx.equipment, x)
+    && !ctx.taken.has(x.id)
+    && !ctx.avoid.has(x.id)
+    && !x.tags.some((t) => ctx.avoidTags.has(t))
+    && !(ctx.level === 'novice' && x.hard));
+  if (!pool.length) return null;
+  // Variety first: one the week's sessions do not use yet, and that is not an extra elsewhere.
+  const score = (x) => x.rank + (ctx.usedWeek.has(x.id) ? 10 : 0) + (ctx.offeredIds.has(x.id) ? 4 : 0);
+  return pool.sort((a, b) => score(a) - score(b))[0];
+}
+
+/**
+ * Give every session its optional extras (rule OPT-1). Works on any plan: one
+ * built by the rules, one from a model, or one saved before extras existed.
+ * Extras already listed stay while they can still be done; a session is filled
+ * up only when it has no list yet or lost an entry (equipment gone, or the
+ * exercise moved into the session itself). Returns the same plan when nothing
+ * changed.
+ */
+export function fillOptional(plan, profile = {}, equipment, weights = {}) {
+  if (!plan?.days?.length) return plan;
+  const all = allExercises(equipment);
+  const avoid = new Set(profile?.avoid || []);
+  const avoidTags = new Set(profile?.avoidTags || []);
+  const usable = (o, day) => {
+    const x = all.find((y) => y.id === o.exerciseId);
+    return !!x && canDo(equipment, x) && !avoid.has(x.id) && !x.tags.some((t) => avoidTags.has(t)) && !day.exercises.some((ex) => ex.exerciseId === o.exerciseId);
+  };
+  const next = clone(plan);
+  const offered = {}; // movement -> how many sessions offer it
+  const offeredIds = new Set();
+  const note = (o) => { offered[o.pattern] = (offered[o.pattern] || 0) + 1; offeredIds.add(o.exerciseId); };
+  const todo = [];
+  let changed = false;
+  for (const day of next.days) {
+    const had = day.optional;
+    const kept = (had || []).filter((o) => usable(o, day));
+    kept.forEach(note);
+    if (!had || kept.length < had.length) { changed = true; todo.push(day); }
+    day.optional = kept;
+  }
+  const ctx = { all, equipment, avoid, avoidTags, weights, goal: plan.goal, level: plan.level, offeredIds };
+  for (const day of todo) {
+    const list = day.optional;
+    ctx.taken = new Set(allEntries(day).map((x) => x.exerciseId));
+    ctx.usedWeek = new Set(next.days.filter((d) => (d.week || 1) === (day.week || 1)).flatMap((d) => d.exercises.map((x) => x.exerciseId)));
+    const groups = new Set(list.map((o) => GROUP_OF[o.pattern]));
+    let seq = list.reduce((m, o) => Math.max(m, Number(String(o.key).split('x')[1]) || 0), 0);
+    for (const want of optionalWants(next, day, offered)) {
+      if (list.length >= OPTIONAL.perSession) break;
+      if (groups.has(GROUP_OF[want.pattern])) continue; // two extras, two muscle groups
+      const x = pickOptional(want.pattern, ctx);
+      if (!x) continue;
+      const ex = toPlanExercise(x, want.tier, ctx, `${day.id}x${++seq}`);
+      ex.sets = Math.min(ex.sets, OPTIONAL.sets);
+      // The same exercise elsewhere in the plan keeps one rep target and one weight.
+      const twin = next.days.flatMap(allEntries).find((p) => p.exerciseId === x.id);
+      if (twin) { ex.reps = Math.min(Math.max(twin.reps, ex.repLo), ex.repHi); if (!ex.load && twin.load) ex.load = { ...twin.load }; }
+      ex.optional = true;
+      ex.why = want.why;
+      list.push(ex);
+      groups.add(GROUP_OF[x.pattern]);
+      ctx.taken.add(x.id);
+      note(ex);
+    }
+  }
+  return changed ? next : plan;
+}
+
 // ---------------------------------------------------------------- the long view
 
 const listAnd = (a) => (a.length <= 1 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
@@ -407,6 +543,9 @@ export function buildOutlook(plan) {
       ? `Your time fits fewer sets than the target for ${listAnd(low)}. With longer sessions or one more day a week, extra sets for ${low.length > 1 ? 'these' : 'this'} come first.${plan.notes?.length ? ' What was left out for time is listed on the plan screen.' : ''}`
       : 'The week reaches the target sets for every big muscle group. With more time, the next thing to add is a second exercise for the areas you care most about. Tell the coach which.',
   });
+  if (plan.days.some((d) => dayOptional(d).length)) {
+    out[out.length - 1].text += ` For a day when you have more in you, each session lists up to ${OPTIONAL.perSession} optional extras for the end. They are not counted in your ${plan.minutes} min.`;
+  }
   return out;
 }
 
@@ -423,7 +562,7 @@ export function refreshPlan(plan) {
 /** Put a newly chosen or changed weight on every plan entry for that exercise. */
 export function setPlanLoad(plan, exerciseId, load) {
   const next = clone(plan);
-  for (const d of next.days) for (const ex of d.exercises) if (ex.exerciseId === exerciseId) ex.load = { value: load.value, step: load.step };
+  for (const d of next.days) for (const ex of allEntries(d)) if (ex.exerciseId === exerciseId) ex.load = { value: load.value, step: load.step };
   return next;
 }
 
@@ -478,11 +617,32 @@ export function normalizePlan(raw, profile, equipment, weights = {}, now = Date.
       });
     }
     if (!exercises.length) continue;
+    // Optional extras the model picked for this session. With none, the rules pick them below.
+    const optional = [];
+    for (const ro of Array.isArray(rd.optional_exercises) ? rd.optional_exercises : []) {
+      if (optional.length >= OPTIONAL.perSession) break;
+      const x = all.find((y) => y.id === ro?.exercise_id);
+      if (!x || !canDo(equipment, x) || used.has(x.id)) continue;
+      used.add(x.id);
+      const base = prescribe(goal, 'accessory', level, x.load);
+      const repLo = clampInt(ro.rep_low, 1, 30, base.repLo);
+      const known = weights[x.id];
+      optional.push({
+        key: '', exerciseId: x.id, name: x.name, pattern: x.pattern, tier: 'accessory',
+        equipment: equipmentNames(equipment, x), zone: zoneOf(equipment, x), loadType: x.load,
+        sets: clampInt(ro.sets, 1, 4, Math.min(base.sets, OPTIONAL.sets)), repLo, repHi: Math.max(clampInt(ro.rep_high, 1, 30, base.repHi), repLo), reps: repLo,
+        restSec: clampInt(ro.rest_seconds, 20, 360, base.rest),
+        load: known ? { value: known.value, step: known.step } : (x.load === 'bodyweight' ? { value: 0, step: PROGRESSION.defaultStep.bodyweight } : null),
+        optional: true,
+        why: String(ro.why || '').replace(/\s+/g, ' ').trim().slice(0, 200) || 'Picked for this session by the coach.',
+      });
+    }
     days.push({
       id: `d${di}`, week: clampInt(rd.week, 1, CYCLE.maxWeeks, Math.ceil(di / perWeek)), kind: 'custom',
       restAfter: clampInt(rd.rest_days_after, 0, 6, restPattern(perWeek)[(di - 1) % perWeek]),
       title: String(rd.title || 'Session').replace(/\s+[A-D]$/, '').slice(0, 40),
       exercises, estMinutes: dayMinutes(exercises),
+      ...(optional.length ? { optional } : {}),
     });
   }
   // Keep the model's order within a week, weeks in order, ids and keys in sequence.
@@ -493,6 +653,7 @@ export function normalizePlan(raw, profile, equipment, weights = {}, now = Date.
     d.slot = slot;
     d.id = `d${i + 1}`;
     d.exercises.forEach((ex, j) => { ex.key = `d${i + 1}e${j + 1}`; });
+    (d.optional || []).forEach((ex, j) => { ex.key = `d${i + 1}x${j + 1}`; });
   });
   if (!days.length) throw new Error('The plan had no usable training sessions.');
   nameSessions(days);
@@ -502,7 +663,7 @@ export function normalizePlan(raw, profile, equipment, weights = {}, now = Date.
     notes: (raw.notes || []).map((n) => String(n).slice(0, 200)).slice(0, 6),
   };
   plan.queue = newRun(plan);
-  return { plan, dropped };
+  return { plan: fillOptional(plan, profile, equipment, weights), dropped };
 }
 
 function clampInt(v, lo, hi, fallback) {
