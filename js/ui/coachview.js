@@ -22,6 +22,13 @@ function Assumptions({ live }) {
   return html`<div class="panel card" data-testid="assumptions" style="border-radius:16px;padding:14px">
     <h4>What I am assuming</h4>
     <dl class="facts">${rows.map((r) => html`<dt>${r.label}</dt><dd>${r.value}</dd>`)}</dl>
+    ${live && html`<div class="row" data-testid="assume-pairs">
+      <span class="stack tight"><b>Supersets</b><span class="sub">${state.profile.pairs
+    ? 'On. The plan is built for supersets: two exercises that use different muscles are done in turns, so you are not sitting around between sets.'
+    : 'Off. Turn them on if you would rather do a set of something else than sit through a rest. The plan is then built for supersets.'}</span></span>
+      <button class=${`chip ${state.profile.pairs ? 'on' : ''}`} role="switch" aria-checked=${!!state.profile.pairs} aria-label="Supersets" data-testid="assume-pairs-switch" disabled=${isBusy()}
+        onClick=${() => store.set({ profile: { ...state.profile, pairs: !state.profile.pairs } })}>${state.profile.pairs ? 'On' : 'Off'}</button>
+    </div>`}
     ${live && ready && html`
       <button class="cta" data-testid="build-plan" disabled=${isBusy()} onClick=${() => buildPlan()}>${state.plan ? 'Rebuild my plan' : 'Build my plan'}</button>
       <p class="small muted">Something off? Just tell me and I will update it first.${state.plan ? ' Rebuilding replaces the current plan; your history and your weights stay.' : ''}</p>`}

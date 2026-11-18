@@ -1,6 +1,6 @@
-# Seria training rules, version 1.5.0
+# Seria training rules, version 1.6.0
 
-Last updated 2026-11-17. Generated from `js/domain/rules.js` with `npm run rules-doc`. Do not edit by hand: change the rules file, bump `RULES_VERSION`, and run the script again.
+Last updated 2026-11-18. Generated from `js/domain/rules.js` with `npm run rules-doc`. Do not edit by hand: change the rules file, bump `RULES_VERSION`, and run the script again.
 
 This is the one set of rules behind the app. Three things read it:
 
@@ -140,9 +140,9 @@ Seria is not medical advice. Stop if something hurts and see a professional.
 - Source: Schoenfeld 2017 (volume); App convention
 - In the code: `OPTIONAL`, `fillOptional()`
 
-## Pairs
+## Supersets
 
-**PAR-1.** Pairs are off unless the user turns them on. When on, two neighbouring exercises that use different muscles are done in turns: a set of one, a short rest, a set of the other. Good pairs are opposite muscles (a press with a row, biceps with triceps, leg extension with leg curl) or exercises far apart on the body. Exercises that share a muscle are never paired, because the second one loses reps. Squats and hip hinges are never paired, nor are the main lifts of a strength plan: the heaviest lifts keep their full rest. Core work is paired only with single-joint lifts. Trained this way, sessions take clearly less time for the same sets, and over weeks strength and muscle gains were no different from doing one exercise at a time. The sets feel harder, and both stations have to be free.
+**PAR-1.** Supersets are off unless the user turns them on. A superset here is a pair: two neighbouring exercises that use different muscles, done in turns: a set of one, a short rest, a set of the other. Good pairs are opposite muscles (a press with a row, biceps with triceps, leg extension with leg curl) or exercises far apart on the body. Exercises that share a muscle are never paired, because the second one loses reps. Squats and hip hinges are never paired, nor are the main lifts of a strength plan: the heaviest lifts keep their full rest. Core work is paired only with single-joint lifts. Trained this way, sessions take clearly less time for the same sets, and over weeks strength and muscle gains were no different from doing one exercise at a time. The sets feel harder, and both stations have to be free.
 
 - Source: Zhang 2025; Iversen 2021; Robbins 2010
 - In the code: `PAIRS`, `pairUp()`
@@ -151,6 +151,11 @@ Seria is not medical advice. Stop if something hurts and see a professional.
 
 - Source: Robbins 2010; App convention
 - In the code: `PAIRS.restShare`, `PAIRS.minRestSec`, `pairRestSec()`
+
+**PAR-3.** With supersets on, a plan is built for them, not just paired where two exercises happen to meet. The week is split into sessions that hold opposite muscle groups: upper-body and lower-body days, not push-only and pull-only days, where hardly anything has a partner. Inside a session each exercise is put next to a partner where the training allows, opposite muscles first. This is a way to train as much as a way to save time: some people would rather do a set of something else than sit through a rest. The training still comes first: compound lifts before single-joint work, full rest for squats, hip hinges and the main lifts of a strength plan, and no pair that shares a muscle.
+
+- Source: Zhang 2025; Robbins 2010; App convention
+- In the code: `PAIRS.splits`, `weekSplit()`, `arrangeForPairs()`
 
 ## Starting weight
 

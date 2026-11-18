@@ -853,3 +853,14 @@ test('earlier results of an exercise: newest first, each with how it moved on fr
   assert.deepEqual(exerciseHistory(all, 'db_bench_press', { skip: 'd' }).map((e) => e.sessionId), ['c', 'b', 'a']);
   assert.deepEqual(exerciseHistory(all, 'never_done'), []); assert.deepEqual(exerciseHistory(null, 'x'), []);
 });
+
+test('supersets: the coach reads the wish from plain words and is told to build plans for them', () => {
+  for (const t of ['I like supersets', 'I like to alternate exercises', 'alternating mode please', 'superset what you can', 'I do not like sitting around between sets', 'I hate waiting around', 'pair exercises to save time'])
+    assert.equal(parseProfile(t).patch.pairs, true, t);
+  assert.equal(parseProfile('no supersets please').patch.pairs, false);
+  for (const t of ['my knee hurts, I cannot stand lunges', 'I rest 2 minutes between sets', 'three times a week']) assert.equal(parseProfile(t).patch.pairs, undefined, t);
+  assert.ok(/superset mode \(rules PAR-1, PAR-2 and PAR-3\)/.test(SYSTEM_PROMPT) && /build the plan for it/.test(SYSTEM_PROMPT) && /not push-only and pull-only days/.test(SYSTEM_PROMPT));
+  assert.ok(/The plan must still make sense as training/.test(SYSTEM_PROMPT) && /do not like waiting around between sets/.test(SYSTEM_PROMPT));
+  const made = generatePlan({ ...SET_UP, pairs: true }, emptyEquipment(), W0);
+  assert.equal(made.forPairs, true); assert.ok(!generatePlan(SET_UP, emptyEquipment(), W0).forPairs);
+});

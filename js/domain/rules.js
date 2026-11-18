@@ -8,8 +8,8 @@
 // Bump RULES_VERSION when a number or a rule changes. Plans and sessions store
 // the version they were made with.
 
-export const RULES_VERSION = '1.5.0';
-export const RULES_UPDATED = '2026-11-17';
+export const RULES_VERSION = '1.6.0';
+export const RULES_UPDATED = '2026-11-18';
 
 export const SOURCES = {
   acsm2009: {
@@ -257,6 +257,9 @@ export const PAIRS = {
   minRestSec: 30, // never less: time to get to the other station
   never: ['squat', 'hinge'], // heavy whole-body lifts keep their full rest
   maxTierGap: 1, // a main lift is not paired with single-joint work
+  // A week built for pairs keeps opposite muscle groups in the same session: upper and lower days, not
+  // push-only and pull-only ones, where hardly anything has a partner. Weekly sets stay about the same.
+  splits: { 5: ['upper', 'lower', 'upper', 'lower', 'full'], 6: ['upper', 'lower', 'upper', 'lower', 'upper', 'lower'] },
   // The muscles each movement loads. Two movements can share a rest when these do not overlap.
   works: {
     push_h: ['chest', 'front delts', 'triceps'], push_v: ['front delts', 'side delts', 'triceps'], chest_fly: ['chest', 'front delts'],
@@ -417,14 +420,19 @@ export const RULES = [
     sources: ['schoenfeld2017volume', 'practice'], uses: ['OPTIONAL', 'fillOptional()'],
   },
   {
-    id: 'PAR-1', area: 'Pairs',
-    text: 'Pairs are off unless the user turns them on. When on, two neighbouring exercises that use different muscles are done in turns: a set of one, a short rest, a set of the other. Good pairs are opposite muscles (a press with a row, biceps with triceps, leg extension with leg curl) or exercises far apart on the body. Exercises that share a muscle are never paired, because the second one loses reps. Squats and hip hinges are never paired, nor are the main lifts of a strength plan: the heaviest lifts keep their full rest. Core work is paired only with single-joint lifts. Trained this way, sessions take clearly less time for the same sets, and over weeks strength and muscle gains were no different from doing one exercise at a time. The sets feel harder, and both stations have to be free.',
+    id: 'PAR-1', area: 'Supersets',
+    text: 'Supersets are off unless the user turns them on. A superset here is a pair: two neighbouring exercises that use different muscles, done in turns: a set of one, a short rest, a set of the other. Good pairs are opposite muscles (a press with a row, biceps with triceps, leg extension with leg curl) or exercises far apart on the body. Exercises that share a muscle are never paired, because the second one loses reps. Squats and hip hinges are never paired, nor are the main lifts of a strength plan: the heaviest lifts keep their full rest. Core work is paired only with single-joint lifts. Trained this way, sessions take clearly less time for the same sets, and over weeks strength and muscle gains were no different from doing one exercise at a time. The sets feel harder, and both stations have to be free.',
     sources: ['zhang2025', 'iversen2021', 'robbins2010'], uses: ['PAIRS', 'pairUp()'],
   },
   {
-    id: 'PAR-2', area: 'Pairs',
+    id: 'PAR-2', area: 'Supersets',
     text: 'In a pair, the rest after each set is 45% of the longer of the two planned rests, and never under 30 seconds, which is the time to get to the other station. With the other exercise\'s set in between, each muscle still waits at least its planned rest before it works again. The session time is counted this way. During a workout a pair can be split for the day when one of the two stations is taken.',
     sources: ['robbins2010', 'practice'], uses: ['PAIRS.restShare', 'PAIRS.minRestSec', 'pairRestSec()'],
+  },
+  {
+    id: 'PAR-3', area: 'Supersets',
+    text: 'With supersets on, a plan is built for them, not just paired where two exercises happen to meet. The week is split into sessions that hold opposite muscle groups: upper-body and lower-body days, not push-only and pull-only days, where hardly anything has a partner. Inside a session each exercise is put next to a partner where the training allows, opposite muscles first. This is a way to train as much as a way to save time: some people would rather do a set of something else than sit through a rest. The training still comes first: compound lifts before single-joint work, full rest for squats, hip hinges and the main lifts of a strength plan, and no pair that shares a muscle.',
+    sources: ['zhang2025', 'robbins2010', 'practice'], uses: ['PAIRS.splits', 'weekSplit()', 'arrangeForPairs()'],
   },
   {
     id: 'LOD-1', area: 'Starting weight',
@@ -507,6 +515,6 @@ export function rulesAsText() {
   lines.push(`Time model: warm-up ${(TIME.warmupGeneralSec + TIME.warmupRampSec) / 60} min, each set ${TIME.setBaseSec}s + ${TIME.secPerRep}s per rep, ${TIME.transitionSec}s between exercises.`);
   lines.push(`Default load steps (kg): ${Object.entries(PROGRESSION.defaultStep).map(([k, v]) => `${k} ${v}`).join(', ')}.`);
   lines.push(`Optional extras: up to ${OPTIONAL.perSession} per session, ${OPTIONAL.sets} sets each, outside the time budget.`);
-  lines.push(`Pairs, when the user has them on: rest after each set ${Math.round(PAIRS.restShare * 100)}% of the longer planned rest, at least ${PAIRS.minRestSec}s. Never paired: ${PAIRS.never.join(', ')}, and the main lifts of a strength plan.`);
+  lines.push(`Supersets (pairs), when the user has them on: rest after each set ${Math.round(PAIRS.restShare * 100)}% of the longer planned rest, at least ${PAIRS.minRestSec}s. Never paired: ${PAIRS.never.join(', ')}, and the main lifts of a strength plan. Sessions in a week built for pairs: ${Object.entries(PAIRS.splits).map(([d, s]) => `${d}: ${s.map((k) => DAY_TITLES[k]).join(', ')}`).join(' | ')}; other numbers of sessions as above.`);
   return lines.join('\n');
 }

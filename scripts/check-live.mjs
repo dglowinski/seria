@@ -124,7 +124,7 @@ try {
     const [w, p] = await Promise.all([fetch('js/ui/weights.js').then((r) => r.text()), fetch('js/ui/plan.js').then((r) => r.text())]);
     const k = await fetch('js/ui/workout.js').then((r) => r.text());
     return w.includes('What you lift now') && p.includes('Log another activity') && p.includes('The long view') && k.includes('Feel like a bit more?')
-      && p.includes('Pair exercises to save time') && p.includes('is thinking') && w.includes('Weights for this session');
+      && p.includes('Build a plan made for supersets') && p.includes('is thinking') && w.includes('Weights for this session');
   }));
 
   // A rebuild, still offline: asked for in words, built from what is on record, and it can be put back.
@@ -144,9 +144,9 @@ try {
   await page.getByTestId('restore-plan').click();
   const back = await read();
   check('"Put the old plan back" undoes the rebuild', back.id === was.id && back.before === null && (await page.getByTestId('restore-plan').count()) === 0, JSON.stringify(back));
-  check('the release is version 1.6.0, and the coach is sent the workouts on record and where the cycle stands', await page.evaluate(async () => {
+  check('the release is version 1.7.0, and the coach is sent the workouts on record and where the cycle stands', await page.evaluate(async () => {
     const [v, p, s] = await Promise.all(['js/ui/prefs.js', 'js/ai/prompts.js', 'js/domain/schedule.js'].map((f) => fetch(f).then((r) => r.text())));
-    return v.includes("APP_VERSION = '1.6.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
+    return v.includes("APP_VERSION = '1.7.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
       && p.includes('where_the_cycle_stands') && p.includes('never swap one for variety alone') && s.includes('export function cycleNext');
   }));
   await context.setOffline(false);
@@ -156,14 +156,15 @@ try {
     return a.includes("addEventListener('controllerchange'") && w.includes("cache: 'reload'") && w.includes("cache: 'no-cache'");
   }));
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Plan' }).click();
-  check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.6.0');
+  check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.7.0');
   // The one set logged above shows as the exercise's earlier result in the session's preview.
   await page.getByTestId('plan-session').filter({ hasText: 'Upper body A' }).first().click();
   await page.getByTestId('start-day').waitFor({ timeout: 8000 });
   const past = page.getByTestId('day-exercise').first().getByTestId('past');
   check('an exercise box shows how the last times went', (await past.getByTestId('past-row').count()) === 1 && /^Last time/.test(await past.textContent()) && /20 kg × \d+/.test(await past.getByTestId('past-row').first().textContent()), await past.textContent().catch(() => 'no list'));
   await page.getByRole('button', { name: 'Settings' }).click();
-  check('the pairs switch is in Settings too', (await page.locator('#pref-pairs').getAttribute('aria-checked').catch(() => null)) === 'true');
+  check('supersets can be switched in Settings too, and the plan built since is made for them', (await page.locator('#pref-pairs').getAttribute('aria-checked').catch(() => null)) === 'true'
+    && /Supersets/.test(await page.locator('main').textContent()));
   check('no script errors', errors.length === 0, errors.join(' | '));
 } catch (e) {
   check('the check ran to the end', false, String(e.message).split('\n')[0]);

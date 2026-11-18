@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RULES, SOURCES, PRESCRIPTION, prescribe, levelFor, rulesAsText, RULES_VERSION, activityGroups } from '../js/domain/rules.js';
 import { emptyEquipment, isAvailable, substitutesFor, allExercises, EXERCISES, EQUIPMENT, canDo } from '../js/domain/catalog.js';
-import { generatePlan, emptyProfile, missingFields, dayMinutes, buildAssumptions, normalizePlan, brokenExercises, weeklySets, upgradePlan, buildOutlook, fillOptional, dayOptional, allEntries, optionalMinutes, fillPairs, pairUp, canPair, units, pairRestSec, pairSavings, pairMate, oppositePair, blankWeights, timeBreakdown, daySeconds } from '../js/domain/planner.js';
+import { arrangeForPairs, weekSplit, generatePlan, emptyProfile, missingFields, dayMinutes, buildAssumptions, normalizePlan, brokenExercises, weeklySets, upgradePlan, buildOutlook, fillOptional, dayOptional, allEntries, optionalMinutes, fillPairs, pairUp, canPair, units, pairRestSec, pairSavings, pairMate, oppositePair, blankWeights, timeBreakdown, daySeconds } from '../js/domain/planner.js';
 import { GROUP_OF } from '../js/domain/catalog.js';
 import { OPTIONAL, TEMPLATES, PAIRS, TIME } from '../js/domain/rules.js';
 import * as K from '../js/domain/schedule.js';
@@ -923,7 +923,7 @@ test('pairs: off unless asked for; on, neighbours that use different muscles are
   const tightOn = generatePlan({ ...short, pairs: true }, emptyEquipment(), {}, T0);
   assert.ok(sets(tightOn) > sets(tight), `${sets(tightOn)} sets fit with pairs, ${sets(tight)} without`);
   assert.ok(tightOn.days.every((d) => d.estMinutes <= 41), 'still inside the time');
-  assert.ok(buildAssumptions({ ...who, pairs: true }, emptyEquipment()).some((r) => r.label === 'Pairs'));
+  assert.ok(buildAssumptions({ ...who, pairs: true }, emptyEquipment()).some((r) => r.label === 'Supersets'));
 });
 
 test('pairs: which two can share a rest, and how long that rest is', () => {
@@ -1039,4 +1039,43 @@ test('weights before a workout: the session knows which of its exercises have no
   assert.ok(!blank.some((x) => x.exerciseId === 'db_bench_press'), 'one with a weight is not asked for');
   assert.ok(plan.days[0].exercises.filter((x) => x.loadType === 'bodyweight').every((x) => !blank.includes(x)), 'bodyweight lifts need none');
   assert.deepEqual(blankWeights(null), []);
+});
+
+test('alternating as a mode: the week and each session are laid out for pairs, and the training still comes first', () => {
+  const eq = emptyEquipment();
+  for (const x of EQUIPMENT) eq.items[x.id] = true;
+  const who = (n, goal = 'muscle') => ({ ...emptyProfile(), goal, months: 18, daysPerWeek: n, minutes: 60, cycleWeeks: 1 });
+  const pairs = (d) => units(d.exercises).filter((u) => u.length === 2).length;
+  // Push-only and pull-only days hardly pair, so a week built for pairs keeps opposite muscle groups together.
+  assert.deepEqual(weekSplit(who(6)), ['push', 'pull', 'legs', 'push', 'pull', 'legs']);
+  assert.deepEqual(weekSplit({ ...who(6), pairs: true }), ['upper', 'lower', 'upper', 'lower', 'upper', 'lower']);
+  assert.deepEqual(weekSplit({ ...who(5), pairs: true }), ['upper', 'lower', 'upper', 'lower', 'full']);
+  assert.deepEqual(weekSplit({ ...who(4), pairs: true }), weekSplit(who(4)), 'four days were upper and lower already');
+  for (const n of [5, 6]) {
+    const plain = generatePlan(who(n), eq, {}, T0);
+    const made = generatePlan({ ...who(n), pairs: true }, eq, {}, T0);
+    const inPairs = (p) => p.days.reduce((a, d) => a + 2 * pairs(d), 0) / p.days.reduce((a, d) => a + d.exercises.length, 0);
+    assert.equal(made.forPairs, true); assert.ok(!plain.forPairs);
+    assert.ok(inPairs(made) >= 0.6, `${n} days: ${Math.round(inPairs(made) * 100)}% of the exercises have a partner`);
+    assert.ok(inPairs(made) > inPairs(fillPairs(plain, { pairs: true })) + 0.1, `more than the switch gives a plan not made for it: ${inPairs(made).toFixed(2)} against ${inPairs(fillPairs(plain, { pairs: true })).toFixed(2)}`);
+    // The work for the week stays in the same range.
+    const total = (p) => weeklySets(p).rows.reduce((a, r) => a + r.sets, 0);
+    assert.ok(Math.abs(total(made) - total(plain)) / total(plain) < 0.25, `${total(made)} sets against ${total(plain)}`);
+    assert.ok(made.days.every((d) => d.estMinutes <= 62));
+  }
+  // Inside a session: partners sit together, compound lifts still come first, and nothing that needs its full rest is paired.
+  const legs = [['squat', 'main'], ['hinge', 'main'], ['lunge', 'secondary'], ['knee_ext', 'accessory'], ['knee_flex', 'accessory'], ['calf', 'accessory']]
+    .map(([pattern, tier], i) => ({ key: `e${i}`, pattern, tier, sets: 3, reps: 10, repLo: 8, repHi: 12, restSec: 90 }));
+  const before = legs.map((x) => ({ ...x })); pairUp(before, 'muscle');
+  arrangeForPairs(legs, 'muscle'); pairUp(legs, 'muscle');
+  assert.deepEqual(legs.map((x) => x.pattern), ['squat', 'hinge', 'lunge', 'knee_flex', 'knee_ext', 'calf']);
+  assert.equal(units(legs).filter((u) => u.length === 2).length, 2); assert.equal(units(before).filter((u) => u.length === 2).length, 1);
+  assert.ok(!legs[0].pair && !legs[1].pair, 'squat and hinge keep their full rest');
+  const strong = generatePlan({ ...who(4, 'strength'), pairs: true }, eq, {}, T0);
+  assert.ok(strong.days.every((d) => d.exercises.filter((x) => x.tier === 'main').every((x) => !x.pair)), 'the main lifts of a strength plan are never paired');
+  assert.ok(strong.days.every((d) => d.exercises.every((x, i, a) => i === 0 || !(a[i - 1].tier === 'accessory' && x.tier === 'main'))));
+  const text = rulesAsText();
+  assert.ok(/Sessions in a week built for pairs: 5: Upper body, Lower body, Upper body, Lower body, Full body \| 6: /.test(text));
+  assert.ok(RULES.some((r) => r.id === 'PAR-3' && /would rather do a set of something else than sit through a rest/.test(r.text)));
+  assert.match(buildAssumptions({ ...who(6), pairs: true }, eq).find((r) => r.label === 'The plan')[1] || buildAssumptions({ ...who(6), pairs: true }, eq).find((r) => r.label === 'The plan').value, /upper body, \d off, lower body/);
 });

@@ -105,12 +105,16 @@ export function parseProfile(text, ctx = {}) {
     got.push('cycle');
   }
 
-  // Pairs: "superset my exercises", "no supersets", "pair exercises to save time"
-  const pairAt = t.search(/\b(super ?sets?|supersetting|pair(ed|ing)? (up )?(the |my |some )?(exercises|sets|lifts)|paired sets|(exercises|sets|lifts) in (turns|pairs))\b/);
+  // Alternating: "superset my exercises", "no supersets", "alternate exercises", "pair exercises to save time"
+  const pairAt = t.search(/\b(super ?sets?|supersetting|(pair(ed|ing)?|alternat(e|ed|ing)) (up )?(the |my |some |two )?(exercises|sets|lifts)|paired sets|alternating (mode|plan)|(exercises|sets|lifts) (in (turns|pairs)|alternat(e|ed|ing)))\b/);
   if (pairAt >= 0) {
     const before = t.slice(Math.max(0, pairAt - 40), pairAt);
     const neg = lastIndex(NEG, before); const pos = lastIndex(POS, before);
     patch.pairs = !(neg >= 0 && neg > pos);
+    got.push('pairs');
+  } else if (/\b(do not|don't|dont|hate|dislike|can't stand|cannot stand|not a fan of|bored of|bored by|get bored)\b[^.!?]{0,40}\b(sitting|waiting|standing) around\b|\b(do not|don't|dont|hate|dislike|not a fan of)\b[^.!?]{0,25}\b(resting|waiting|doing nothing) between sets\b/.test(t)) {
+    // Said the other way round: no liking for idle rests means alternating.
+    patch.pairs = true;
     got.push('pairs');
   }
 
@@ -217,7 +221,7 @@ function ackText(patch, got) {
   if (got.includes('days')) bits.push(patch.days?.length ? patch.days.map((d) => WEEKDAY_SHORT[d]).join(', ') : `${patch.daysPerWeek} day${patch.daysPerWeek === 1 ? '' : 's'} a week`);
   if (got.includes('minutes')) bits.push(`${patch.minutes} min sessions`);
   if (got.includes('cycle')) bits.push(`planned ${patch.cycleWeeks} week${patch.cycleWeeks === 1 ? '' : 's'} ahead`);
-  if (got.includes('pairs')) bits.push(patch.pairs ? 'exercises paired up to save time' : 'no paired exercises');
+  if (got.includes('pairs')) bits.push(patch.pairs ? 'supersets, so there is little sitting around' : 'no supersets, one exercise at a time');
   if (got.includes('avoid')) bits.push('some lifts left out');
   if (got.includes('include')) bits.push('your favourites kept in');
   if (got.includes('limitations')) bits.push('a limitation to work around');
@@ -273,7 +277,7 @@ function localTurn(text) {
   }
   if (!profile.askedExtras) {
     const q = 'Are there movements you want to skip, injuries to work around, or exercises you care about?';
-    store.say('coach', [ack, q].filter(Boolean).join(' '), { asks: 'extras', chips: ['No, nothing'] });
+    store.say('coach', [ack, q, profile.pairs ? '' : 'And if you would rather do supersets, two exercises in turns, than sit through rests, say so.'].filter(Boolean).join(' '), { asks: 'extras', chips: profile.pairs ? ['No, nothing'] : ['No, nothing', 'I like supersets'] });
     return;
   }
   if (got.length || !st.plan || asksRebuild(text)) {

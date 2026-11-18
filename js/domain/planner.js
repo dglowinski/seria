@@ -235,6 +235,9 @@ const byTier = (p, q) => TIER_RANK[p.tier] - TIER_RANK[q.tier];
 
 const pairable = (ex, goal) => !!PAIRS.works[ex.pattern] && !PAIRS.never.includes(ex.pattern) && !(goal === 'strength' && ex.tier === 'main');
 
+/** The sessions of one week, by kind. With pairs on, a week that keeps opposite muscle groups together (rule PAR-3). */
+export const weekSplit = (profile) => { const n = sessionsPerWeek(profile); return (profile.pairs && PAIRS.splits[n]) || SPLITS[n]; };
+
 /** Can these two be done in turns? Different muscles, close in weight class, and neither a lift that needs its full rest. */
 export function canPair(a, b, goal) {
   if (!pairable(a, goal) || !pairable(b, goal) || a.optional || b.optional) return false;
@@ -248,6 +251,31 @@ export function canPair(a, b, goal) {
 export function oppositePair(a, b) {
   const x = PAIRS.side[a.pattern]; const y = PAIRS.side[b.pattern];
   return !!x && !!y && x !== y && (x.includes('legs') === y.includes('legs'));
+}
+
+/**
+ * Lay a session out for alternating (rule PAR-3): as many exercises as possible
+ * sit next to a partner they can be done in turns with. The order by weight
+ * class stays, compound lifts first. Inside it each exercise looks for a
+ * partner of its own class, opposite muscles before others, then one class down.
+ * Changes the list in place.
+ */
+export function arrangeForPairs(exercises, goal) {
+  const left = [...exercises].sort(byTier);
+  const out = [];
+  while (left.length) {
+    const a = left.shift();
+    out.push(a);
+    let best = -1; let score = 99;
+    left.forEach((b, i) => {
+      if (!canPair(a, b, goal)) return;
+      const s = (TIER_RANK[b.tier] === TIER_RANK[a.tier] ? 0 : 2) + (oppositePair(a, b) ? 0 : 1);
+      if (s < score) { score = s; best = i; }
+    });
+    if (best >= 0) out.push(left.splice(best, 1)[0]);
+  }
+  exercises.splice(0, exercises.length, ...out);
+  return exercises;
 }
 
 /**
@@ -274,7 +302,7 @@ export const pairMate = (exercises, ex) => (ex?.pair ? units(exercises).find((u)
 // How long a list would take once paired, without touching the list. `sorted`: in the order the session is done.
 const pairedSeconds = (goal, sorted) => (list) => {
   const copy = list.map((x) => ({ ...x }));
-  if (sorted) copy.sort(byTier);
+  if (sorted) arrangeForPairs(copy, goal);
   pairUp(copy, goal);
   return daySeconds(copy);
 };
@@ -332,7 +360,7 @@ export const blankWeights = (day) => (day?.exercises || []).filter((ex) => ex.lo
 export function generatePlan(profile, equipment, weights = {}, now = Date.now()) {
   const perWeek = sessionsPerWeek(profile);
   const weeks = cycleWeeks(profile);
-  const split = SPLITS[perWeek];
+  const split = weekSplit(profile);
   const level = levelFor(profile.months);
   const goal = GOALS[profile.goal] ? profile.goal : 'general';
   const minutes = clampMinutes(profile.minutes);
@@ -394,8 +422,8 @@ export function generatePlan(profile, equipment, weights = {}, now = Date.now())
       const cut = fitToBudget(exercises, minutes, seconds);
       const keptOthers = exercises.length - mains.length - asked.length;
       if (exercises.length < before) { anyCut = true; turn[si] = off + Math.max(keptOthers, 1); }
-      // Done in the order the rules ask for: compound lifts before single-joint work.
-      exercises.sort(byTier);
+      // Done in the order the rules ask for: compound lifts before single-joint work. With pairs on, partners sit together.
+      if (profile.pairs) arrangeForPairs(exercises, goal); else exercises.sort(byTier);
       pairUp(exercises, goal, !!profile.pairs);
       exercises.forEach((ex, j) => { ex.key = `d${di + 1}e${j + 1}`; });
       for (const ex of exercises) { ctx.usedWeek.add(ex.exerciseId); ctx.usedCycle.add(ex.exerciseId); }
@@ -417,6 +445,7 @@ export function generatePlan(profile, equipment, weights = {}, now = Date.now())
     minutes,
     perWeek,
     cycleWeeks: weeks,
+    forPairs: !!profile.pairs, // laid out for supersets, or only paired where exercises happen to meet
     days: planDays,
     notes,
   };
@@ -457,13 +486,13 @@ export function buildAssumptions(profile, equipment) {
     ['Experience', `${fmtMonths(profile.months)} of training, treated as ${level}`],
     ['Sessions', `${perWeek} a week, on any days you like${usual.length ? ` (you mentioned ${usual.map((d) => WEEKDAY_SHORT[d]).join(', ')})` : ''}`],
     ['Session length', `Up to ${clampMinutes(profile.minutes)} min, warm-up included`],
-    ['The plan', `The next ${total} session${total === 1 ? '' : 's'}, with rest days between: ${SPLITS[perWeek].map((k, i) => `${DAY_TITLES[k].toLowerCase()}, ${restPattern(perWeek)[i]} off`).join(', ')}${weeks > 1 ? ', then again with other exercises taking their turn' : ''}`],
+    ['The plan', `The next ${total} session${total === 1 ? '' : 's'}, with rest days between: ${weekSplit(profile).map((k, i) => `${DAY_TITLES[k].toLowerCase()}, ${restPattern(perWeek)[i]} off`).join(', ')}${weeks > 1 ? ', then again with other exercises taking their turn' : ''}`],
     ['After that', 'It is updated after every workout from your results, and the next run is planned when this one is done'],
     ['Equipment', avail.join(', ') || 'Bodyweight only'],
     ['Effort', `Finish sets with ${rir[0]}-${rir[1]} reps left in the tank`],
     ['Starting weights', 'You choose them in your first session; I track them from there'],
   ];
-  if (profile.pairs) out.push(['Pairs', 'Exercises that use different muscles are done in turns, which makes sessions shorter']);
+  if (profile.pairs) out.push(['Supersets', 'Two exercises that use different muscles are done in turns, so there is little sitting around, and sessions are shorter. The plan is laid out for them']);
   if ((profile.avoid || []).length) out.push(['Leaving out', uniq((profile.avoid || []).map(nameOf)).join(', ')]);
   if ((profile.avoidTags || []).length) out.push(['Working around', profile.avoidTags.map((t) => TAG_TEXT[t] || t).join('; ')]);
   if ((profile.include || []).length) out.push(['Making room for', uniq((profile.include || []).map(nameOf)).join(', ')]);
@@ -816,7 +845,7 @@ export function normalizePlan(raw, profile, equipment, weights = {}, now = Date.
   nameSessions(days);
   const plan = {
     id: `plan_${now.toString(36)}`, version: 1, createdAt: now, rulesVersion: RULES_VERSION, source: 'claude',
-    goal, level, minutes: clampMinutes(profile.minutes), perWeek, cycleWeeks: Math.max(lastWeek, 1), days,
+    goal, level, minutes: clampMinutes(profile.minutes), perWeek, cycleWeeks: Math.max(lastWeek, 1), forPairs: !!profile.pairs, days,
     notes: (raw.notes || []).map((n) => String(n).slice(0, 200)).slice(0, 6),
   };
   plan.queue = newRun(plan);

@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-18T09:39:17.643Z",
+  "ranAt": "2026-11-18T09:47:18.758Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 306,
-  "passed": 306,
+  "total": 310,
+  "passed": 310,
   "failed": 0,
   "results": [
     {
@@ -1682,6 +1682,30 @@
     {
       "part": "H pairs and the band",
       "name": "pairs can be switched off again: one exercise at a time, as before",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "with alternating on, the plan says it was not made for it and offers one that is",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the summary before a plan is built shows the mode, with its own switch",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the switch on the summary turns it off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the new plan is made for alternating: every session has pairs, and the offer is gone",
       "ok": true,
       "detail": ""
     },

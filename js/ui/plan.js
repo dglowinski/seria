@@ -10,7 +10,7 @@ import { describeChange, canUndo, isApplied, EDITABLE } from '../domain/progress
 import { exerciseById, machineForExercise, machineLabel, sketchForExercise } from '../domain/catalog.js';
 import { Sketch } from './sketch.js';
 import { RULES_VERSION, ACTIVITIES, EFFORTS, SCHEDULE, activityGroups } from '../domain/rules.js';
-import { undoChange, redoChange, editChange, recordUpdate, reviewEquipment, startTraining, reviewToday, logActivity, reviewWaiting, reviewRunning, askAgain, canRestorePlan, restorePlan } from '../ai/coach.js';
+import { undoChange, redoChange, editChange, recordUpdate, reviewEquipment, startTraining, reviewToday, logActivity, reviewWaiting, reviewRunning, askAgain, canRestorePlan, restorePlan, userSays } from '../ai/coach.js';
 import { sourceName, aiReady, aiName } from '../ai/ai.js';
 import { primeAudio } from '../platform.js';
 import { APP_VERSION } from './prefs.js';
@@ -179,8 +179,11 @@ export function PlanScreen() {
   const saves = pairSavings(plan);
   const togglePairs = () => {
     store.set({ profile: { ...state.profile, pairs: !pairsOn } });
-    toast(pairsOn ? 'Pairs off. One exercise at a time' : saves > 0 ? `Pairs on. Sessions are about ${saves} min shorter` : 'Pairs on');
+    toast(pairsOn ? 'Supersets off. One exercise at a time' : saves > 0 ? `Supersets on. Sessions are about ${saves} min shorter` : 'Supersets on');
   };
+  // A plan made before the mode was on is only paired where two exercises happen to meet. A new one is laid out for it.
+  const notBuiltForIt = pairsOn && !plan.forPairs;
+  const buildForPairs = () => { go('coach'); userSays('Rebuild my plan'); };
 
   const trainNow = () => {
     if (active) { go('workout'); return; }
@@ -229,10 +232,12 @@ export function PlanScreen() {
         <button class="row" data-testid="log-activity" onClick=${() => setSheet('activity')}>
           <span class="stack tight"><b>Did something else?</b><span class="sub">Log a run, a ride or a game. The plan takes it into account.</span></span><span class="accent">Log</span></button>
         <button class=${`row ${pairsOn ? 'on' : ''}`} role="switch" aria-checked=${pairsOn} data-testid="pairs-toggle" onClick=${togglePairs}>
-          <span class="stack tight"><b>Pair exercises to save time</b><span class="sub">${pairsOn
-    ? `On${saves > 0 ? `: sessions are about ${saves} min shorter` : ''}. Two exercises that use different muscles are done in turns, so one rests while the other works. The sets feel harder, and you need both stations free.`
-    : `Two exercises that use different muscles are done in turns, so one rests while the other works. Same sets, ${saves > 0 ? `about ${saves} min less a session` : 'in less time'}. The sets feel harder, and you need both stations free.`}${saves > 0 ? '' : ' In this plan few exercises sit next to one they can pair with: ask the coach for a new plan with this on, and it is built for pairs.'}</span></span>
+          <span class="stack tight"><b>Supersets</b><span class="sub">${pairsOn
+    ? `On${saves > 0 ? `: sessions are about ${saves} min shorter` : ''}. In a superset two exercises that use different muscles are done in turns, so one rests while the other works and you are not sitting around. The sets feel harder, and you need both stations free.`
+    : `For when you would rather not sit around between sets. In a superset two exercises that use different muscles are done in turns, so one rests while the other works. Same sets, ${saves > 0 ? `about ${saves} min less a session` : 'in less time'}. The sets feel harder, and you need both stations free.`}</span></span>
           <span class="accent">${pairsOn ? 'On' : 'Off'}</span></button>
+        ${notBuiltForIt && html`<div class="note small" data-testid="pairs-rebuild"><b>This plan was not made for supersets</b>Exercises are put together only where two that fit happen to sit side by side. A new plan is laid out for supersets: sessions with opposite muscle groups, and a partner next to each exercise where the training allows.
+          <div class="chips" style="margin-top:8px"><button class="chip accent" data-testid="pairs-build" onClick=${buildForPairs}>Build a plan made for supersets</button></div></div>`}
         <button class="row" data-testid="weights-link" onClick=${() => go('weights')}>
           <span class="stack tight"><b>Weights</b><span class="sub">${blank ? `${plural(blank, 'exercise')} in the plan ${blank === 1 ? 'has' : 'have'} no weight yet. Enter ${blank === 1 ? 'it' : 'them'} now, or when ${blank === 1 ? 'it comes' : 'they come'} up.` : 'What you lift on every exercise, and the step sizes'}</span></span><span class="accent">Open</span></button>
         ${state.proposals.length > 0 && html`<button class="row" onClick=${() => go('review')}>
@@ -295,7 +300,7 @@ export function DayScreen({ dayId }) {
         ${status === 'todo' && html`<button class="chip" data-testid="skip-session" onClick=${() => { store.set({ plan: skipDay(plan, day.id) }); toast('Skipped. It comes back in the next run'); }}>Skip this time</button>`}
         ${status === 'skipped' && html`<button class="chip accent" data-testid="unskip-session" onClick=${() => { store.set({ plan: unskipDay(plan, day.id) }); toast('Back in the plan'); }}>Bring it back</button>`}
       </div>
-      ${pairs.length > 0 && html`<p class="note small" data-testid="day-pairs"><b>${plural(pairs.length, 'pair')} in this session</b>The two exercises of a pair are done in turns: a set of one, a short rest, a set of the other. One rests while the other works, so the session is shorter for the same sets. If a station is taken, "Machine busy?" in the workout splits the pair for the day.</p>`}
+      ${pairs.length > 0 && html`<p class="note small" data-testid="day-pairs"><b>${plural(pairs.length, 'superset')} in this session</b>The two exercises of a superset are done in turns: a set of one, a short rest, a set of the other. One rests while the other works, so the session is shorter for the same sets. If a station is taken, "Machine busy?" in the workout splits a superset for the day.</p>`}
       <ol class="stack">
         ${day.exercises.map((ex, i) => {
           const lift = exerciseById(state.equipment, ex.exerciseId);
@@ -305,7 +310,7 @@ export function DayScreen({ dayId }) {
           return html`
           <li class=${`panel ${mate ? 'paired' : ''}`} style="border-radius:16px;padding:14px;gap:6px" data-testid="day-exercise" data-pair=${mate ? ex.pair : ''}>
             <div class="spread"><h4>${i + 1}. ${ex.name}</h4><span class="tag">${ex.tier}</span></div>
-            ${mate && html`<p class="small" data-testid="pair-with"><span class="tag good">pair</span> In turns with ${mate.name}: ${oppositePair(ex, mate) ? 'opposite muscles' : 'different parts of the body'}. Rest ${restText(pairRestSec(ex, mate))} after each set.</p>`}
+            ${mate && html`<p class="small" data-testid="pair-with"><span class="tag good">superset</span> In turns with ${mate.name}: ${oppositePair(ex, mate) ? 'opposite muscles' : 'different parts of the body'}. Rest ${restText(pairRestSec(ex, mate))} after each set.</p>`}
             <div class="spread" style="align-items:flex-start"><p class="small muted grow">${ex.equipment} · ${ex.zone}</p>${look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}</div>
             ${m && html`<p class="small muted" data-testid="day-machine">${machineLabel(m) || m.name}${m.isolates ? ` · isolates ${m.isolates.replace(/\.$/, '').toLowerCase()}` : ''}</p>`}
             <p><b>${ex.sets} × ${ex.reps} reps</b> <span class="muted small">(range ${ex.repLo}-${ex.repHi}) · ${mate ? `rest alone ${restText(ex.restSec)}` : `rest ${restText(ex.restSec)}`}</span></p>

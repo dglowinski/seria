@@ -48,8 +48,9 @@ const shots = [
   ['54-past-workout', 'The same, mid-workout', 'Under the sets of the exercise in hand, out of the way.'],
   ['06-day', 'Session preview', 'Order, equipment, sets, reps, rest, and how the time adds up.'],
   ['40-day-optional', 'Optional extras', 'Each session lists up to two extras for the end, with the reason each one fits.'],
-  ['44-pairs-switch', 'Pairs: one switch', 'On the Plan tab. It says what pairing saves, and what it costs: harder sets, two stations.'],
-  ['45-day-pairs', 'A session with pairs', 'Which exercises are done in turns, why they fit, and the rest between them.'],
+  ['44-pairs-switch', 'Supersets: one switch', 'On the Plan tab. It says what supersets save, and what they cost: harder sets, two stations.'],
+  ['55-supersets-mode', 'Supersets as a mode', 'The summary before a plan is built has the switch. With it on, the plan is laid out for supersets.'],
+  ['45-day-pairs', 'A session with supersets', 'Which exercises are done in turns, why they fit, and the rest between them.'],
   ['05-equipment', 'Equipment', 'Machines you add. Free weights, bench and bar are on by default.'],
   ['05-gym-text', 'Describe your gym', 'Name the machines or paste any text. It is read and saved, and you see what was added.'],
   ['17c-machines-identified', 'Machines by maker', 'Name the maker and the exact machines are identified. Each says whether it was found on the web or comes from memory.'],
@@ -59,7 +60,7 @@ const shots = [
   ['08-set-active', 'Set in progress', 'One button: Finish set. It saves the planned reps; −1 and +1 nudge them first.'],
   ['47-train', 'The band at the top', 'It does not scroll. While a set runs it says "Train", with the target and the set clock.'],
   ['49-push', '"Push"', 'On the last set of an exercise, which goes past its target, the band says "Push".'],
-  ['48-pair-rest', 'A pair, mid-workout', 'After a set of one, a short rest counts down in the band, then the other one is up.'],
+  ['48-pair-rest', 'A superset, mid-workout', 'After a set of one, a short rest counts down in the band, then the other one is up.'],
   ['37-overview', 'The whole workout', 'Tap the header to see every exercise and jump to any of them.'],
   ['10-rest', 'Rest', 'The set just saved stays in reach: nudge, change weight, undo. The next set starts by itself when the rest runs out.'],
   ['11-swap', 'Machine busy? Not now', 'Come back to it later, do another exercise instead, or drop it for today.'],
@@ -118,6 +119,14 @@ const v11 = [
   ['Changes are made, not proposed.', 'After a workout, from the chat and when equipment changes, the plan is updated without asking. "What changed" lists every change with its reason, an Undo and an Edit.'],
   ['A signal with the screen off.', 'A web page cannot vibrate behind a dark screen, so the app sends a notification when the rest ends (stand-alone app). The beep is scheduled ahead on the audio clock. Settings has a test button. Not tried on a real phone.'],
   ['The long view.', 'A plain-words outlook on the Plan tab: what this round holds, how it gets harder, what changes round to round, what happens when it stalls, and what would be added with more time. A connected model adds its own.'],
+];
+
+// Version 1.7: supersets as a mode the plan is built for.
+const v17 = [
+  ['Supersets are a mode now, and are called that.', 'What the app called pairs is now "Supersets": two exercises that use different muscles, done in turns. It is for people who would rather do a set of something else than sit through a rest, and it also makes sessions shorter.'],
+  ['The plan is built for them.', 'With supersets on, the week is split into sessions that hold opposite muscle groups (upper and lower days, not push-only and pull-only ones, where hardly anything has a partner), and each exercise is put next to a partner where the training allows. In the rule-based plans for five and six days a week, the share of exercises with a partner goes from about four in ten to about seven in ten, for about the same weekly sets. The model gets the same instruction (rule PAR-3).'],
+  ['The training still comes first.', 'Compound lifts stay before single-joint work. Squats, hip hinges and the main lifts of a strength plan keep their full rest and are never part of a superset, and two exercises that share a muscle are never put together.'],
+  ['Where to turn it on.', 'On the Plan tab, in Settings, and on the summary the coach shows before it builds a plan. Or say it: "I like supersets", "I hate sitting around between sets". A plan made before the mode was on only gets supersets where two fitting exercises happen to meet; the Plan tab says so and offers to build one made for them.'],
 ];
 
 // Version 1.6: how each exercise has gone, and the pairs switch where it is looked for.
@@ -310,6 +319,12 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
       <div class="rowx head"><span>The design says</span><span>Status</span><span>The app does</span></div>
       ${spec.map(([a, s, b]) => `<div class="rowx"><span>${esc(a)}</span><span><span class="pill ${s === 'changed' ? 'mostly' : s}">${s === 'done' ? 'Done' : s === 'changed' ? 'Changed' : 'Mostly'}</span></span><span class="muted">${esc(b)}</span></div>`).join('\n      ')}
     </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">New in version 1.7</p>
+    <h2>Supersets: a mode the plan is built for</h2>
+    <div>${v17.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
   </section>
 
   <section>

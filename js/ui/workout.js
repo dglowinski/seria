@@ -379,7 +379,7 @@ export function Workout() {
           ${phase === 'active' && html`<p class="eyebrow">Set in progress</p>`}
           <h3 data-testid="exercise-name">${ex.name}</h3>
           <p class="muted small">${ex.zone} · set ${setIdx + 1} of ${ex.sets.length}${ex.optional ? ' · optional extra' : ''}${ex.swappedFrom ? ` · swapped in for ${ex.swappedFrom.name}` : ''}${ex.postponed ? ' · put off earlier' : ''}</p>
-          ${mate && html`<p class="small" data-testid="pair-line"><span class="tag good">pair</span> ${inTurns ? `In turns with ${mate.name}: a set here, ${restText(pairRestSec(ex, mate))} rest, a set there.` : `Was in turns with ${mate.name}, which is done. The sets left here keep their own rest.`}</p>`}
+          ${mate && html`<p class="small" data-testid="pair-line"><span class="tag good">superset</span> ${inTurns ? `In turns with ${mate.name}: a set here, ${restText(pairRestSec(ex, mate))} rest, a set there.` : `Was in turns with ${mate.name}, which is done. The sets left here keep their own rest.`}</p>`}
           ${waiting && session.easePct > 0 && c.done + c.skipped === 0 && html`<p class="small muted" data-testid="eased">Loads are ${session.easePct}% lighter today to ease back in. The plan keeps its numbers.</p>`}
           ${waiting && firstOfExercise && html`<p class="muted small">${ex.equipment} · ${ex.sets.length} sets · rest ${inTurns ? `${restText(pairRestSec(ex, mate))} after each set` : restText(ex.restSec)}</p>`}
         </div>

@@ -1426,7 +1426,7 @@ await guarded(async () => {
   await page.getByTestId('plan-session').first().click();
   await page.getByTestId('day-pairs').waitFor();
   const firstCard = page.getByTestId('day-exercise').first();
-  check('the session says which exercises are done in turns, why they fit, and the rest between them', /3 pairs in this session/.test(await page.getByTestId('day-pairs').textContent()) && (await page.getByTestId('pair-with').count()) === 6
+  check('the session says which exercises are done in turns, why they fit, and the rest between them', /3 supersets in this session/.test(await page.getByTestId('day-pairs').textContent()) && (await page.getByTestId('pair-with').count()) === 6
     && new RegExp(`In turns with ${B.name}: opposite muscles\\. Rest 1:10 min after each set`).test(await firstCard.textContent()) && (await page.locator('[data-testid=day-exercise][data-pair=""]').count()) === 1, await firstCard.textContent());
   await shot(page, '45-day-pairs');
 
@@ -1520,6 +1520,27 @@ await guarded(async () => {
   await page.getByTestId('pairs-toggle').click();
   st = await state(page);
   check('pairs can be switched off again: one exercise at a time, as before', st.profile.pairs === false && st.plan.days.every((d) => d.exercises.every((x) => !x.pair)) && (await page.getByTestId('pairs-toggle').getAttribute('aria-checked')) === 'false');
+
+  // --- alternating as a mode: a plan made before it was on is only paired by chance; a new one is built for it
+  await page.getByTestId('pairs-toggle').click();
+  const offer = page.getByTestId('pairs-rebuild');
+  check('with alternating on, the plan says it was not made for it and offers one that is', (await state(page)).profile.pairs === true && /not made for supersets/.test(await offer.textContent()) && /^Supersets/.test(await page.getByTestId('pairs-toggle').textContent()), await page.getByTestId('pairs-toggle').textContent());
+  await page.getByTestId('pairs-build').click();
+  await page.getByTestId('assumptions').waitFor();
+  const sw = page.getByTestId('assume-pairs-switch');
+  check('the summary before a plan is built shows the mode, with its own switch', (await sw.getAttribute('aria-checked')) === 'true' && /The plan is built for supersets/.test(await page.getByTestId('assume-pairs').textContent()) && /Supersets/.test(await page.getByTestId('assumptions').locator('dl').textContent()));
+  await sw.click();
+  check('the switch on the summary turns it off', await until(async () => (await state(page)).profile.pairs === false) && (await sw.getAttribute('aria-checked')) === 'false' && !/Supersets/.test(await page.getByTestId('assumptions').locator('dl').textContent()));
+  await sw.click();
+  await until(async () => (await state(page)).profile.pairs === true);
+  await shot(page, '55-supersets-mode');
+  await page.getByTestId('build-plan').click();
+  await page.getByTestId('open-plan').click();
+  await page.getByTestId('timeline').waitFor();
+  st = await state(page);
+  const pairsIn = (d) => new Set(d.exercises.map((x) => x.pair).filter(Boolean)).size;
+  check('the new plan is made for alternating: every session has pairs, and the offer is gone', st.plan.forPairs === true && st.plan.days.every((d) => pairsIn(d) >= 1) && pairsIn(st.plan.days[0]) >= 3
+    && (await page.getByTestId('pairs-rebuild').count()) === 0, JSON.stringify(st.plan.days.map((d) => [d.title, pairsIn(d)])));
   check('no script errors in part H', errors.length === 0, errors.join(' | '));
   await context.close();
 });
