@@ -236,6 +236,12 @@ select.input { appearance: none; }
 .mv-p { fill: var(--pad); }
 .ghost { opacity: .26; }
 .motion-play { position: absolute; right: 3px; bottom: 3px; font-size: 9px; line-height: 1; color: var(--muted); }
+/* The same exercise shown by a figure in 3D: a square picture, and a large one in a sheet that a finger can turn. */
+.motion.three { width: 156px; }
+.motion.three.small { width: 112px; }
+.motion.three canvas { display: block; width: 100%; aspect-ratio: 1 / 1; }
+.motion.three .motion-play { font-size: 12px; right: 5px; bottom: 5px; }
+canvas.viewer { display: block; width: 100%; max-width: 440px; aspect-ratio: 1 / 1; margin: 0 auto; touch-action: pan-y; cursor: grab; }
 .rule { border-top: 1px solid var(--line); padding-top: 12px; }
 .rule code, code { font: inherit; font-size: 13px; color: var(--muted); }
 .cite { font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }

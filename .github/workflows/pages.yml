@@ -13,6 +13,7 @@ on:
       - css/**
       - js/**
       - vendor/**
+      - assets/**
       - icons/**
       - tests/**
       - .github/workflows/pages.yml
@@ -42,7 +43,7 @@ jobs:
       - name: Collect the app files
         run: |
           mkdir _site
-          cp -r index.html manifest.webmanifest sw.js css js vendor icons _site/
+          cp -r index.html manifest.webmanifest sw.js css js vendor icons assets _site/
           # A new cache name for every release, so installed phones pick up the new files
           # without anyone remembering to bump the version by hand.
           sed -i "s/^const VERSION = '[^']*';/const VERSION = 'seria-${GITHUB_SHA::8}';/" _site/sw.js

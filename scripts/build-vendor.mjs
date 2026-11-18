@@ -35,15 +35,37 @@ await build({
   outfile: new URL('../vendor/openai-sdk.js', import.meta.url).pathname,
 });
 
+// 4. The parts of three.js that draw the figure in 3D (ui/stage3d.js), and nothing else of it.
+await build({
+  stdin: {
+    contents: `export {
+      WebGLRenderer, Scene, PerspectiveCamera, Group, Object3D, Mesh, SkinnedMesh, Skeleton, Bone,
+      BufferGeometry, BufferAttribute, CylinderGeometry, SphereGeometry, BoxGeometry, CircleGeometry, PlaneGeometry,
+      MeshStandardMaterial, MeshLambertMaterial, MeshBasicMaterial, ShadowMaterial,
+      HemisphereLight, DirectionalLight, Color, Vector3, Quaternion, Matrix4, Texture, CanvasTexture,
+      SRGBColorSpace, PCFSoftShadowMap, DoubleSide, FrontSide, LinearFilter, LinearMipmapLinearFilter,
+    } from 'three';`,
+    resolveDir: new URL('..', import.meta.url).pathname,
+  },
+  bundle: true,
+  format: 'esm',
+  platform: 'browser',
+  target: 'es2022',
+  minify: true,
+  legalComments: 'none',
+  outfile: new URL('../vendor/three-kit.js', import.meta.url).pathname,
+});
+
 writeFileSync(
   new URL('../vendor/VERSIONS.txt', import.meta.url),
   [
     `preact-htm.js   htm ${pkg('htm').version} standalone build, which bundles Preact 10 and its hooks (Apache-2.0 / MIT)`,
     `anthropic-sdk.js   @anthropic-ai/sdk ${pkg('@anthropic-ai/sdk').version} (MIT)`,
     `openai-sdk.js   openai ${pkg('openai').version} (Apache-2.0)`,
+    `three-kit.js   three ${pkg('three').version}, only the parts the 3D figure needs (MIT)`,
     '',
   ].join('\n'),
 );
-for (const f of ['preact-htm.js', 'anthropic-sdk.js', 'openai-sdk.js']) {
+for (const f of ['preact-htm.js', 'anthropic-sdk.js', 'openai-sdk.js', 'three-kit.js']) {
   console.log(f, Math.round(statSync(new URL(`../vendor/${f}`, import.meta.url)).size / 1024) + ' KB');
 }

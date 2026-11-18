@@ -107,7 +107,25 @@ try {
   await page.getByTestId('weights-skip').click();
   const main = page.getByTestId('main-action');
   await main.waitFor();
-  const drawingSeen = (await page.getByTestId('motion').getAttribute('data-move').catch(() => '')) === 'bench_db' && (await page.getByTestId('motion').locator('animate').count()) > 0;
+  // The exercise that is up is shown by the figure in 3D, from the offline copy: nothing can be fetched now.
+  const in3d = await page.waitForFunction(() => document.querySelector('[data-testid=motion]')?.dataset.three === '1' && document.querySelector('[data-testid=motion]').dataset.on === '1', null, { timeout: 12000 }).then(() => true, () => false);
+  // The share of the picture that is bright: the figure's skin, shorts and shoes, not the dark floor. Asked again until a frame has been drawn.
+  const brightShare = () => page.getByTestId('motion').locator('canvas').evaluate((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] + d[i + 1] + d[i + 2] > 380) n++; return n / (d.length / 4); });
+  let lit = 0;
+  for (let i = 0; in3d && i < 40 && lit <= 0.004; i++) { lit = await brightShare(); if (lit <= 0.004) await sleep(100); }
+  const drawingSeen = (await page.getByTestId('motion').getAttribute('data-move').catch(() => '')) === 'bench_db' && in3d && lit > 0.004;
+  // Tapped, it opens large and can be turned.
+  await page.getByTestId('motion').click();
+  const big = page.getByTestId('motion-big');
+  const opened = await big.waitFor({ timeout: 5000 }).then(() => true, () => false);
+  let turned = false;
+  if (opened) {
+    const box = await big.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 - 120, box.y + box.height / 2, { steps: 6 }); await page.mouse.up();
+    turned = Math.abs(Number(await big.getAttribute('data-turn'))) > 40;
+    await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
+  }
   // A station that is taken, and work added by hand, all with the network off.
   await page.getByTestId('busy').click();
   const busyOk = await page.getByTestId('swap-other').isVisible() && (await page.getByTestId('busy-optional').count()) === 1;
@@ -123,7 +141,8 @@ try {
     await main.click();
   }
   check('the band at the top of the workout says what to do: "Ready", then "Train" while the set runs', words.join() === 'Ready,Train', words.join());
-  check('the workout shows a drawing of how the first exercise is done, and it moves', drawingSeen);
+  check('offline, the workout shows the first exercise done by the figure in 3D, playing', drawingSeen, `3d ${in3d} lit ${lit}`);
+  check('a tap opens the figure large, and a drag turns it around', opened && turned);
   check('"Machine busy?" offers an optional extra in the meantime, and any other exercise or machine', busyOk);
   check('a set can be added by hand during the workout', canAdd && extraSets === 1, `${canAdd} ${extraSets}`);
   await page.getByTestId('rest-timer').waitFor({ timeout: 5000 });
@@ -153,9 +172,9 @@ try {
   await page.getByTestId('restore-plan').click();
   const back = await read();
   check('"Put the old plan back" undoes the rebuild', back.id === was.id && back.before === null && (await page.getByTestId('restore-plan').count()) === 0, JSON.stringify(back));
-  check('the release is version 1.10.0, and the coach is sent the workouts on record and where the cycle stands', await page.evaluate(async () => {
+  check('the release is version 1.11.0, and the coach is sent the workouts on record and where the cycle stands', await page.evaluate(async () => {
     const [v, p, s] = await Promise.all(['js/ui/prefs.js', 'js/ai/prompts.js', 'js/domain/schedule.js'].map((f) => fetch(f).then((r) => r.text())));
-    return v.includes("APP_VERSION = '1.10.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
+    return v.includes("APP_VERSION = '1.11.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
       && p.includes('where_the_cycle_stands') && p.includes('never swap one for variety alone') && s.includes('export function cycleNext')
       && p.includes('you are the coach: you decide what the training is') && p.includes('superset_with_next');
   }));
@@ -165,24 +184,33 @@ try {
       && m.includes('export const MOVES') && m.includes('export function moveFor');
   }));
   await context.setOffline(false);
+  check('the release has what 1.11 added: the exercises in 3D, the modelled figure, and the flat drawings to fall back on', await page.evaluate(async () => {
+    const [m3, st, mo, sw, pr] = await Promise.all(['js/domain/moves3d.js', 'js/ui/stage3d.js', 'js/ui/motion.js', 'sw.js', 'js/ui/prefs.js'].map((f) => fetch(f).then((r) => r.text())));
+    const fig = await fetch('assets/figure.bin').then((r) => r.arrayBuffer());
+    const kit = await fetch('vendor/three-kit.js');
+    return m3.includes('export function scene3') && st.includes('export function openStage') && mo.includes('function Drawing(') && mo.includes('function Figure(') && sw.includes("'assets/figure.bin'") && pr.includes('pref-3d')
+      && fig.byteLength > 100000 && String.fromCharCode(...new Uint8Array(fig, 0, 4)) === 'SFIG' && kit.ok;
+  }));
   // Back online: the offline worker's own file is not kept in the offline copy, so it is read from the network.
   check('a new release loads by itself, and is fetched past the browser cache', await page.evaluate(async () => {
     const [a, w] = await Promise.all(['js/app.js', 'sw.js'].map((f) => fetch(f).then((r) => r.text())));
     return a.includes("addEventListener('controllerchange'") && w.includes("cache: 'reload'") && w.includes("cache: 'no-cache'");
   }));
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Plan' }).click();
-  check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.10.0');
+  check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.11.0');
   // Progress in the exercise box: nothing while the target has not moved, then a step once the weight goes up.
   await page.getByTestId('plan-session').filter({ hasText: 'Upper body A' }).first().click();
   await page.getByTestId('start-day').waitFor({ timeout: 8000 });
   const box = page.getByTestId('day-exercise').first();
   const quiet = (await box.getByTestId('past').count()) === 0;
-  // Every exercise in the preview has its drawing: still until tapped, then it plays.
-  const pics = await page.getByTestId('day-exercise').count() === await page.locator('[data-testid=day-exercise] [data-testid=motion]').count();
+  // Every exercise in the preview has its picture in 3D: still in the list, playing once it is opened large.
+  const pics = await page.getByTestId('day-exercise').count() === await page.locator('[data-testid=day-exercise] [data-testid=motion][data-three="1"]').count();
   const still = (await box.getByTestId('motion').getAttribute('data-on')) === '0';
   await box.getByTestId('motion').click();
-  await page.waitForFunction(() => document.querySelector('[data-testid=day-exercise] [data-testid=motion]')?.getAttribute('data-on') === '1', null, { timeout: 3000 }).catch(() => {});
-  check('every exercise in the session preview has a drawing of how it is done: still until tapped, then it plays', pics && still && (await box.getByTestId('motion').getAttribute('data-on')) === '1' && (await box.getByTestId('motion').locator('animate').count()) > 0);
+  const large = page.getByTestId('motion-big');
+  const plays = await page.waitForFunction(() => document.querySelector('[data-testid=motion-big]')?.dataset.on === '1', null, { timeout: 5000 }).then(() => true, () => false);
+  check('every exercise in the session preview has a 3D picture of how it is done: still in the list, playing when opened large', pics && still && plays && (await large.getAttribute('data-move')) === 'bench_db');
+  if (plays) await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
   await box.getByTestId('edit-weight').click();
   await page.fill('#weight-value', '22');
   await page.getByTestId('weight-save').click();
@@ -194,6 +222,7 @@ try {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   check('supersets can be switched in Settings too, and the plan built since is made for them', (await page.locator('#pref-pairs').getAttribute('aria-checked').catch(() => null)) === 'true'
     && /Supersets/.test(await page.locator('main').textContent()));
+  check('Settings has the switch between the 3D figure and the flat drawings, on', (await page.locator('#pref-3d').getAttribute('aria-checked').catch(() => null)) === 'true');
   check('no script errors', errors.length === 0, errors.join(' | '));
 } catch (e) {
   check('the check ran to the end', false, String(e.message).split('\n')[0]);

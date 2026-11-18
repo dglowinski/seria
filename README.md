@@ -91,9 +91,13 @@ Say who makes the machines, as in "these are from Technogym: leg press, chest pr
 
 ### How each exercise is done
 
-Every exercise has a drawing that moves: a stick figure doing one rep, with the equipment, in the same line style as the equipment sketches. It is seen from the side, or from the front where that shows the move better (a lateral raise, a pull-up). In a workout it plays three times when an exercise comes up and then rests. In a session's preview it stands still, the start of the move with the end of it faint behind, until you tap it. A tap plays it; another stops it. A phone set to reduce motion gets the still picture.
+Every exercise is shown by a figure in 3D: a modelled person doing one rep with the equipment. In a workout the picture plays three times when an exercise comes up and then rests. In a session's preview it stands still. Tap a picture and it opens large and plays on a loop: drag sideways to turn the figure around and see the move from the front, the side or behind, and tap to pause. A phone set to reduce motion gets still pictures until you tap.
 
-The drawings are made by the app, not downloaded, so they work offline and inside claude.ai. Each move is a short description of where the body is during a rep; the limbs are worked out from that with fixed lengths (`js/domain/moves.js`, played by `js/ui/motion.js`). A machine of your gym's own gets the move for what it trains. They show the general way a lift goes, not coaching on your form. `node scripts/moves-gallery.mjs` draws them all to pictures.
+The figure moves the way the app works it out, not the way a person was filmed. Each move says where the hips, hands and feet are during a rep, how wide the grip is, how far the elbows go out and where the knees track. From that every bone is turned, each with its fixed length, so that the hands stay on the bar and the feet on the floor (`js/domain/moves3d.js`, drawn by `js/ui/stage3d.js`). A machine of your gym's own gets the move for what it trains. It shows the general way a lift goes. It is not coaching on your form, and no trainer has checked it.
+
+The 3D parts are about 0.9 MB and are kept with the app's offline copy, so they show in a gym with no signal. Where 3D cannot be had (an old phone, or the files did not arrive) each exercise has a flat drawing that moves instead: a stick figure in the same line style as the equipment sketches (`js/domain/moves.js`). "Exercises in 3D" in Settings switches between the two.
+
+The figure is "Sports_Male_04" from the [Microsoft Rocketbox avatar library](https://github.com/microsoft/Microsoft-Rocketbox), used under the MIT license (`assets/FIGURE-LICENSE.txt`). `npm run figure` rebuilds `assets/figure.bin` from the library's files, which it downloads once (about 25 MB). `npm run moves3d` draws every move to sheets of pictures, and `node scripts/moves-gallery.mjs` does the same for the flat drawings.
 
 ### What the equipment looks like
 
@@ -173,6 +177,9 @@ js/cloud.js                               cloud copy when inside claude.ai
 js/domain/rules.js                        the training rules library, versioned, with sources
 js/domain/catalog.js                      equipment and exercises
 js/domain/moves.js                        how each exercise moves: the figure and the equipment through one rep
+js/domain/moves3d.js                      the same moves in depth: every joint of the figure and every piece of equipment in space
+js/domain/figure.js                       where the joints of the modelled figure are at rest (written by npm run figure)
+js/domain/skeleton.js                     the bones of the figure, and how a pose turns them
 js/domain/planner.js                      builds the plan, estimates time
 js/domain/schedule.js                     what to train today, the order and rests of what follows
 js/domain/session.js                      the workout: ready, set, rest, next, summary, and its log
@@ -184,11 +191,14 @@ js/ai/openai.js                           OpenAI through its Responses API
 js/ai/coach.js                            the conversation, with and without a model
 js/ui/*.js                                the screens
 js/ui/sketch.js                           line sketches of each kind of equipment
-js/ui/motion.js                           plays the drawing of an exercise
+js/ui/motion.js                           the picture of an exercise: the figure in 3D, large on a tap, or the flat drawing
+js/ui/stage3d.js                          the one 3D stage: figure, equipment, floor, lights, camera
+js/ui/figure3d.js                         puts the modelled figure on the stage
+assets/figure.bin                         the modelled figure: skin, bones and two pictures (built by npm run figure)
 js/ui/pick.js                             pick any exercise by hand, or name a machine that is not on the list
-vendor/                                   Preact + htm, the Anthropic SDK and the OpenAI SDK, built by npm run vendor
+vendor/                                   Preact + htm, the Anthropic SDK, the OpenAI SDK and the needed parts of three.js, built by npm run vendor
 docs/training-rules.md                    the rules as a document, generated from rules.js
-scripts/                                  local server, icon, vendor, rules-doc and single-file builders
+scripts/                                  local server, icon, vendor, figure, rules-doc and single-file builders
 tests/                                    unit tests and the end-to-end smoke test
 report/                                   the build report, test results and screenshots
 ```
@@ -196,7 +206,7 @@ report/                                   the build report, test results and scr
 ## Changing things
 
 - **Training rules:** edit `js/domain/rules.js`, bump `RULES_VERSION`, run `npm run rules-doc`. The generator, the changes made during and after a workout, and the prompt sent to the model all pick up the change.
-- **Exercises and machines:** `js/domain/catalog.js`.
+- **Exercises and machines:** `js/domain/catalog.js`. A new exercise needs a move in `js/domain/moves.js`; the same entry gives its flat drawing and, with a few numbers for depth, its 3D picture. The tests fail when one is missing.
 - **Releasing:** push to `main`. The deploy stamps the offline cache with the commit id, so installed phones pick up new files on the next start or the one after. On any other host, bump `VERSION` in `sw.js` yourself.
 - **The claude.ai page:** `npm run build:artifact` packs everything into `dist/seria-artifact.html`. Publish that file as an update to the page address above, so the link and the saved data stay the same.
 - **The report:** `npm run smoke:shots`, then `npm run report`, writes `report/report.html`. The published copy is at <https://claude.ai/artifact/GKCR9m4UWxaKrQw2wcNwU7>.
@@ -207,7 +217,8 @@ report/                                   the build report, test results and scr
 - The claude.ai page and the stand-alone app do not share data. Move it with a backup file.
 - Cloud sync is simple: the newest main record wins, workouts are merged one by one. It is meant for one person, mostly on one device at a time.
 - With the screen off, the rest-over signal is a notification, and only in the stand-alone app. Whether the phone buzzes for it is up to the phone's notification settings, and it was not tried on a real phone. The countdown itself is always right, because it is stored as an end time.
-- The moving drawings show the general way an exercise goes. They are worked out, not filmed, and are no substitute for being shown a lift.
+- The 3D figure shows the general way an exercise goes. Its moves are worked out, not filmed from a person, and no trainer has checked them: they are no substitute for being shown a lift. There is one figure, a man. Hands and clothes can bend oddly at the ends of a move.
+- The 3D pictures were tried in desktop Chrome with a phone-sized window, not on a real phone. If they are slow or missing on yours, switch "Exercises in 3D" off in Settings.
 - The whole-plan review after a workout needs a connected model. Its instructions and the data it is sent are tested against stand-ins; how well a real model follows them was not measured.
 - Undo works on the plan a change was made to. After the plan is rebuilt, older changes stay in the list as a record only.
 - Not medical advice. The limitation handling is deliberately cautious and says what it left out.

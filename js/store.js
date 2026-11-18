@@ -51,6 +51,7 @@ export const defaultSettings = () => ({
   apiKey: '', model: DEFAULT_MODEL, baseUrl: '', aiOn: true,
   openaiKey: '', openaiModel: DEFAULT_OPENAI_MODEL, openaiBaseUrl: '',
   sound: true, vibrate: true, keepAwake: true,
+  figure3d: true, // exercises shown by a modelled figure in 3D; off keeps the flat drawings
   autoStart: true, // the next set starts by itself when the rest runs out
   notify: false, // a notification when the rest ends, so the phone can buzz with the screen off
 });

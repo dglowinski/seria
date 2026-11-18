@@ -62,6 +62,10 @@ async function until(fn, ms = 3000) {
     await sleep(40);
   }
 }
+/** The share of a canvas that is bright: the figure's skin, shorts and shoes, not the dark floor under it. */
+const bright = (loc) => loc.evaluate((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] + d[i + 1] + d[i + 2] > 380) n++; return n / (d.length / 4); });
+/** A fingerprint of what a canvas shows, to tell whether the picture changed. */
+const pictureOf = (loc) => loc.evaluate((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let h = 0; for (let i = 0; i < d.length; i += 53) h = (Math.imul(h, 31) + d[i]) >>> 0; return h; });
 const secs = (t) => { const [m, s] = t.trim().split(':').map(Number); return m * 60 + s; };
 /** The notes of a stored workout's exercises, in one line. */
 const S_summary = (session) => session.exercises.map((ex) => exerciseSummary(ex).notes.join(', ')).join(' | ');
@@ -348,30 +352,40 @@ await guarded(async () => {
   const dayText = await page.locator('main').textContent();
   check('day preview: order, equipment, sets, reps, rest, how to pick the weight, time parts',
     /1\. Dumbbell bench press/.test(dayText) && /Dumbbells, Bench/.test(dayText) && /\d × \d+ reps/.test(dayText) && /rest 3:00 min/.test(dayText) && /You pick it in the first session/.test(dayText) && /warm-up 8, sets \d+, rests \d+, moving between stations \d+/.test(dayText), dayText.slice(0, 300));
-  // Every exercise has a drawing of how it is done. In a list it stands still, with the end of the move faint behind, until it is tapped.
+  // Every exercise has a picture of how it is done: a modelled figure in 3D. In a list it stands still; a tap opens it large.
   const drawings = page.locator('main > ol [data-testid=motion]');
-  check('each exercise in the preview has a drawing of how it is done, standing still until tapped', (await drawings.count()) === 4 && (await drawings.first().getAttribute('data-move')) === 'bench_db'
-    && (await drawings.first().getAttribute('data-on')) === '0' && (await drawings.first().locator('animate').count()) === 0 && (await drawings.first().locator('.ghost').count()) > 0
-    && /^Play how Dumbbell bench press is done$/.test(await drawings.first().getAttribute('aria-label')));
+  check('each exercise in the preview has a 3D picture of how it is done, standing still', await until(async () => (await drawings.first().getAttribute('data-three')) === '1', 8000) && (await drawings.count()) === 4 && (await drawings.first().getAttribute('data-move')) === 'bench_db'
+    && (await drawings.first().getAttribute('data-on')) === '0' && (await drawings.first().locator('svg').count()) === 0 && /^See how Dumbbell bench press is done, large$/.test(await drawings.first().getAttribute('aria-label')));
+  await until(async () => (await bright(drawings.nth(3).locator('canvas'))) > 0.004);
+  const looks = []; for (let i = 0; i < 4; i++) looks.push(await pictureOf(drawings.nth(i).locator('canvas')));
+  check('the figure is really drawn, a different picture for each exercise', (await bright(drawings.first().locator('canvas'))) > 0.004 && new Set(looks).size === 4, `bright ${await bright(drawings.first().locator('canvas'))} pictures ${looks.join(' ')}`);
   await drawings.first().click();
-  check('a tap plays it: the figure and the dumbbell move, the equipment stays put', await until(async () => (await drawings.first().getAttribute('data-on')) === '1')
-    && (await drawings.first().locator('path.mv-b animate[attributeName=d]').count()) >= 1 && (await drawings.first().locator('circle.sk-mp animate').count()) === 2
-    && (await drawings.first().locator('.ghost').count()) === 0 && (await drawings.nth(1).getAttribute('data-on')) === '0');
-  const moved = await page.evaluate(async () => {
-    const hand = document.querySelector('main > ol [data-testid=motion] circle.sk-mp');
-    const y0 = hand.cy.animVal.value; await new Promise((r) => setTimeout(r, 900)); return Math.abs(hand.cy.animVal.value - y0);
-  });
-  check('and it really moves on screen', moved > 3, `moved ${moved}`);
-  await drawings.first().click();
-  check('a second tap stops it', await until(async () => (await drawings.first().getAttribute('data-on')) === '0'));
+  const big = page.getByTestId('motion-big');
+  check('a tap opens it large under the name of the exercise, and there it plays', await until(async () => (await big.count()) === 1 && (await big.getAttribute('data-on')) === '1' && (await bright(big)) > 0.004)
+    && await page.getByRole('dialog', { name: 'Dumbbell bench press' }).isVisible() && (await big.getAttribute('data-move')) === 'bench_db' && /Drag sideways to turn it around\. Tap to pause\./.test(await page.getByTestId('motion-hint').textContent()));
+  const p0 = await pictureOf(big); await sleep(800);
+  check('and it really moves on screen', p0 !== await pictureOf(big));
+  await shot(page, '60-figure-large');
+  const box = await big.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 130, box.y + box.height / 2, { steps: 8 }); await page.mouse.up();
+  check('dragging sideways turns the figure around, and it plays on', Math.abs(Number(await big.getAttribute('data-turn'))) > 50 && (await big.getAttribute('data-on')) === '1', `turn ${await big.getAttribute('data-turn')}`);
+  await shot(page, '61-figure-turned');
+  await big.click();
+  check('a tap on it pauses, and the line under it says so', await until(async () => (await big.getAttribute('data-on')) === '0') && /Tap to play\./.test(await page.getByTestId('motion-hint').textContent()));
+  await sleep(150);
+  const held = await pictureOf(big); await sleep(400);
+  check('paused, it holds still', held === await pictureOf(big));
+  await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
+  check('closing it leaves the list as it was', await until(async () => (await big.count()) === 0) && (await drawings.first().getAttribute('data-on')) === '0' && (await bright(drawings.first().locator('canvas'))) > 0.004);
   await shot(page, '06-day');
 
   // --- workout: starting weight, set, result, rest
   await startWith(page, 'start-day');
   await main(page).waitFor();
   check('workout has its own screen without the tab bar', (await page.getByRole('navigation', { name: 'Main' }).count()) === 0);
-  check('a new exercise starts with a drawing of how it is done, playing by itself', (await page.getByTestId('motion').getAttribute('data-move')) === 'bench_db' && await until(async () => (await page.getByTestId('motion').getAttribute('data-on')) === '1' && (await page.getByTestId('motion').locator('animate').count()) > 0)
-    && /^How the move goes\. Tap the drawing to play it again\.$/.test(await page.getByTestId('sketch-note').textContent()), `${await page.getByTestId('motion').getAttribute('data-move')} on=${await page.getByTestId('motion').getAttribute('data-on')} ${await page.getByTestId('sketch-note').textContent()}`);
+  check('a new exercise starts with a 3D picture of how it is done, playing by itself', (await page.getByTestId('motion').getAttribute('data-move')) === 'bench_db' && await until(async () => (await page.getByTestId('motion').getAttribute('data-three')) === '1' && (await page.getByTestId('motion').getAttribute('data-on')) === '1' && (await bright(page.getByTestId('motion').locator('canvas'))) > 0.004)
+    && /^How the move goes\. Tap it to see it large and turn it around\.$/.test(await page.getByTestId('sketch-note').textContent()), `${await page.getByTestId('motion').getAttribute('data-move')} on=${await page.getByTestId('motion').getAttribute('data-on')} ${await page.getByTestId('sketch-note').textContent()}`);
   check('no history: asks for a starting weight first', (await main(page).textContent()).trim() === 'Save starting weight' && await page.getByText('Choose your starting weight').isVisible());
   await shot(page, '07-starting-weight');
   await page.fill('#start-weight', '20'); await sleep(120);
@@ -382,7 +396,7 @@ await guarded(async () => {
   check('before the set: what to aim for, in words', new RegExp(`Stop at ${target}`).test(await page.getByTestId('effort').textContent()) && /last set is the one to push/.test(await page.getByTestId('effort').textContent()), await page.getByTestId('effort').textContent());
   await tap(page);
   check('"Start set" shows the active set', (await phase(page)) === 'active' && (await main(page).textContent()).trim() === 'Finish set' && Number(await page.getByTestId('draft-reps').textContent()) === target);
-  check('the drawing stays on the training screen during the set', await page.getByTestId('motion').locator('svg').isVisible() && (await page.getByTestId('motion').getAttribute('data-move')) === 'bench_db');
+  check('the picture stays on the training screen during the set', await page.getByTestId('motion').locator('canvas').isVisible() && (await page.getByTestId('motion').getAttribute('data-move')) === 'bench_db');
   await page.getByRole('button', { name: '1 rep fewer' }).click();
   check('reps can be nudged by one while the set runs', await until(async () => Number(await page.getByTestId('draft-reps').textContent()) === target - 1));
   await shot(page, '08-set-active');
@@ -390,7 +404,7 @@ await guarded(async () => {
   await tap(page);
   st = await state(page);
   check('one tap on "Finish set" saves the set and starts the rest', (await phase(page)) === 'rest' && Date.now() - t0 < 1500 && st.sessions[0].exercises[0].sets[0].actual.reps === target - 1 && st.sessions[0].exercises[0].sets[0].actual.load === 20);
-  check('the drawing stays during the rest too', await page.getByTestId('motion').locator('svg').isVisible() && (await page.getByTestId('sketch-note').count()) === 0);
+  check('the picture stays during the rest too', await page.getByTestId('motion').locator('canvas').isVisible() && (await page.getByTestId('sketch-note').count()) === 0);
   const restSec = st.sessions[0].exercises[0].restSec;
   const shown = secs(await page.getByTestId('rest-timer').textContent());
   check('countdown starts from the planned rest', shown <= restSec && shown >= restSec - 3, `${shown} vs ${restSec}`);
@@ -1130,7 +1144,8 @@ part = 'E single file';
 await guarded(async () => {
   const { context, page, errors } = await newPage({ init: viewerInit });
   const html = readFileSync(join(ROOT, 'dist', 'seria-artifact.html'), 'utf8');
-  check('single-file build exists, is small, and pulls in nothing from outside', html.length < 400000 && !/<script[^>]+src=|<link[^>]+href=|@import|url\(/.test(html), `${html.length} bytes`);
+  // It carries the 3D figure and the parts of three.js that draw it, which is most of its size.
+  check('single-file build exists, stays under 2 MB, and pulls in nothing from outside', html.length < 2000000 && !/<script[^>]+src=|<link[^>]+href=|@import|url\(/.test(html), `${html.length} bytes`);
   check('it follows the Artifact page rules (title first, no document tags of its own)', html.startsWith('<title>Seria</title>') && !/<!doctype|<html[\s>]|<head[\s>]|<body[\s>]/i.test(html));
   await page.goto(`${BASE}dist/preview.html`);
   await page.getByRole('heading', { name: /No plan yet/ }).waitFor();
@@ -1142,6 +1157,10 @@ await guarded(async () => {
   await page.getByRole('heading', { name: 'Your plan' }).waitFor();
   check('the single file runs the whole app with Claude and cloud save from the viewer', (await state(page)).plan.source === 'claude'
     && await until(async () => !!(await page.evaluate(() => JSON.parse(localStorage.getItem('__mockdb') || '{}')['data/users/viewer-1/main']?.plan)), 6000));
+  await page.getByTestId('plan-session').first().click();
+  await page.getByTestId('start-day').waitFor();
+  const inFile = page.locator('main > ol [data-testid=motion]').first();
+  check('the single file shows the exercises in 3D from what it carries inside', await until(async () => (await inFile.getAttribute('data-three')) === '1' && (await bright(inFile.locator('canvas'))) > 0.004, 8000), `three=${await inFile.getAttribute('data-three')}`);
   check('no script errors in part E', errors.length === 0, errors.join(' | '));
   await context.close();
 });
@@ -1927,7 +1946,7 @@ await guarded(async () => {
   // the session preview: the animated drawing for the plan's own machines
   await openSession(page, st.plan.days[1].title);
   await shot(page, '59-day-motion');
-  // A phone set to reduce motion: the drawing does not start by itself in a workout, and still plays on a tap.
+  // A phone set to reduce motion: the picture does not start by itself in a workout, and the large one waits for a tap too.
   const calm = await newPage({ context: { reducedMotion: 'reduce', storageState: await context.storageState() } });
   await calm.page.goto(BASE);
   await calm.page.getByTestId('train-now').waitFor();
@@ -1935,11 +1954,69 @@ await guarded(async () => {
   if (await until(() => calm.page.getByTestId('today-start').isVisible(), 1500)) await startWith(calm.page, 'today-start');
   await main(calm.page).waitFor();
   const pic = calm.page.getByTestId('motion');
+  await until(async () => (await pic.getAttribute('data-three')) === '1', 8000);
   await sleep(400);
-  const stoodStill = (await pic.getAttribute('data-on')) === '0' && (await pic.locator('animate').count()) === 0 && (await pic.locator('.ghost').count()) > 0;
+  const stoodStill = (await pic.getAttribute('data-on')) === '0' && (await bright(pic.locator('canvas'))) > 0.004;
   await pic.click();
-  check('with "reduce motion" on, the drawing stands still until it is tapped', stoodStill && await until(async () => (await pic.getAttribute('data-on')) === '1'));
+  const calmBig = calm.page.getByTestId('motion-big');
+  const waited = await until(async () => (await calmBig.count()) === 1 && (await calmBig.getAttribute('data-on')) === '0' && (await bright(calmBig)) > 0.004) && /Tap to play\./.test(await calm.page.getByTestId('motion-hint').textContent());
+  await calmBig.click();
+  check('with "reduce motion" on, the picture stands still, and the large one plays only when tapped', stoodStill && waited && await until(async () => (await calmBig.getAttribute('data-on')) === '1'), `still ${stoodStill} waited ${waited}`);
+  check('no script errors with "reduce motion" on', calm.errors.length === 0, calm.errors.join(' | '));
   await calm.context.close();
+
+  // --- when the 3D figure cannot be had, the flat drawing takes its place
+  // The 3D library does not arrive (a bad connection on the first visit, say).
+  const flat = await newPage({ context: { storageState: await context.storageState() } });
+  await flat.page.route('**/vendor/three-kit.js', (r) => r.abort());
+  await flat.page.goto(BASE);
+  await flat.page.getByTestId('train-now').waitFor();
+  await openSession(flat.page, st.plan.days[1].title);
+  const lines = flat.page.locator('main > ol [data-testid=motion]');
+  check('without the 3D library each exercise still has its flat drawing, standing still with the end of the move faint behind', await until(async () => (await lines.first().locator('.ghost').count()) > 0) && (await lines.first().getAttribute('data-three')) === null
+    && (await lines.first().getAttribute('data-on')) === '0' && (await lines.first().locator('animate').count()) === 0 && (await lines.first().locator('canvas').count()) === 0 && /^Play how .+ is done$/.test(await lines.first().getAttribute('aria-label')));
+  await lines.first().click();
+  check('a tap plays the drawing where it is', await until(async () => (await lines.first().getAttribute('data-on')) === '1') && (await lines.first().locator('path.mv-b animate[attributeName=d]').count()) >= 1
+    && (await lines.first().locator('.ghost').count()) === 0 && (await lines.nth(1).getAttribute('data-on')) === '0' && (await flat.page.getByTestId('motion-big').count()) === 0);
+  const movedFlat = await flat.page.evaluate(async () => {
+    const limb = document.querySelector('main > ol [data-testid=motion] path.mv-b animate[attributeName=d]').parentNode;
+    const box = () => { const b = limb.getBBox(); return b.x + b.y + b.width + b.height; };
+    const b0 = box(); await new Promise((r) => setTimeout(r, 900)); return Math.abs(box() - b0);
+  });
+  check('and it really moves on screen', movedFlat > 0.5, `moved ${movedFlat}`);
+  await lines.first().click();
+  check('a second tap stops it', await until(async () => (await lines.first().getAttribute('data-on')) === '0'));
+  await flat.page.getByRole('button', { name: 'Back' }).first().click().catch(() => flat.page.goBack());
+  await flat.page.getByTestId('train-now').waitFor();
+  await startWith(flat.page, 'train-now');
+  if (await until(() => flat.page.getByTestId('today-start').isVisible(), 1500)) await startWith(flat.page, 'today-start');
+  await main(flat.page).waitFor();
+  check('in a workout the flat drawing plays by itself and the line under it says how to play it again', await until(async () => (await flat.page.getByTestId('motion').getAttribute('data-on')) === '1' && (await flat.page.getByTestId('motion').locator('animate').count()) > 0)
+    && /Tap the drawing to play it again\.$/.test(await flat.page.getByTestId('sketch-note').textContent()), await flat.page.getByTestId('sketch-note').textContent());
+  await shot(flat.page, '62-flat-fallback');
+  check('no script errors without the 3D library', flat.errors.length === 0, flat.errors.join(' | '));
+  await flat.context.close();
+
+  // The switch in Settings: 3D off keeps the flat drawings, on brings the figure back.
+  lastPage = page;
+  await page.getByRole('button', { name: 'Back' }).first().click().catch(() => page.goBack());
+  await page.getByTestId('train-now').waitFor();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  check('Settings has a switch for the 3D figure, on to begin with', (await page.locator('#pref-3d').getAttribute('aria-checked')) === 'true');
+  await page.locator('#pref-3d').click();
+  await page.getByRole('button', { name: 'Back' }).first().click();
+  await page.getByTestId('train-now').waitFor();
+  await openSession(page, st.plan.days[1].title);
+  const own = page.locator('main > ol [data-testid=motion]');
+  check('switched off, the exercises show the flat drawings', await until(async () => (await own.first().locator('svg').count()) === 1) && (await own.first().getAttribute('data-three')) === null && JSON.parse(await page.evaluate(() => localStorage.getItem('seria.settings.v1'))).figure3d === false);
+  await page.getByRole('button', { name: 'Back' }).first().click();
+  await page.getByTestId('train-now').waitFor();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('#pref-3d').click();
+  await page.getByRole('button', { name: 'Back' }).first().click();
+  await page.getByTestId('train-now').waitFor();
+  await openSession(page, st.plan.days[1].title);
+  check('switched on again, the 3D figure is back', await until(async () => (await own.first().getAttribute('data-three')) === '1' && (await bright(own.first().locator('canvas'))) > 0.004));
   lastPage = page;
   check('no script errors in the second part of J', errors.length === 0, errors.join(' | '));
   await context.close();

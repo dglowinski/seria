@@ -3,6 +3,11 @@
 //
 // The Anthropic and OpenAI SDKs are left out on purpose. Inside claude.ai the
 // page cannot call an API directly; it uses the viewer's own Claude instead.
+//
+// The exercises in 3D come along inside the page: the parts of three.js they
+// need are bundled into the script, where they wait until a picture is asked
+// for, and the modelled figure (assets/figure.bin) is carried as text in a
+// script of its own, which ui/figure3d.js reads instead of fetching a file.
 import { build } from 'esbuild';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +24,7 @@ const out = await build({
   minify: true,
   legalComments: 'none',
   write: false,
+  define: { 'import.meta.url': '""' }, // nothing is loaded by address in this build
   plugins: [{
     name: 'no-sdk',
     setup(b) {
@@ -30,11 +36,13 @@ const out = await build({
 
 const js = out.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
 const css = read('css/app.css');
+const figure = readFileSync(`${root}assets/figure.bin`).toString('base64');
 const page = `<title>Seria</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
 ${css}</style>
 <div id="app"></div>
+<script>globalThis.SERIA_FIGURE="${figure}";</script>
 <script>
 ${js}</script>
 `;

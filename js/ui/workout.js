@@ -23,7 +23,7 @@ import { Sketch, sketchNote } from './sketch.js';
 import { StepPicker, loadLabel } from './weights.js';
 import { ProgressSteps } from './past.js';
 import { ExercisePicker } from './pick.js';
-import { Motion, motionNote } from './motion.js';
+import { Motion, MotionNote } from './motion.js';
 import { moveFor } from '../domain/moves.js';
 import { describeChange } from '../domain/progression.js';
 import { afterSetSaved, afterWorkout, rememberWeight } from '../ai/coach.js';
@@ -439,7 +439,7 @@ export function Workout() {
         ${how ? html`<${Motion} key=${ex.key} move=${how} name=${ex.name} play=${3} plates=${look?.loading === 'plate_loaded'} />`
           : look && html`<div data-testid="sketch"><${Sketch} medium id=${look.id} loading=${look.loading} /></div>`}
       </div>
-      ${waiting && firstOfExercise && (how || look) && html`<p class="small muted" data-testid="sketch-note">${how ? motionNote({ machine: onMachine, plates: look?.loading === 'plate_loaded' }) : sketchNote(look)}</p>`}
+      ${waiting && firstOfExercise && (how || look) && html`<p class="small muted" data-testid="sketch-note">${how ? html`<${MotionNote} machine=${onMachine} plates=${look?.loading === 'plate_loaded'} />` : sketchNote(look)}</p>`}
 
       ${waiting && !needW && html`
         <div class="metrics">

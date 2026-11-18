@@ -46,6 +46,9 @@ function limb(root, spec, l1, l2, hint) {
 
 // ---------------------------------------------------------------- the two figures
 
+// In the flat drawing nothing has depth. The figure in 3D (moves3d.js) puts real widths here.
+const FLAT = { hand: 0, hand2: 0, foot: 0, sh: 0, knee: 0, hip: 0 };
+
 // Seen from the side, facing right. `rel` places a hand against the body:
 // [how far down the torso from the shoulder, how far in front].
 function sideRig(p) {
@@ -54,7 +57,7 @@ function sideRig(p) {
   const hip = p.hip;
   const sh = add(hip, mul(t, B.torso));
   const front = [-t[1], t[0]];
-  const J = { hip, sh, t, front, head: add(sh, mul(dir(lean + (p.nod || 0)), B.neck)) };
+  const J = { hip, sh, t, front, head: add(sh, mul(dir(lean + (p.nod || 0)), B.neck)), z: FLAT };
   const rel = (r) => add(add(sh, mul(t, -r[0])), mul(front, r[1]));
   const arm = (s) => { const r = limb(sh, s.rel ? { ...s, to: rel(s.rel) } : s, B.upper, B.fore, [-0.3, 1]); return [r.joint, r.end]; };
   const leg = (s) => {
@@ -96,7 +99,7 @@ function frontRig(p) {
   const shR = [cx + B.shoulder, sh[1]]; const shL = [cx - B.shoulder, sh[1]];
   const pelR = [pel[0] + B.pelvis, pel[1]]; const pelL = [pel[0] - B.pelvis, pel[1]];
   const head = p.head || [cx, sh[1] - B.neck];
-  const J = { sh, pel, shR, shL, pelR, pelL, head, cx };
+  const J = { sh, pel, shR, shL, pelR, pelL, head, cx, z: FLAT };
   // `short` is how much of the upper arm shows when it points partly at the viewer, as it does at the top of a pull-up.
   const armOf = (root, s) => {
     if (s.straight) return [mix(root, s.to, 0.5), s.to];
@@ -137,34 +140,57 @@ const rect = (c, w, h, deg = 0) => {
   const k = Math.cos(rad(deg)); const s = Math.sin(rad(deg));
   return [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]].map(([x, y]) => [c[0] + x * k - y * s, c[1] + x * s + y * k]);
 };
-const F = (...l) => ({ k: 'path', c: 'sk-f', l });
-const M = (...l) => ({ k: 'path', c: 'sk-m', l });
-const C = (...l) => ({ k: 'path', c: 'sk-c', l });
-const P = (c, w, h, deg = 0) => ({ k: 'poly', c: 'mv-p', l: [rect(c, w, h, deg)] });
+// Every piece also says what it is in depth (`g`), for the figure in three
+// dimensions (moves3d.js): a tube, a box, a disc. The flat drawing ignores it.
+const tube = (c, m, r) => {
+  const f = (...l) => ({ k: 'path', c, l, g: { t: 'tube', m, r } });
+  /** The same piece on both sides of the body, `w` from the middle. */
+  f.pair = (w, ...l) => { const it = f(...l); it.g.z = [w, -w]; return it; };
+  /** The piece to one side: `z` from the middle, toward the viewer. */
+  f.at = (z, ...l) => { const it = f(...l); it.g.z = [].concat(z); return it; };
+  return f;
+};
+const F = tube('sk-f', 'frame', 1);
+const M = tube('sk-m', 'move', 0.85);
+const C = tube('sk-c', 'cable', 0.26);
+const P = (c, w, h, deg = 0, o = {}) => ({ k: 'poly', c: 'mv-p', l: [rect(c, w, h, deg)], g: { t: 'box', m: 'pad', c, w, h, deg, d: 13, ...o } });
 /** A pad whose long side runs along the angle `a`. */
-const PA = (c, long, thick, a) => P(c, long, thick, a - 90);
-const MP = (c, w, h, deg = 0) => ({ k: 'poly', c: 'sk-mp', l: [rect(c, w, h, deg)] });
-const W = (p, r) => ({ k: 'circle', c: 'sk-w', p, r });
-const D = (p, r = 3.2) => ({ k: 'circle', c: 'sk-mp', p, r });
-const R = (p, r = 3.5) => ({ k: 'circle', c: 'mv-p', p, r });
-/** A dumbbell seen side-on, its handle along the angle `a`. */
-const DB = (p, a) => [M([add(p, mul(dir(a), -3.6)), add(p, mul(dir(a), 3.6))]), D(add(p, mul(dir(a), -3.6)), 2.5), D(add(p, mul(dir(a), 3.6)), 2.5)];
+const PA = (c, long, thick, a, o) => P(c, long, thick, a - 90, o);
+const MP = (c, w, h, deg = 0, o = {}) => ({ k: 'poly', c: 'sk-mp', l: [rect(c, w, h, deg)], g: { t: 'box', m: 'move', c, w, h, deg, d: 8, ...o } });
+const W = (p, r, o = {}) => ({ k: 'circle', c: 'sk-w', p, r, g: { t: 'disc', m: 'weight', th: 1.6, ...o } });
+const D = (p, r = 3.2, o = {}) => ({ k: 'circle', c: 'sk-mp', p, r, g: { t: 'disc', m: 'move', th: 2 * r, ...o } });
+const R = (p, r = 3.5, o = {}) => ({ k: 'circle', c: 'mv-p', p, r, g: { t: 'disc', m: 'pad', th: 15, ...o } });
+/** A dumbbell seen side-on, its handle along the angle `a`. In depth: one dumbbell in the middle, or with `hands` one in each hand. */
+const DB = (p, a, o = {}) => [
+  { ...M([add(p, mul(dir(a), -3.6)), add(p, mul(dir(a), 3.6))]), g: { t: 'db', p, a, ...o } },
+  { ...D(add(p, mul(dir(a), -3.6)), 2.5), g: null }, { ...D(add(p, mul(dir(a), 3.6)), 2.5), g: null },
+];
+/** A dumbbell seen end-on in a hand. In depth: one in each hand (`hands: 'R'` for the near hand only). */
+const dumb = (p, r = 3.6, o = {}) => ({ ...D(p, r), g: { t: 'dumb', r, ...o } });
+/** A straight bar across the body seen end-on: a handle on a cable, a bar to hang from. */
+const cross = (p, half = 10, r = 2.6, o = {}) => ({ ...D(p, r), g: { t: 'bar', half, r: 0.7, m: 'move', ...o } });
 // Set while a picture is worked out for a machine that is loaded with plates instead of a weight stack.
 let platesNow = false;
 /** The weights of a machine: a stack whose top rises as the move is made, or plates on a peg that lift a little. */
-const stack = (x, t, lift = 9, y = 44) => (platesNow ? [
-  F([[x, FLOOR], [x, y + 16]], [[x - 8, FLOOR], [x + 8, FLOOR]]),
-  C([[x - 7, y + 12], [x + 7, y + 12]]),
-  W([x, y + 27 - lift * t * 0.5], 10),
-  D([x, y + 27 - lift * t * 0.5], 2.6),
+const stack = (x, t, lift = 9, y = 44, z = 0) => (platesNow ? [
+  F.at(z, [[x, FLOOR], [x, y + 16]], [[x - 8, FLOOR], [x + 8, FLOOR]]),
+  C.at(z, [[x - 7, y + 12], [x + 7, y + 12]]),
+  W([x, y + 27 - lift * t * 0.5], 10, { z: [z - 3, z + 3], th: 2.2 }),
+  D([x, y + 27 - lift * t * 0.5], 2.6, { z, th: 9, m: 'frame' }),
 ] : [
-  { k: 'poly', c: 'sk-w', l: [rect([x, y + 20], 14, 40)] },
-  C([[x - 7, y + 12], [x + 7, y + 12]], [[x - 7, y + 20], [x + 7, y + 20]], [[x - 7, y + 28], [x + 7, y + 28]]),
-  MP([x, y + 3 - lift * t], 14, 6),
+  { k: 'poly', c: 'sk-w', l: [rect([x, y + 20], 14, 40)], g: { t: 'box', m: 'weight', c: [x, y + 20], w: 9, h: 40, deg: 0, d: 14, z } },
+  { ...C([[x - 7, y + 12], [x + 7, y + 12]], [[x - 7, y + 20], [x + 7, y + 20]], [[x - 7, y + 28], [x + 7, y + 28]]), g: null },
+  MP([x, y + 3 - lift * t], 14, 6, 0, { w: 9.6, d: 14.6, z }),
 ]);
+/** Runs `fn` with machines drawn as loaded with plates (or not), for whoever works out a picture elsewhere. */
+export function withPlates(plates, fn) { platesNow = plates; try { return fn(); } finally { platesNow = false; } }
 /** A barbell seen end-on: the plate behind the body, the bar end in front. */
-const plate = (p, r = 8) => W(p, r);
-const barEnd = (p) => D(p, 2.2);
+const plate = (p, r = 8, o = {}) => ({ ...W(p, r), g: { t: 'plates', r, z: 27, ...o } });
+const barEnd = (p, o = {}) => ({ ...D(p, 2.2), g: { t: 'bar', half: 35, r: 0.62, m: 'steel', ...o } });
+/** Something that only exists in depth: nothing of it shows in the flat drawing. */
+const deep = (g) => ({ k: '3d', g });
+/** A bar across the body at a point of the side view, `half` long to each side. */
+const across = (p, half, r = 1, m = 'frame') => deep({ t: 'bar', p, half, r, m });
 
 // ---------------------------------------------------------------- the moves
 // Each move: view ('side' or 'front'), pose(t) for the figure, gear(J, t) for
@@ -180,6 +206,9 @@ const squatPose = (t, hold) => {
   const lean = lerp(4, 38, t);
   return { hip, lean, nod: lerp(0, -22, t), leg: { to: [62, 83], hint: [1, -0.3] }, arm: hold };
 };
+// Where a bar lies in depth when it is carried on the upper back: behind the shoulder joints, not on them.
+const onBack = (J) => add(add(J.sh, mul(J.front, -5.4)), mul(J.t, 1.2));
+const BACK_HOLD = { rel: [-1.2, -5.4, 15], hint: [-0.5, 1], flare: 0.5 };
 
 const lying = (extra) => ({ hip: [70, 55.5], lean: -90, leg: { to: [91, 83], hint: [1, -1] }, ...extra });
 const flatBench = () => [P([53, 62], 60, 6), F([[30, 84], [30, 65]], [[76, 84], [76, 65]])];
@@ -193,19 +222,54 @@ const seatGear = (lean = -6) => {
 
 const standing = (extra, x = 56) => ({ hip: [x - 1, 44], lean: 1, leg: stand(x), ...extra });
 
+/** A short handle seen from the side as a line `show` long each way; in depth a bar across the body, `half` to each side. */
+const handleBar = (p, show, half) => ({ ...M([add(p, [-show, 0]), add(p, [show, 0])]), g: { t: 'bar', p, half, r: 0.7, m: 'move' } });
+/** A dumbbell seen end-on that is not in a hand: between the feet, on the hips. In depth it lies along the angle `a`, or across the body ('z'). */
+const held = (p, r, a) => ({ ...D(p, r), g: { t: 'db', p, a } });
+/** A board seen edge-on, from `a` to `b`; in depth it is `d` wide. */
+const board = (a, b, d) => ({ ...M([a, b]), g: { t: 'slab', a, b, d, m: 'move' } });
+/** A point of the side view with its depth, for a cable or a lever that runs out to one side. */
+const out = (p, z) => [p[0], p[1], z];
+
+// Hanging from a bar by the hands: the shoulders `drop` below it, the trunk leaning back a little as they come up.
+const BAR_Y = -8;
+const hangPose = (t, arm, drop = [26.6, 8.5]) => {
+  const lean = lerp(2, -9, t); const sh = [58.5 + lerp(0, 3, t), BAR_Y + lerp(drop[0], drop[1], t)];
+  return { hip: sub(sh, mul(dir(lean), 23.8)), lean, nod: lerp(0, -14, t), leg: { a: [lerp(176, 170, t), 246], foot: 215 }, arm: { to: [60, BAR_Y, arm.z], ...arm } };
+};
+const hangGear = () => ({ back: [F.pair(30, [[62, 84], [62, BAR_Y]], [[50, 84], [74, 84]])], front: [across([60, BAR_Y], 31, 0.75, 'move')] });
+
+// Seated upright for a move that is seen from the front.
+const upright = (extra, lean = -3) => ({ hip: [57, 61], lean, leg: { to: [76, 83], hint: [0.3, -1] }, ...extra });
+const stool = (lean = -3) => [P([58, 68], 20, 6, 0, { d: 16 }), PA(add(add([57, 61], mul(dir(lean), 13)), [-5.6, 0.4]), 24, 4, lean, { d: 14 }), F([[58, 84], [58, 71]], [[48, 84], [68, 84]]), across([58, 84], 8)];
+// An arm swung `a` degrees from straight out to the side toward straight ahead, at shoulder height, as on a fly machine.
+const sweep = (a, drop = 0.5, reach = 25) => ({ rel: [drop, -0.6 + reach * Math.sin(rad(a)), 9.4 + reach * Math.cos(rad(a))] });
+
 export const MOVES = {
   // ---------------------------------------------------------------- legs
   squat_bar: {
     pose: (t) => squatPose(t, { rel: [1, -2], hint: [-0.2, 1] }),
     gear: (J) => ({ back: [F([[88, 84], [88, 12]], [[80, 84], [98, 84]], [[88, 24], [83, 24]]), plate(add(J.sh, [-2, 1.5]), 8)], front: [barEnd(add(J.sh, [-2, 1.5]))] }),
+    pose3: (t) => squatPose(t, BACK_HOLD),
+    gear3: (J) => ({ back: [F.pair(27, [[88, 84], [88, 12]], [[80, 84], [98, 84]], [[88, 24], [83, 24]]), across([88, 84], 27), plate(onBack(J), 8)], front: [barEnd(onBack(J))] }),
+    d3: { stance: 17, knees: 0.45, toes: 20 },
   },
   squat_goblet: {
     pose: (t) => squatPose(t, { rel: [6, 7], hint: [0, 1] }),
     gear: (J) => ({ back: [], front: DB(J.hand, angleOf(J.t)) }),
+    pose3: (t) => squatPose(t, { rel: [5, 8.6, 2.7], hint: [0, 1], flare: 0.9, handle: 'y' }),
+    d3: { stance: 17, knees: 0.45, toes: 20 },
   },
   squat_smith: {
     pose: (t) => squatPose(t, { rel: [1, -2], hint: [-0.2, 1] }),
     gear: (J) => ({ back: [F([[70, 84], [70, 8], [92, 8]], [[58, 84], [100, 84]]), C([[63, 10], [63, 82]]), plate([63, J.sh[1] + 1.5], 7)], front: [barEnd([63, J.sh[1] + 1.5])] }),
+    // The bar of this machine runs straight up and down, so in depth the hips travel the way that keeps it on the upper back.
+    pose3: (t) => {
+      const lean = lerp(3, 30, t);
+      return { hip: [58 + 5.4 * Math.cos(rad(lean)) - 25 * Math.sin(rad(lean)), lerp(44, 64.5, t)], lean, nod: lerp(0, -18, t), leg: { to: [62, 83], hint: [1, -0.3] }, arm: BACK_HOLD };
+    },
+    gear3: (J) => ({ back: [F.pair(27, [[68, 84], [68, 8], [90, 8]], [[52, 84], [98, 84]]), across([68, 8], 27), across([98, 84], 27), C.pair(27, [[58, 10], [58, 82]]), plate([58, onBack(J)[1]], 7)], front: [barEnd([58, onBack(J)[1]])] }),
+    d3: { stance: 17, knees: 0.4, toes: 18 },
   },
   leg_press: {
     pose: (t) => {
@@ -215,10 +279,11 @@ export const MOVES = {
     gear: (J) => {
       const c = add(J.ankle, [1.2, -3.2]); const n = [0.584, 0.812];
       return {
-        back: [F([[10, 84], [110, 84]], [[42, 82], [106, 36]], [[106, 84], [106, 36]]), PA([25.8, 66.2], 30, 5.5, -50), P([39, 76.5], 16, 5, -8), W(add(c, [15, -6]), 8)],
-        front: [M([add(c, mul(n, -10)), add(c, mul(n, 9))])],
+        back: [F.pair(15, [[10, 84], [110, 84]], [[42, 82], [106, 36]], [[106, 84], [106, 36]]), across([10, 84], 15), across([110, 84], 15), across([106, 36], 15), PA([25.8, 66.2], 30, 5.5, -50, { d: 15 }), P([39, 76.5], 16, 5, -8, { d: 16 }), W(add(c, [15, -6]), 8, { z: [19, -19], th: 2.6 })],
+        front: [board(add(c, mul(n, -10)), add(c, mul(n, 9)), 30)],
       };
     },
+    d3: { stance: 13, toes: 8, knees: 0.3, grip: 21, handle: 'x' },
   },
   hack_squat: {
     pose: (t) => {
@@ -226,9 +291,10 @@ export const MOVES = {
       return { hip, lean: 50.7, nod: -40, leg: { to: [29, 76], hint: [-0.6, -0.8], foot: -39 }, arm: { rel: [-1, -5], hint: [0.4, 1] } };
     },
     gear: (J) => ({
-      back: [F([[10, 84], [100, 84]], [[35, 81], [93, 34]], [[93, 84], [93, 34]]), P([24.6, 75.8], 20, 5, 50.7), PA(add(mix(J.hip, J.sh, 0.5), [2.9, 3.5]), 26, 5, 50.7), W(add(J.sh, [9, 10]), 7)],
-      front: [MP(add(J.sh, [3.4, -1.2]), 9, 5, -39.3)],
+      back: [F.pair(15, [[10, 84], [100, 84]], [[35, 81], [93, 34]], [[93, 84], [93, 34]]), across([10, 84], 15), across([100, 84], 15), across([93, 34], 15), P([24.6, 75.8], 20, 5, 50.7, { d: 28 }), PA(add(mix(J.hip, J.sh, 0.5), [2.9, 3.5]), 26, 5, 50.7, { d: 15 }), W(add(J.sh, [9, 10]), 7, { z: [19, -19], th: 2.6 })],
+      front: [MP(add(J.sh, [3.4, -1.2]), 9, 5, -39.3, { z: [J.z.sh, -J.z.sh], d: 6 })],
     }),
+    d3: { stance: 13, toes: 10, knees: 0.3, grip: 27, handle: 'x' },
   },
   split_squat: {
     pose: (t) => ({
@@ -236,7 +302,8 @@ export const MOVES = {
       leg: { to: [68, 83], hint: [1, -0.3] }, leg2: { to: [31, 57], hint: [0, 1], foot: 250 },
       arm: { a: [178, 180] },
     }),
-    gear: (J) => ({ back: [P([24, 62], 22, 6), F([[17, 84], [17, 65]], [[31, 84], [31, 65]])], front: [D(J.hand)] }),
+    gear: (J) => ({ back: [P([24, 62], 22, 6, 0, { d: 32 }), F.pair(12, [[17, 84], [17, 65]], [[31, 84], [31, 65]])], front: [dumb(J.hand, 3.2)] }),
+    d3: { handle: 'x', grip: 25 },
   },
   lunge_back: {
     pose: (t) => ({
@@ -245,7 +312,8 @@ export const MOVES = {
       leg2: { to: [lerp(56, 28, t), lerp(83, 80, t) - 7 * Math.sin(Math.PI * t)], hint: [0.6, 1], toeBy: [lerp(6, 3.4, t), lerp(1, 4, t)] },
       arm: { a: [178, 180] },
     }),
-    gear: (J) => ({ back: [], front: [D(J.hand)] }),
+    gear: (J) => ({ back: [], front: [dumb(J.hand, 3.2)] }),
+    d3: { handle: 'x', grip: 25 },
   },
   step_up: {
     fit: [0.8, 0, 0],
@@ -255,59 +323,78 @@ export const MOVES = {
       leg2: { to: [lerp(46, 64, t), lerp(83, 69, t) - 5 * Math.sin(Math.PI * t)], hint: [1, -0.2] },
       arm: { a: [178, 180] },
     }),
-    gear: (J) => ({ back: [P([78, 77], 34, 14)], front: [D(J.hand)] }),
+    gear: (J) => ({ back: [P([78, 77], 34, 14, 0, { d: 26 })], front: [dumb(J.hand, 3.2)] }),
+    d3: { handle: 'x', grip: 25 },
   },
   leg_extension: {
     pose: (t) => ({ hip: [40, 53], lean: -15, leg: { a: [88, lerp(188, 97, t)] }, arm: { to: [45, 60], hint: [-1, 0.2] } }),
     gear: (J, t) => {
       const shin = unit(sub(J.ankle, J.knee)); const roll = add(add(J.ankle, mul(shin, -3)), mul(dir(angleOf(shin) - 90), 4.2));
       return {
-        back: [F([[34, 84], [34, 62]], [[58, 84], [58, 62]], [[26, 84], [72, 84]]), P([47, 59.5], 30, 6), PA([33.3, 41.2], 26, 5, -15), ...stack(100, t)],
-        front: [M([[59.5, 57.5], roll]), D(roll, 3.6)],
+        back: [F.pair(7, [[34, 84], [34, 62]], [[58, 84], [58, 62]], [[26, 84], [72, 84]]), P([47, 59.5], 30, 6, 0, { d: 17 }), PA([33.3, 41.2], 26, 5, -15, { d: 15 }), ...stack(100, t, 9, 44, -22)],
+        front: [M.at(9.5, [[59.5, 57.5], roll]), D(roll, 3.6, { th: 19 })],
       };
     },
+    d3: { grip: 22, handle: 'x' },
   },
   leg_extension_db: {
     pose: (t) => ({ hip: [40, 56], lean: -4, leg: { a: [88, lerp(186, 99, t)] }, arm: { to: [36, 61], hint: [-1, 0.2] } }),
-    gear: (J) => ({ back: [P([38, 63], 46, 6), F([[20, 84], [20, 66]], [[54, 84], [54, 66]])], front: [D(add(J.ankle, mul(sub(J.toe, J.ankle), 0.35)), 3.6)] }),
+    gear: (J) => ({ back: [P([38, 63], 46, 6), F([[20, 84], [20, 66]], [[54, 84], [54, 66]])], front: [held(add(J.ankle, mul(sub(J.toe, J.ankle), 0.35)), 3.6, angleOf(sub(J.ankle, J.knee)))] }),
+    d3: { grip: 16, handle: 'z', stance: 7 },
   },
   leg_curl: {
     pose: (t) => ({ hip: [62, 46.5], lean: -90, nod: 16, leg: { a: [91, lerp(93, -14, t)], prone: true }, arm: { to: [42, 58], hint: [0.4, 1] } }),
     gear: (J, t) => {
       const shin = angleOf(sub(J.ankle, J.knee)); const roll = add(add(J.ankle, mul(dir(shin), -2)), mul(dir(shin - 90), 4.2));
       return {
-        back: [F([[30, 84], [30, 58]], [[70, 84], [70, 58]], [[22, 84], [78, 84]]), P([51, 54], 56, 7), ...stack(11, t)],
-        front: [M([[80, 52], roll]), D(roll, 3.6)],
+        back: [F.pair(7, [[30, 84], [30, 58]], [[70, 84], [70, 58]], [[22, 84], [78, 84]]), P([51, 54], 56, 7, 0, { d: 17 }), ...stack(11, t, 9, 44, -22)],
+        front: [M.at(9.5, [[80, 52], roll]), D(roll, 3.6, { th: 19 })],
       };
     },
+    // A stick figure has no front. The modelled one does, and lies face down: head to the right, the picture turned around.
+    pose3: (t) => ({ hip: [58, 46.5], lean: 90, nod: -18, leg: { a: [-91, lerp(-93, 14, t)] }, arm: { to: [78, 58], hint: [-0.4, 1] } }),
+    gear3: (J, t) => {
+      const shin = angleOf(sub(J.ankle, J.knee)); const roll = add(add(J.ankle, mul(dir(shin), -2)), mul(dir(shin + 90), 4.2));
+      return {
+        back: [F.pair(7, [[90, 84], [90, 58]], [[50, 84], [50, 58]], [[42, 84], [98, 84]]), P([69, 54], 56, 7, 0, { d: 17 }), ...stack(109, t, 9, 44, -22)],
+        front: [M.at(9.5, [[40, 52], roll]), D(roll, 3.6, { th: 19 })],
+      };
+    },
+    d3: { grip: 22, handle: 'x' },
   },
   leg_curl_db: {
     pose: (t) => ({ hip: [62, 55], lean: -90, nod: 16, leg: { a: [91, lerp(93, -10, t)], prone: true }, arm: { to: [42, 66], hint: [0.4, 1] } }),
-    gear: (J) => ({ back: [P([51, 62], 56, 6), F([[30, 84], [30, 65]], [[72, 84], [72, 65]])], front: [D(add(J.ankle, mul(sub(J.toe, J.ankle), 0.3)), 3.6)] }),
+    gear: (J) => ({ back: [P([51, 62], 56, 6), F([[30, 84], [30, 65]], [[72, 84], [72, 65]])], front: [held(add(J.ankle, mul(sub(J.toe, J.ankle), 0.3)), 3.6, angleOf(sub(J.ankle, J.knee)))] }),
+    pose3: (t) => ({ hip: [58, 55], lean: 90, nod: -18, leg: { a: [-91, lerp(-93, 10, t)] }, arm: { to: [78, 66], hint: [-0.4, 1] } }),
+    gear3: (J) => ({ back: [P([69, 62], 56, 6), F([[90, 84], [90, 65]], [[48, 84], [48, 65]])], front: [held(add(J.ankle, mul(sub(J.toe, J.ankle), 0.3)), 3.6, angleOf(sub(J.ankle, J.knee)))] }),
+    d3: { grip: 16, handle: 'x', stance: 7 },
   },
   leg_curl_seated: {
     pose: (t) => ({ hip: [40, 53], lean: -15, leg: { a: [88, lerp(100, 200, t)] }, arm: { to: [45, 60], hint: [-1, 0.2] } }),
     gear: (J, t) => {
       const shin = unit(sub(J.ankle, J.knee)); const roll = add(add(J.ankle, mul(shin, -3)), mul(dir(angleOf(shin) + 90), 4.2));
       return {
-        back: [F([[34, 84], [34, 62]], [[58, 84], [58, 62]], [[26, 84], [72, 84]]), P([47, 59.5], 30, 6), PA([33.3, 41.2], 26, 5, -15), ...stack(100, t)],
-        front: [R([56, 46], 3.4), M([[59.5, 57.5], roll]), D(roll, 3.6)],
+        back: [F.pair(7, [[34, 84], [34, 62]], [[58, 84], [58, 62]], [[26, 84], [72, 84]]), P([47, 59.5], 30, 6, 0, { d: 17 }), PA([33.3, 41.2], 26, 5, -15, { d: 15 }), ...stack(100, t, 9, 44, -22)],
+        front: [R([56, 46], 3.4, { th: 19 }), M.at(9.5, [[59.5, 57.5], roll]), D(roll, 3.6, { th: 19 })],
       };
     },
+    d3: { grip: 22, handle: 'x' },
   },
   leg_curl_cable: {
     pose: (t) => ({
       hip: [55, 44], lean: 6, leg: { a: [lerp(180, 176, t), lerp(182, 292, t)] }, leg2: stand(57),
       arm: { to: [80, 34], hint: [0, 1] },
     }),
-    gear: (J, t) => ({ back: [F([[86, 84], [86, 12]], [[76, 84], [104, 84]]), ...stack(97, t, 7), W([84, 79], 3)], front: [C([J.ankle, [84, 79]]), D(J.ankle, 2.6)] }),
+    gear: (J, t) => ({ back: [F([[86, 84], [86, 12]], [[76, 84], [104, 84]]), ...stack(97, t, 7), W([84, 79], 3, { z: J.z.foot })], front: [C.at(J.z.foot, [J.ankle, [84, 79]]), D(J.ankle, 2.6, { z: J.z.foot, th: 4.4 })] }),
+    d3: { grip: 9, handle: 'y' },
   },
   nordic: {
     pose: (t) => {
       const a = lerp(2, 52, t); const hip = add([52, 81], mul(dir(a), B.thigh));
       return { hip, lean: a + lerp(0, 6, t), leg: { to: [32.5, 81], hint: [1, 1], foot: 262 }, arm: { rel: [3, 8], hint: [0, 1] } };
     },
-    gear: () => ({ back: [F([[22, 84], [22, 70], [36, 70]])], front: [R([32, 75.5], 3.2)] }),
+    gear: () => ({ back: [F.pair(10, [[22, 84], [22, 70], [36, 70]])], front: [R([32, 75.5], 3.2, { th: 21 })] }),
+    d3: { grip: 13, shut: 0.2, flare: 0.6 },
   },
   calf_machine: {
     fit: [0.9, 0, 0],
@@ -316,9 +403,10 @@ export const MOVES = {
       return { hip: add(ankle, [-1, -39]), lean: 1, leg: { to: ankle, toe }, arm: { rel: [-2, 5], hint: [0.3, 1] } };
     },
     gear: (J, t) => ({
-      back: [F([[30, 84], [30, 10]], [[20, 84], [86, 84]]), ...stack(18, t, 5, 42), P([63, 82], 16, 4)],
-      front: [M([[30, 20], add(J.sh, [3, -3.4])]), MP(add(J.sh, [1, -3.2]), 12, 4.5)],
+      back: [F([[30, 84], [30, 10]], [[20, 84], [86, 84]]), ...stack(18, t, 5, 42), P([63, 82], 16, 4, 0, { d: 26 })],
+      front: [M.pair(J.z.sh, [[30, 20], add(J.sh, [3, -3.4])]), MP(add(J.sh, [1, -3.2]), 12, 4.5, 0, { z: [J.z.sh, -J.z.sh], d: 6 })],
     }),
+    d3: { grip: 25, stance: 8, handle: 'x' },
   },
   calf_db: {
     fit: [0.9, 0, 0],
@@ -326,25 +414,33 @@ export const MOVES = {
       const a = lerp(6, 50, t); const toe = [62, 80]; const ankle = add(toe, [-6.5 * Math.cos(rad(a)), -6.5 * Math.sin(rad(a))]);
       return { hip: add(ankle, [-1, -39]), lean: 1, leg: { to: ankle, toe }, arm: { a: [179, 180] } };
     },
-    gear: (J) => ({ back: [P([63, 82], 16, 4)], front: [D(J.hand)] }),
+    gear: (J) => ({ back: [P([63, 82], 16, 4, 0, { d: 26 })], front: [dumb(J.hand, 3.2)] }),
+    d3: { handle: 'x', grip: 25, stance: 8 },
   },
 
   // ---------------------------------------------------------------- hinge and glutes
   deadlift: {
     pose: (t) => ({ hip: mix([46, 57], [57, 44], t), lean: lerp(60, 2, t), nod: lerp(-30, 0, t), leg: { to: [58, 83], hint: [1, -0.3] }, arm: { to: mix([64.5, 72], [61.5, 48.5], t), hint: [-1, 0] } }),
     gear: (J) => ({ back: [plate(J.hand, 10.5)], front: [barEnd(J.hand)] }),
+    d3: { grip: 22, stance: 11, toes: 12, knees: 0.25, flare: 0 },
+    still: 0.2,
   },
   rdl_bar: {
     pose: (t) => ({ hip: mix([49, 46], [57, 44], t), lean: lerp(70, 2, t), nod: lerp(-30, 0, t), leg: { to: [58, 83], hint: [1, -0.3] }, arm: { to: mix([65.5, 64], [61.5, 48.5], t), hint: [-1, 0] } }),
     gear: (J) => ({ back: [plate(J.hand, 8)], front: [barEnd(J.hand)] }),
+    d3: { grip: 22, stance: 9, toes: 8, flare: 0 },
+    still: 0.25,
   },
   rdl_db: {
     pose: (t) => ({ hip: mix([49, 46], [57, 44], t), lean: lerp(70, 2, t), nod: lerp(-30, 0, t), leg: { to: [58, 83], hint: [1, -0.3] }, arm: { to: mix([66, 64], [60, 48.5], t), hint: [-1, 0] } }),
-    gear: (J) => ({ back: [], front: [D(J.hand, 3.6)] }),
+    gear: (J) => ({ back: [], front: [dumb(J.hand, 3.6)] }),
+    d3: { grip: 16, stance: 9, toes: 8, flare: 0 },
+    still: 0.25,
   },
   back_extension: {
     pose: (t) => ({ hip: [62, 49], lean: lerp(128, 46, t), nod: -10, leg: { to: [34, 76], hint: [1, 1], foot: 135 }, arm: { rel: [5, 5], hint: [-1, 1] } }),
-    gear: () => ({ back: [F([[24, 84], [100, 84]], [[40, 84], [68, 56]], [[68, 84], [68, 56]], [[28, 84], [34, 72]]), PA([63.5, 54.5], 16, 6, 46)], front: [R([38, 71], 3.4)] }),
+    gear: () => ({ back: [F.pair(8, [[24, 84], [100, 84]], [[40, 84], [68, 56]], [[68, 84], [68, 56]], [[28, 84], [34, 72]]), across([24, 84], 8), across([100, 84], 8), PA([63.5, 54.5], 16, 6, 46, { d: 20 })], front: [R([38, 71], 3.4, { th: 20 })] }),
+    d3: { grip: 5, shut: 0.4, stance: 9, flare: 0.8 },
   },
   hip_thrust: {
     pose: (t) => {
@@ -352,61 +448,87 @@ export const MOVES = {
       return { hip, lean, nod: lerp(40, 80, t), leg: { to: [84, 83], hint: [0.6, -1] }, arm: { to: add(hip, [-1, -4]), hint: [-0.2, -1] } };
     },
     gear: (J) => ({ back: [P([31, 60.5], 16, 6), F([[26, 84], [26, 64]], [[36, 84], [36, 64]]), plate(add(J.hip, [1.5, -3.5]), 8.5)], front: [barEnd(add(J.hip, [1.5, -3.5]))] }),
+    // In depth the bar lies in the crease of the hips, on top of the body, and the hands hold it there.
+    pose3: (t) => {
+      const lean = lerp(-46, -86, t); const hip = sub([36.5, 51], mul(dir(lean), 23.8));
+      return { hip, lean, nod: lerp(40, 80, t), leg: { to: [84, 83], hint: [0.6, -1] }, arm: { to: add(hip, [2.5, -6.2]), hint: [-0.2, -1], z: 12 } };
+    },
+    gear3: (J) => ({ back: [P([29, 60.5], 16, 6, 0, { d: 46 }), F.pair(19, [[24, 84], [24, 64]], [[34, 84], [34, 64]]), plate(add(J.hip, [2.5, -6.2]), 8.5)], front: [barEnd(add(J.hip, [2.5, -6.2]))] }),
+    d3: { stance: 14, knees: 0.25, flare: 1.2 },
   },
   glute_bridge: {
     pose: (t) => {
       const lean = lerp(-90, -116, t); const hip = sub([30, 80.5], mul(dir(lean), B.torso));
       return { hip, lean, nod: -(lean + 90), leg: { to: [74, 83], hint: [0.4, -1] }, arm: { to: add(hip, [-2, -5]), hint: [-0.2, -1] } };
     },
-    gear: (J) => ({ back: [], front: [D(add(J.hip, [0, -5.5]), 3.8)] }),
+    gear: (J) => ({ back: [], front: [held(add(J.hip, [0, -5.5]), 3.8, 'z')] }),
+    pose3: (t) => {
+      const lean = lerp(-90, -114, t); const hip = sub([30, 79], mul(dir(lean), 23.8));
+      return { hip, lean, nod: -(lean + 90) * 0.6, leg: { to: [74, 83], hint: [0.4, -1] }, arm: { to: add(hip, [1, -6.2]), hint: [-0.2, -1], z: 7.5 } };
+    },
+    gear3: (J) => ({ back: [], front: [held(add(J.hip, [1, -6.2]), 3.8, 'z')] }),
+    d3: { stance: 12, flare: 1.2, handle: 'x' },
   },
   kickback: {
     pose: (t) => ({ hip: [50, 44.5], lean: 34, leg: { a: [lerp(174, 232, t), lerp(180, 226, t)], foot: lerp(95, 150, t) }, leg2: stand(53), arm: { to: [76, 44], hint: [0, 1] } }),
-    gear: (J, t) => ({ back: [F([[84, 84], [84, 14]], [[74, 84], [102, 84]], [[84, 44], [74, 44]]), ...stack(96, t, 7), W([82, 79], 3)], front: [C([J.ankle, [82, 79]]), D(J.ankle, 2.6)] }),
+    gear: (J, t) => ({ back: [F([[84, 84], [84, 14]], [[74, 84], [102, 84]], [[84, 44], [74, 44]]), ...stack(96, t, 7), W([82, 79], 3, { z: J.z.foot })], front: [C.at(J.z.foot, [J.ankle, [82, 79]]), D(J.ankle, 2.6, { z: J.z.foot, th: 4.4 })] }),
+    d3: { grip: 9, handle: 'y' },
   },
   abduction: {
     view: 'front',
     pose: (t) => { const k = lerp(4, 17, t); return { sh: [60, 38], pel: [60, 61], legs: { knee: [k, 5], foot: [k + 1.5, 21] }, arm: { to: [72, 62], hint: [1, 0.3] } }; },
     gear: (J) => ({ back: [P([60, 67], 30, 5), F([[60, 84], [60, 70]], [[44, 84], [76, 84]])], front: [MP(add(J.kneeR, [3.4, 1]), 4, 10), MP(add(J.kneeL, [-3.4, 1]), 4, 10)] }),
+    pose3: (t) => { const o = lerp(7, 36, t); return upright({ leg: { a: [87, 177], out: [o, o * 0.2] }, arm: { to: [56, 66, 11], hint: [-1, 0.3], handle: 'x' } }, -8); },
+    gear3: (J) => ({ back: [...stool(-8), F([[58, 71], [80, 76], [80, 84]])], front: [MP(add(J.knee, [-2.5, 0]), 9, 8, 0, { z: [J.z.knee + 3.6, -J.z.knee - 3.6], d: 2.4 }), M([out([70, 74], 0), out(add(J.knee, [-2.5, 2]), J.z.knee + 3.6)], [out([70, 74], 0), out(add(J.knee, [-2.5, 2]), -J.z.knee - 3.6)])] }),
   },
 
   // ---------------------------------------------------------------- pressing
   bench_bar: {
     pose: (t) => lying({ arm: { to: mix([52, 49.5], [49, 29], t), hint: [0.7, 1] } }),
-    gear: (J) => ({ back: [...flatBench(), F([[40, 84], [40, 26]], [[40, 30], [44, 30]]), plate(J.hand, 8)], front: [barEnd(J.hand)] }),
+    gear: (J) => ({ back: [...flatBench(), F.pair(24, [[40, 84], [40, 26]], [[40, 30], [44, 30]]), plate(J.hand, 8)], front: [barEnd(J.hand)] }),
+    d3: { grip: 30, flare: 1, stack: 1.04, stance: 24, knees: 0.5, toes: 15 },
   },
   bench_db: {
     pose: (t) => lying({ arm: { to: mix([53, 49], [49, 29], t), hint: [0.7, 1] } }),
-    gear: (J) => ({ back: flatBench(), front: [D(J.hand, 3.8)] }),
+    gear: (J) => ({ back: flatBench(), front: [dumb(J.hand, 3.8)] }),
+    d3: (t) => ({ grip: lerp(30, 15, t), flare: 1, stack: lerp(1.02, 1.25, t), stance: 24, knees: 0.5, toes: 15 }),
   },
   bench_smith: {
     pose: (t) => lying({ arm: { to: mix([51, 49.5], [51, 29.2], t), hint: [0.7, 1] } }),
-    gear: (J) => ({ back: [...flatBench(), F([[36, 84], [36, 8], [66, 8]]), C([[51, 10], [51, 82]]), plate(J.hand, 7)], front: [barEnd(J.hand)] }),
+    gear: (J) => ({ back: [...flatBench(), F.pair(27, [[36, 84], [36, 8], [66, 8]]), C.pair(27, [[51, 10], [51, 82]]), plate(J.hand, 7)], front: [barEnd(J.hand)] }),
+    d3: { grip: 30, flare: 1, stack: 1.04, stance: 24, knees: 0.5, toes: 15 },
   },
   bench_incline: {
     pose: (t) => ({ hip: [70, 64], lean: -50, nod: 20, leg: { to: [89, 83], hint: [1, -1] }, arm: { to: mix([57, 43.5], [53, 22.8], t), hint: [0.6, 1] } }),
-    gear: (J) => ({ back: [PA([58.6, 59.8], 30, 5.5, -50), P([75, 69.5], 16, 5), F([[52, 84], [58, 64]], [[78, 84], [78, 72]], [[46, 84], [84, 84]])], front: [D(J.hand, 3.8)] }),
+    gear: (J) => ({ back: [PA([58.6, 59.8], 30, 5.5, -50), P([75, 69.5], 16, 5), F([[52, 84], [58, 64]], [[78, 84], [78, 72]], [[46, 84], [84, 84]])], front: [dumb(J.hand, 3.8)] }),
+    d3: (t) => ({ grip: lerp(30, 16, t), flare: 1, stack: lerp(1.02, 1.25, t), stance: 22, knees: 0.4, toes: 12 }),
   },
   chest_press: {
     pose: (t) => seated({ arm: { to: add([62, 7], mul(dir(lerp(176.7, 147, t)), 35)), hint: [-0.3, 1] } }),
     gear: (J, t) => ({
       back: [...seatGear(), F([[40, 7], [62, 7]]), ...stack(22, t)],
-      front: [M([[62, 7], add(J.hand, [0.5, -2])], [add(J.hand, [0.5, -4]), add(J.hand, [0.5, 4])])],
+      front: [M.pair(J.z.hand, [[62, 7], add(J.hand, [0.5, -2])], [add(J.hand, [0.5, -4]), add(J.hand, [0.5, 4])])],
     }),
+    d3: { grip: 25, flare: 1.0, stack: 1.05, handle: 'y', stance: 14 },
   },
   shoulder_machine: {
     pose: (t) => seated({ arm: { to: add([40, 27], mul(dir(lerp(106, 42, t)), 21.8)), hint: [0.3, 1] } }),
-    gear: (J, t) => ({ back: [...seatGear(), ...stack(22, t), M([[40, 27], J.hand])], front: [M([add(J.hand, [-3.5, 0]), add(J.hand, [3.5, 0])])] }),
+    gear: (J, t) => ({ back: [...seatGear(), ...stack(22, t), M.pair(J.z.hand, [[40, 27], J.hand])], front: [M.pair(J.z.hand, [add(J.hand, [-3.5, 0]), add(J.hand, [3.5, 0])])] }),
+    d3: { grip: 33, flare: 2.2, handle: 'x', stance: 14 },
   },
   ohp: {
     fit: [0.84, 0, 0],
     pose: (t) => standing({ lean: lerp(-2, 0, t), arm: { to: mix([60, 24], [56.5, -5.6], t), hint: [0.5, 1] } }),
     gear: (J) => ({ back: [plate(J.hand, 7)], front: [barEnd(J.hand)] }),
+    d3: { grip: 25, flare: 0.8, stack: 1.03, stance: 12, toes: 8 },
   },
   db_press: {
     view: 'front',
     pose: (t) => ({ sh: [60, 39], pel: [60, 62], legs: 'seat', arm: { to: mix([77, 35], [71, 12.6], t), hint: [1, 1] } }),
     gear: (J) => ({ back: [P([60, 68], 24, 5), F([[52, 84], [52, 71]], [[68, 84], [68, 71]])], front: [...DB(J.handR, 90), ...DB(J.handL, 90)] }),
+    pose3: (t) => upright({ arm: { to: [58.5, lerp(33, 9.6, t), lerp(18, 12, t * t)], hint: [0.15, 1], flare: 3 } }),
+    gear3: (J) => ({ back: stool(), front: [dumb(J.hand, 3.6)] }),
+    d3: { stance: 15 },
   },
   pushup: {
     pose: (t) => {
@@ -416,48 +538,68 @@ export const MOVES = {
       return { hip, lean: angleOf(sub(sh, hip)), nod: -24, leg: { a: [a, a], toe: [13.5, 84] }, arm: { to: [74, 83.2], hint: [-1, -0.5] } };
     },
     gear: () => ({ back: [], front: [] }),
+    // In depth the body is as long as the figure's own bones make it, and the hands lie flat.
+    pose3: (t) => {
+      const sh = mix([71, 58.5], [75, 75.5], t); const toe = [13.5, 83];
+      const u = unit(sub(sh, toe)); const hip = add(toe, mul(u, 41.5));
+      const a = angleOf(mul(u, -1));
+      return { hip, lean: angleOf(sub(sh, hip)), nod: -24, leg: { a: [a, a], foot: a + 82 }, arm: { to: [73, 83.2], hint: [-1, -0.5] } };
+    },
+    d3: { grip: 25, flare: 0.8, stack: 1.12, stance: 5, shut: 0, wrist: 82 },
+    still: 0.45,
   },
   dips: {
     pose: (t) => {
       const sh = mix([57, 18], [61, 33.5], t); const lean = lerp(10, 24, t);
       return { hip: sub(sh, mul(dir(lean), B.torso)), lean, nod: -lean, leg: { a: [lerp(176, 172, t), 250], foot: 215 }, arm: { to: [58, 44.4], hint: [-1, 0.1] } };
     },
-    gear: () => ({ back: [F([[76, 84], [76, 44]], [[64, 84], [92, 84]])], front: [M([[44, 44.4], [78, 44.4]])] }),
+    gear: () => ({ back: [F.pair(11.5, [[76, 84], [76, 44]], [[64, 84], [92, 84]])], front: [M.pair(11.5, [[44, 44.4], [78, 44.4]])] }),
+    d3: { grip: 23, flare: 0.1, handle: 'x', stance: 6 },
   },
 
   // ---------------------------------------------------------------- pulling
   row_bar: {
     pose: (t) => ({ hip: [46, 50], lean: 62, nod: -30, leg: { to: [56, 83], hint: [1, -0.3] }, arm: { to: mix([66, 64], [57.5, 52], t), hint: [-1, -0.5] } }),
     gear: (J) => ({ back: [plate(J.hand, 8)], front: [barEnd(J.hand)] }),
+    d3: { grip: 24, flare: 0.5, stack: 1.08, stance: 11, toes: 8 },
   },
   row_db: {
     pose: (t) => ({
       hip: [46, 50], lean: 70, nod: -34, leg: { to: [52, 83], hint: [1, -0.3] }, leg2: { to: [40, 83], hint: [1, -0.3] },
-      arm: { to: mix([68, 66.5], [60, 51], t), hint: [-1, -0.5] }, arm2: { to: [77, 58.5], hint: [-1, -0.6] },
+      arm: { to: mix([68, 66.5], [60, 51], t), hint: [-1, -0.5], z: 11.5, handle: 'x', flare: 0.2 }, arm2: { to: [77, 58.5], hint: [-1, -0.6], z: 7, shut: 0.1, wrist: 70 },
     }),
-    gear: (J) => ({ back: [P([86, 62], 32, 6), F([[74, 84], [74, 65]], [[98, 84], [98, 65]])], front: [D(J.hand, 3.8)] }),
+    gear: (J) => ({ back: [P([86, 62], 32, 6, 0, { z: -6.5 }), F.at(-6.5, [[74, 84], [74, 65]], [[98, 84], [98, 65]])], front: [dumb(J.hand, 3.8, { hands: 'R' })] }),
+    d3: { stance: 10 },
   },
   row_seated: {
     flip: true,
     pose: (t) => ({ hip: [38, 59], lean: lerp(12, -6, t), leg: { to: [72, 68], hint: [0, -1], foot: 20 }, arm: { to: mix([68.5, 45], [46, 47], t), hint: [-1, 0.2] } }),
     gear: (J, t) => ({
-      back: [F([[10, 84], [112, 84]], [[92, 84], [92, 26]], [[38, 84], [38, 69]], [[74, 84], [76, 60]]), P([37, 66], 24, 6), P([76.5, 68], 5, 18, 14), ...stack(104, t, 8), W([90, 46], 3.4)],
-      front: [C([J.hand, [90, 46]]), M([add(J.hand, [0, -3.6]), add(J.hand, [0, 3.6])])],
+      back: [F([[10, 84], [112, 84]], [[92, 84], [92, 26]], [[38, 84], [38, 69]], [[74, 84], [76, 60]]), P([37, 66], 24, 6), P([76.5, 68], 5, 18, 14, { d: 28 }), ...stack(104, t, 8), W([90, 46], 3.4)],
+      front: [C([J.hand, [90, 46]]), M.pair(J.z.hand, [add(J.hand, [0, -3.6]), add(J.hand, [0, 3.6])])],
     }),
+    d3: { grip: 6.6, flare: 0.35, handle: 'y', stance: 10 },
   },
   row_chest: {
     pose: (t) => ({ hip: [44, 62], lean: 50, nod: -20, leg: { to: [24, 81], hint: [0.3, 1], toe: [20.5, 84] }, arm: { to: mix([62.5, 72], [56.5, 58.5], t), hint: [-1, -1] } }),
-    gear: (J) => ({ back: [PA([55.6, 58], 30, 5.5, 50), F([[66, 84], [61, 55]], [[40, 84], [47, 68]], [[34, 84], [74, 84]])], front: [D(J.hand, 3.8)] }),
+    gear: (J) => ({ back: [PA([55.6, 58], 30, 5.5, 50, { d: 12 }), F.pair(7, [[66, 84], [61, 55]], [[40, 84], [47, 68]], [[34, 84], [74, 84]])], front: [dumb(J.hand, 3.8)] }),
+    // The figure's legs are a little shorter than the drawing's, so in depth the feet are set further back to keep the legs long.
+    pose3: (t) => ({ hip: [44, 62], lean: 50, nod: -20, leg: { to: [16.5, 80.5], hint: [0.3, 1], toe: [13, 84] }, arm: { to: mix([62.5, 72], [56.5, 58.5], t), hint: [-1, -1] } }),
+    d3: { grip: 24, flare: 0.5, handle: 'x', stance: 12 },
   },
   pullup: {
     view: 'front',
     pose: (t) => ({ sh: [60, lerp(36, 18, t)], legs: 'hang', arm: { to: [78, 10.5], hint: [1, 1], short: lerp(1, 0.62, t) } }),
     gear: () => ({ back: [F([[28, 84], [28, 10]], [[92, 84], [92, 10]])], front: [M([[24, 10.5], [96, 10.5]])] }),
+    pose3: (t) => hangPose(t, { z: 17, hint: [-0.15, 1], flare: 3 }),
+    gear3: hangGear,
   },
   chinup: {
     view: 'front',
     pose: (t) => ({ sh: [60, lerp(37, 18, t)], legs: 'hang', arm: { to: [69.5, 10.5], hint: [1, 1], short: lerp(1, 0.5, t) } }),
     gear: () => ({ back: [F([[28, 84], [28, 10]], [[92, 84], [92, 10]])], front: [M([[24, 10.5], [96, 10.5]])] }),
+    pose3: (t) => hangPose(t, { z: 8, hint: [0.6, 1], flare: 0.25, grip: 'under' }),
+    gear3: hangGear,
   },
   pulldown: {
     view: 'front',
@@ -466,43 +608,60 @@ export const MOVES = {
       back: [F([[40, 6], [80, 6]], [[60, 84], [60, 75]]), P([60, 72], 24, 5), W([60, 8], 3), C([[60, 11], [60, J.handR[1]]])],
       front: [M([[33, J.handR[1]], [87, J.handR[1]]])],
     }),
+    pose3: (t) => upright({ arm: { to: [59, lerp(12, 34.5, t), 19.5], hint: [-0.1, 1], flare: 3 } }, lerp(-3, -14, t)),
+    gear3: (J, t) => ({
+      back: [P([58, 68], 20, 6, 0, { d: 16 }), F([[58, 84], [58, 71]], [[44, 84], [100, 84]], [[90, 84], [90, 2], [59, 2]]), R([67, 55], 3, { th: 24 }), F([[67, 55], [90, 55]]), W([59, 4.5], 3), ...stack(98, t, 9, 40)],
+      front: [C([[59, 7], [59, J.hand[1]]]), across([59, J.hand[1]], 25, 0.75, 'move')],
+    }),
+    d3: { stance: 14 },
   },
 
   // ---------------------------------------------------------------- arms
   curl_db: {
     pose: (t) => standing({ arm: { a: [176, lerp(172, 16, t)] } }),
-    gear: (J) => ({ back: [], front: [D(J.hand, 3.8)] }),
+    gear: (J) => ({ back: [], front: [dumb(J.hand, 3.8)] }),
+    pose3: (t) => standing({ arm: { a: [174, lerp(168, 14, t)] } }),
+    d3: { hold: 'under', grip: 26 },
   },
   curl_bar: {
     pose: (t) => standing({ arm: { a: [176, lerp(172, 16, t)] } }),
-    gear: (J) => ({ back: [plate(J.hand, 6.5)], front: [barEnd(J.hand)] }),
+    gear: (J) => ({ back: [plate(J.hand, 6.5, { z: 19 })], front: [barEnd(J.hand, { half: 24 })] }),
+    pose3: (t) => standing({ arm: { a: [170, lerp(164, 16, t)] } }),
+    d3: { hold: 'under', grip: 21 },
   },
   curl_hammer: {
     pose: (t) => standing({ arm: { a: [176, lerp(172, 16, t)] } }),
-    gear: (J) => ({ back: [], front: DB(J.hand, angleOf(sub(J.hand, J.elbow)) + 90) }),
+    gear: (J) => ({ back: [], front: DB(J.hand, angleOf(sub(J.hand, J.elbow)) + 90, { hands: true }) }),
+    pose3: (t) => standing({ arm: { a: [174, lerp(168, 14, t)] } }),
+    d3: { handle: 'n', grip: 25 },
   },
   curl_cable: {
     pose: (t) => standing({ arm: { a: [172, lerp(160, 14, t)] } }),
-    gear: (J, t) => ({ back: [F([[90, 84], [90, 12]], [[78, 84], [108, 84]]), ...stack(100, t, 7), W([88, 79], 3)], front: [C([J.hand, [88, 79]]), M([add(J.hand, [-3, 0]), add(J.hand, [3, 0])])] }),
+    gear: (J, t) => ({ back: [F([[90, 84], [90, 12]], [[78, 84], [108, 84]]), ...stack(100, t, 7), W([88, 79], 3)], front: [C([J.hand, [88, 79]]), handleBar(J.hand, 3, 11)] }),
+    d3: { hold: 'under', grip: 17 },
   },
   curl_machine: {
     pose: (t) => seated({ lean: 8, arm: { a: [128, lerp(124, 12, t)] } }, 8),
     gear: (J, t) => ({
-      back: [F([[28, 84], [96, 84]], [[62, 84], [62, 70]], [[78, 84], [72, 52]]), P([62, 67], 22, 6), PA(add(mix(J.sh, J.elbow, 0.55), [-2.4, 3]), 18, 5, 128), ...stack(100, t, 7)],
-      front: [M([J.elbow, J.hand]), D(J.hand, 3)],
+      back: [F([[28, 84], [96, 84]], [[62, 84], [62, 70]], [[78, 84], [72, 52]]), P([62, 67], 22, 6), PA(add(mix(J.sh, J.elbow, 0.55), [-2.4, 3]), 18, 5, 128, { d: 26 }), ...stack(100, t, 7)],
+      front: [M.pair(J.z.hand, [J.elbow, J.hand]), cross(J.hand, 10.5, 3)],
     }),
+    d3: { hold: 'under', grip: 18 },
   },
   pushdown: {
     pose: (t) => standing({ lean: 8, arm: { a: [170, lerp(52, 168, t)] } }),
-    gear: (J, t) => ({ back: [F([[90, 84], [90, 8], [78, 8]], [[78, 84], [108, 84]]), ...stack(100, t, 7), W([78, 11], 3)], front: [C([J.hand, [78, 11]]), M([add(J.hand, [-3.4, 0]), add(J.hand, [3.4, 0])])] }),
+    gear: (J, t) => ({ back: [F([[90, 84], [90, 8], [78, 8]], [[78, 84], [108, 84]]), ...stack(100, t, 7), W([78, 11], 3)], front: [C([J.hand, [78, 11]]), handleBar(J.hand, 3.4, 9.5)] }),
+    d3: { hold: 'over', grip: 15, stance: 9 },
   },
   triceps_overhead: {
-    pose: (t) => ({ hip: [55, 60], lean: 0, leg: { to: [76, 81.5], hint: [0.3, -1] }, arm: { a: [4, lerp(-136, 2, t)] } }),
+    pose: (t) => ({ hip: [55, 60], lean: 0, leg: { to: [76, 81.5], hint: [0.3, -1] }, arm: { a: [4, lerp(-136, 2, t)], hint: [1, 0] } }),
     gear: (J) => ({ back: [P([57, 67], 28, 6), F([[46, 84], [46, 70]], [[68, 84], [68, 70]])], front: DB(J.hand, angleOf(sub(J.hand, J.elbow))) }),
+    d3: { grip: 5, handle: 'n', stance: 14 },
   },
   triceps_lying: {
-    pose: (t) => lying({ arm: { a: [-8, lerp(-112, -6, t)] } }),
-    gear: (J) => ({ back: [...flatBench(), plate(J.hand, 6)], front: [barEnd(J.hand)] }),
+    pose: (t) => lying({ arm: { a: [-8, lerp(-112, -6, t)], hint: [1, 0] } }),
+    gear: (J) => ({ back: [...flatBench(), plate(J.hand, 6, { z: 18 })], front: [barEnd(J.hand, { half: 23 })] }),
+    d3: { grip: 13, hold: 'over', stance: 24, knees: 0.5, toes: 15 },
   },
 
   // ---------------------------------------------------------------- shoulders and chest, from the front
@@ -510,66 +669,128 @@ export const MOVES = {
     view: 'front',
     pose: (t) => { const a = lerp(170, 94, t); return { sh: [60, 21], arm: { a: [a, a + 4] } }; },
     gear: (J) => ({ back: [], front: [D(J.handR, 3.6), D(J.handL, 3.6)] }),
+    pose3: (t) => { const o = lerp(9, 83, t); const v = (b) => [0.2 * Math.sin(rad(o)), -Math.cos(rad(o + b)), Math.sin(rad(o + b))]; return standing({ arm: { v: [v(0), v(5)], handle: 'x' } }); },
+    gear3: (J) => ({ back: [], front: [dumb(J.hand, 3.4)] }),
   },
   raise_cable: {
     view: 'front',
     pose: (t) => { const a = lerp(168, 94, t); return { sh: [62, 21], arm: { a: [a, a + 4] }, armL: { to: [44, 46], hint: [-1, 0.4] } }; },
     gear: (J, t) => ({ back: [F([[22, 84], [22, 12]], [[12, 84], [34, 84]]), W([24, 79], 3), { k: 'poly', c: 'sk-w', l: [rect([12, 50], 10, 34)] }, MP([12, 36 - 6 * t], 10, 5)], front: [C([J.handR, [24, 79]]), D(J.handR, 2.8)] }),
+    pose3: (t) => { const o = lerp(12, 83, t); const v = (b) => [0.22, -Math.cos(rad(o + b)), Math.sin(rad(o + b))]; return standing({ arm: { v: [v(0), v(5)], handle: 'x' }, arm2: { to: [57, 45, 11], hint: [-1, 0.2], shut: 0.3, handle: 'n' } }); },
+    gear3: (J, t) => ({
+      back: [F.at(-34, [[58, 84], [58, 18]], [[48, 84], [68, 84]]), W([58, 79], 3, { z: -31 }), ...stack(58, t, 6, 30, -40)],
+      front: [C([out([58, 79], -31), out(J.hand, J.z.hand)]), D(J.hand, 2.4, { z: J.z.hand, th: 5 })],
+    }),
   },
   reverse_fly_db: {
     view: 'front',
     // Bent over, seen from the front: the head leads, the back runs away from the viewer and so looks short.
     pose: (t) => { const a = lerp(176, 98, t); return { sh: [60, 47], pel: [60, 51], head: [60, 40.5], legs: { knee: [3, 16], foot: [4.4, 32] }, arm: { a: [a, a + 5] } }; },
     gear: (J) => ({ back: [], front: [D(J.handR, 3.6), D(J.handL, 3.6)] }),
+    pose3: (t) => {
+      const o = lerp(5, 78, t); const v = (b, x) => [x, -Math.cos(rad(o + b)), Math.sin(rad(o + b))];
+      return { hip: [47, 48], lean: 70, nod: -28, leg: { to: [55, 83], hint: [1, -0.3] }, arm: { v: [v(0, 0.06), v(-9, 0.16)], handle: 'x' } };
+    },
+    gear3: (J) => ({ back: [], front: [dumb(J.hand, 3.4)] }),
+    d3: { stance: 11, toes: 8 },
   },
   pec_deck: {
     view: 'front',
     pose: (t) => ({ sh: [60, 40], pel: [60, 63], legs: 'seat', arm: { to: mix([92, 41], [63.5, 43], t), straight: true } }),
     gear: (J) => ({ back: [P([60, 69], 24, 5), F([[60, 84], [60, 72]], [[44, 12], [76, 12]], [[60, 12], [60, 6]])], front: [M([[76, 12], J.handR]), M([[44, 12], J.handL]), MP(J.handR, 4, 12), MP(J.handL, 4, 12)] }),
+    pose3: (t) => upright({ arm: { ...sweep(lerp(2, 76, t)), hint: [-0.2, 1], flare: 0.4, handle: 'y' } }),
+    gear3: (J) => {
+      const top = [J.sh[0] + 1, 10];
+      return {
+        back: [...stool(), F([[40, 84], [40, 6], [top[0], 6]], [[30, 84], [50, 84]]), across([top[0], 6], J.z.sh + 1)],
+        front: [M([out(top, J.z.sh + 1), out(add(J.hand, [0, -6]), J.z.hand)], [out(top, -J.z.sh - 1), out(add(J.hand, [0, -6]), -J.z.hand)]), M.pair(J.z.hand, [add(J.hand, [0, -6]), add(J.hand, [0, 6])])],
+      };
+    },
+    d3: { stance: 15 },
   },
   pec_deck_reverse: {
     view: 'front',
     pose: (t) => ({ sh: [60, 40], pel: [60, 63], legs: 'seat', arm: { to: mix([63.5, 42], [92, 41], t), straight: true } }),
     gear: (J) => ({ back: [P([60, 69], 24, 5), P([60, 52], 12, 16), F([[60, 84], [60, 72]], [[44, 12], [76, 12]], [[60, 12], [60, 6]])], front: [M([[76, 12], J.handR]), M([[44, 12], J.handL]), D(J.handR, 3), D(J.handL, 3)] }),
+    // Facing the machine, chest on its pad: the arms open from in front to out and a little back.
+    pose3: (t) => upright({ arm: { ...sweep(lerp(74, -8, t)), hint: [-0.3, 0.6], flare: 1.2, handle: 'y' } }, 3),
+    gear3: (J) => {
+      const top = [J.sh[0] + 1, 10];
+      return {
+        back: [P([58, 68], 20, 6, 0, { d: 16 }), F([[58, 84], [58, 71]], [[48, 84], [84, 84]], [[78, 84], [78, 6], [top[0], 6]]), across([top[0], 6], J.z.sh + 1), PA(add(mix(J.hip, J.sh, 0.62), [6.4, 0]), 16, 4, 3, { d: 14 }), F([add(mix(J.hip, J.sh, 0.62), [8, 0]), [78, 46]])],
+        front: [M([out(top, J.z.sh + 1), out(add(J.hand, [0, -6]), J.z.hand)], [out(top, -J.z.sh - 1), out(add(J.hand, [0, -6]), -J.z.hand)]), M.pair(J.z.hand, [add(J.hand, [0, -6]), add(J.hand, [0, 6])])],
+      };
+    },
+    d3: { stance: 15 },
   },
   cable_fly: {
     view: 'front',
     pose: (t) => ({ sh: [60, 22], arm: { to: mix([92, 27], [63.5, 47], t), straight: true } }),
     gear: (J) => ({ back: [F([[14, 84], [14, 10]], [[106, 84], [106, 10]], [[6, 84], [22, 84]], [[98, 84], [114, 84]]), W([16, 13], 3), W([104, 13], 3)], front: [C([J.handR, [104, 13]]), C([J.handL, [16, 13]]), D(J.handR, 2.8), D(J.handL, 2.8)] }),
+    pose3: (t) => ({ hip: [53, 44.5], lean: 9, nod: -6, leg: { to: [61, 83], hint: [1, -0.3] }, leg2: { to: [47, 83], hint: [1, -0.3] }, arm: { ...sweep(lerp(4, 78, t), lerp(-1, 15, t), 25.5), hint: [-0.6, 0.5], flare: 0.9, handle: 'y' } }),
+    gear3: (J) => ({
+      back: [F.pair(48, [[50, 84], [50, 8]], [[40, 84], [60, 84]]), across([50, 8], 48), W([50, 12], 3, { z: [46, -46] })],
+      front: [C([out([50, 12], 46), out(J.hand, J.z.hand)], [out([50, 12], -46), out(J.hand, -J.z.hand)]), D(J.hand, 2.2, { z: [J.z.hand, -J.z.hand], th: 5 })],
+    }),
   },
   fly_db: {
     view: 'front',
     pose: (t) => { const a = lerp(98, 6, t); return { sh: [60, 62], head: [60, 57], legs: 'none', bare: true, arm: { a: [a, a - 12] } }; },
     gear: (J) => ({ back: [P([60, 69], 22, 6), F([[52, 84], [52, 72]], [[68, 84], [68, 72]])], front: [D(J.handR, 3.6), D(J.handL, 3.6)] }),
+    pose3: (t) => { const e = lerp(3, 83, t); const v = (b) => [0, Math.sin(rad(e + b)), Math.cos(rad(e + b))]; return lying({ arm: { v: [v(0), v(13)], handle: 'x' } }); },
+    gear3: (J) => ({ back: flatBench(), front: [dumb(J.hand, 3.4)] }),
+    d3: { yaw: 0, stance: 24, knees: 0.5, toes: 15 },
   },
   face_pull: {
     pose: (t) => standing({ lean: lerp(2, -6, t), arm: { to: mix([76.5, 24.5], [62, 19], t), hint: [-0.4, -1] } }, 50),
     gear: (J, t) => ({ back: [F([[92, 84], [92, 10]], [[80, 84], [110, 84]]), ...stack(102, t, 7), W([90, 22], 3)], front: [C([J.hand, [90, 22]]), M([add(J.hand, [0, -3]), add(J.hand, [0, 3])])] }),
+    gear3: (J, t) => ({
+      back: [F([[92, 84], [92, 10]], [[80, 84], [110, 84]]), ...stack(102, t, 7), W([90, 22], 3)],
+      front: [C([out(J.hand, J.z.hand), [90, 22]], [out(J.hand, -J.z.hand), [90, 22]]), M.pair(J.z.hand, [add(J.hand, [-2.6, 0]), add(J.hand, [2.6, 0])])],
+    }),
+    d3: (t) => ({ grip: lerp(7, 25, t), flare: 2.4, handle: 'x', stance: 9 }),
   },
 
   // ---------------------------------------------------------------- core
   crunch: {
     pose: (t) => ({ hip: [58, 80.5], lean: lerp(-90, -58, t), nod: lerp(0, 14, t), leg: { to: [86, 83], hint: [0.3, -1] }, arm: { rel: [-5, 4], hint: [0, -1] } }),
     gear: () => ({ back: [], front: [] }),
+    pose3: (t) => ({ hip: [58, 79.4], lean: lerp(-90, -64, t), nod: lerp(4, 16, t), leg: { to: [86, 83], hint: [0.3, -1] }, arm: { rel: [-7.5, 3.5, 7.5], hint: [0, -1] } }),
+    d3: (t) => ({ curl: lerp(0, 52, t), flare: 3, shut: 0.25, stance: 9, handle: 'n' }),
   },
   crunch_machine: {
     pose: (t) => seated({ lean: lerp(-8, 30, t), nod: lerp(0, 10, t), arm: { rel: [0, 7], hint: [0.3, 1] } }, -8),
     gear: (J, t) => ({
-      back: [...seatGear(-8), ...stack(22, t, 8), R([82, 77], 3.2)],
-      front: [C([[40, 10], add(J.sh, [4.5, 1.5])]), MP(add(J.sh, [4.6, 3]), 5, 12, angleOf(J.t))],
+      back: [...seatGear(-8), ...stack(22, t, 8), R([82, 77], 3.2, { th: 18 })],
+      front: [C([[40, 10], add(J.sh, [4.5, 1.5])]), MP(add(J.sh, [4.6, 3]), 5, 12, angleOf(J.t), { d: 18 })],
     }),
+    pose3: (t) => seated({ lean: lerp(-8, 22, t), nod: lerp(0, 10, t), arm: { rel: [-1, 8, 10], hint: [0.3, 1] } }, -8),
+    gear3: (J, t) => ({
+      back: [...seatGear(-8), ...stack(22, t, 8), R([82, 77], 3.2, { th: 18 })],
+      front: [C([[40, 10], add(J.sh, [7, 0])]), MP(add(add(J.sh, mul(J.front, 7.4)), mul(J.t, -3)), 4, 12, angleOf(J.t), { d: 22 })],
+    }),
+    d3: (t) => ({ curl: lerp(0, 42, t), flare: 0.8, handle: 'y', stance: 14 }),
   },
   crunch_cable: {
     pose: (t) => {
       const hip = add([56, 82], mul(dir(lerp(-8, -22, t)), B.thigh));
       return { hip, lean: lerp(18, 84, t), nod: lerp(0, 20, t), leg: { to: [36.5, 82], hint: [1, 1], foot: 262 }, arm: { rel: [-6, 4], hint: [1, 0.4] } };
     },
-    gear: (J, t) => ({ back: [F([[96, 84], [96, 8], [84, 8]], [[84, 84], [112, 84]]), ...stack(106, t, 7), W([84, 11], 3)], front: [C([J.hand, [84, 11]]), M([add(J.hand, [-1, -2.5]), add(J.hand, [1, 2.5])])] }),
+    gear: (J, t) => ({ back: [F([[96, 84], [96, 8], [84, 8]], [[84, 84], [112, 84]]), ...stack(106, t, 7), W([84, 11], 3)], front: [C([J.hand, [84, 11]]), M.pair(J.z.hand, [add(J.hand, [-1, -2.5]), add(J.hand, [1, 2.5])])] }),
+    // In depth the spine does the rounding, so the trunk as a whole leans less far.
+    pose3: (t) => {
+      const hip = add([56, 82], mul(dir(lerp(-6, -16, t)), 17.8));
+      return { hip, lean: lerp(12, 56, t), nod: lerp(0, 18, t), leg: { to: [36.5, 82], hint: [1, 1], foot: 262 }, arm: { rel: [-6, 4], hint: [1, 0.4] } };
+    },
+    d3: (t) => ({ curl: lerp(0, 56, t), grip: 10, flare: 1.2, handle: 'n', stance: 8 }),
   },
   knee_raise: {
     fit: [0.74, 0, -14],
     pose: (t) => ({ hip: [58, 60], lean: lerp(0, -8, t), leg: { a: [lerp(178, 96, t), lerp(180, 172, t)] }, arm: { to: [60.5, 10], hint: [-1, 0] } }),
-    gear: () => ({ back: [F([[82, 102.9], [82, 10], [68, 10]], [[70, 102.9], [96, 102.9]])], front: [D([60.5, 10], 2.8)] }),
+    gear: () => ({ back: [F([[82, 102.9], [82, 10], [68, 10]], [[70, 102.9], [96, 102.9]])], front: [cross([60.5, 10], 17, 2.8)] }),
+    // In depth the floor lies lower, so that the feet hang clear of it.
+    gear3: () => ({ back: [F([[82, 110], [82, 10], [60.5, 10]], [[68, 110], [96, 110]]), across([82, 110], 12)], front: [cross([60.5, 10], 17, 2.8)] }),
+    d3: { floor: 110, grip: 26, hold: 'over', flare: 1.5, stance: 7 },
   },
 };
 
@@ -634,11 +855,12 @@ export function frameAt(id, t, { plates = false } = {}) {
   platesNow = plates;
   const g = mv.gear(J, t);
   platesNow = false;
+  const flat = (list) => list.filter((x) => x.k !== '3d');
   const items = [
-    ...g.back.map((x) => ({ ...x, layer: 'gear' })),
+    ...flat(g.back).map((x) => ({ ...x, layer: 'gear' })),
     ...J.draw.far.map((x) => ({ ...x, layer: 'body' })),
     ...J.draw.near.map((x) => ({ ...x, layer: 'body' })),
-    ...g.front.map((x) => ({ ...x, layer: 'gear' })),
+    ...flat(g.front).map((x) => ({ ...x, layer: 'gear' })),
     ...J.draw.arm.map((x) => ({ ...x, layer: 'body' })),
   ];
   const [s, dx, dy] = mv.fit || [1, 0, 0];

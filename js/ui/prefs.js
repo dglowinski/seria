@@ -7,7 +7,7 @@ import { inViewer, runtime, onRuntime, saveFile, isStandalone, primeAudio, beep,
 import { cloud, onCloud, syncNow, CLOUD_TEXT } from '../cloud.js';
 import { RULES, SOURCES, RULES_VERSION, RULES_UPDATED, PRESCRIPTION, GOALS } from '../domain/rules.js';
 
-export const APP_VERSION = '1.10.0';
+export const APP_VERSION = '1.11.0';
 let installEvent = null;
 if (typeof window !== 'undefined') window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; });
 
@@ -134,6 +134,7 @@ export function PrefsScreen() {
       <${Switch} id="pref-sound" label="Sound when rest ends" on=${s.sound} onChange=${(v) => store.setSettings({ sound: v })} />
       <${Switch} id="pref-vibrate" label="Vibrate when rest ends" on=${s.vibrate} onChange=${(v) => store.setSettings({ vibrate: v })} />
       <${Switch} id="pref-awake" label="Keep the screen on" on=${s.keepAwake} onChange=${(v) => store.setSettings({ keepAwake: v })} />
+      <${Switch} id="pref-3d" label="Exercises in 3D" hint="A modelled figure shows how each move is done. Off keeps the flat line drawings, which are lighter on an old phone." on=${s.figure3d !== false} onChange=${(v) => store.setSettings({ figure3d: v })} />
       ${canNotify() ? html`<${Switch} id="pref-notify" label="Signal with the screen off" hint="A notification when the rest ends, so the phone can buzz in your pocket" on=${s.notify && notifyState() === 'granted'} onChange=${setNotify} />`
         : html`<p class="small muted" data-testid="notify-unavailable">${inViewer ? 'Inside claude.ai the page cannot send notifications. For a signal with the screen off, use the stand-alone app.' : 'This browser cannot send notifications from the page, so there is no signal with the screen off here.'}</p>`}
       <p class="small muted">With the screen on, the phone buzzes and beeps by itself. With the screen off a web page is not allowed to vibrate; the only way is a notification, and the phone decides how that buzzes (check that notifications from the browser or the installed app are not silenced). It works best with Seria added to the home screen. This part could not be tried on a real phone while building, so use the test below.</p>

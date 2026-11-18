@@ -18,7 +18,7 @@ const live = existsSync(livePath) ? JSON.parse(readFileSync(livePath, 'utf8')) :
 // Unit tests: run them here and count, rather than typing a number.
 let unit = { pass: 0, fail: 0 };
 try {
-  const out = execFileSync('node', ['--test', ...['domain', 'coach'].map((n) => `${root}tests/${n}.test.js`)], { encoding: 'utf8' });
+  const out = execFileSync('node', ['--test', ...['domain', 'coach', 'moves3d'].map((n) => `${root}tests/${n}.test.js`)], { encoding: 'utf8' });
   unit = { pass: Number(out.match(/pass (\d+)/)[1]), fail: Number(out.match(/fail (\d+)/)[1]) };
 } catch (e) {
   const out = String(e.stdout || '');
@@ -28,6 +28,8 @@ try {
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 // The sheets of exercise drawings made by scripts/moves-gallery.mjs.
 const moveSheets = readdirSync(fileURLToPath(new URL('../report/shots/', import.meta.url))).filter((f) => /^moves-\d+\.png$/.test(f)).sort();
+// The sheets of the same moves in 3D, made by scripts/moves3d-gallery.mjs.
+const move3dSheets = readdirSync(fileURLToPath(new URL('../report/shots/', import.meta.url))).filter((f) => /^moves3d-\d+\.png$/.test(f)).sort();
 const parts = [...new Set(smoke.results.map((r) => r.part))];
 const PART_TEXT = {
   'A built-in': ['No Claude', 'The built-in coach, the rule-based plan, a full workout with a reload in the middle, history, backup and restore.'],
@@ -52,7 +54,10 @@ const shots = [
   ['53-past-day', 'How an exercise has progressed', 'Each exercise box lists its last three steps in small print: when reps were added or the weight went up. "Show all" opens the rest.'],
   ['54-past-workout', 'The same, mid-workout', 'Under the sets of the exercise in hand, out of the way.'],
   ['06-day', 'Session preview', 'Order, equipment, sets, reps, rest, and how the time adds up. Each exercise has a drawing of how it is done; a tap plays it.'],
-  ['59-day-motion', 'Drawings for machines too', 'The start of the move, with the end of it faint behind. It stands still until tapped.'],
+  ['59-day-motion', 'Machines in 3D too', 'A machine of the gym\'s own gets the figure doing the move it trains. In a list the picture stands still.'],
+  ['60-figure-large', 'The move, large', 'A tap opens the picture large under the name of the exercise, playing on a loop.'],
+  ['61-figure-turned', 'Turned around', 'A sideways drag turns the figure, to see the move from the front, the side or behind.'],
+  ['62-flat-fallback', 'When 3D cannot be had', 'The flat drawing takes its place, and plays where it is.'],
   ['56-busy-own-machine', 'A machine the app did not know', 'Named from "Machine busy?", it is used at once and saved with the equipment.'],
   ['57-add-by-hand', 'Add a set or an exercise', 'Extra work on top of the plan: on record, never held against it.'],
   ['58-caught-up', 'Caught up with the records', 'A plan that missed what a workout earned takes that step when the app starts, and says so.'],
@@ -128,6 +133,16 @@ const v11 = [
   ['Changes are made, not proposed.', 'After a workout, from the chat and when equipment changes, the plan is updated without asking. "What changed" lists every change with its reason, an Undo and an Edit.'],
   ['A signal with the screen off.', 'A web page cannot vibrate behind a dark screen, so the app sends a notification when the rest ends (stand-alone app). The beep is scheduled ahead on the audio clock. Settings has a test button. Not tried on a real phone.'],
   ['The long view.', 'A plain-words outlook on the Plan tab: what this round holds, how it gets harder, what changes round to round, what happens when it stalls, and what would be added with more time. A connected model adds its own.'],
+];
+
+// Version 1.11: the exercises in 3D.
+const v111 = [
+  ['A modelled figure shows every exercise.', `Each of the ${Object.keys(MOVES).length} moves, for the ${EXERCISES.length} exercises of the catalog and for machines of your own, is now done by a figure in 3D with its equipment: bars, plates, dumbbells, benches, racks, cables, weight stacks and the moving parts of machines. In a workout the picture plays three reps when an exercise comes up. In a session's preview it stands still.`],
+  ['Tap it to see it large, and turn it.', 'A tap opens the picture large under the name of the exercise, playing on a loop. A sideways drag turns the figure around, so a squat can be seen from the side for the back and from the front for the knees. A tap pauses. A phone set to reduce motion gets still pictures until tapped.'],
+  ['The moves are worked out, not filmed.', 'A move says where hips, hands and feet are through a rep, how wide the grip is, how far the elbows go out and where the knees track. From that every bone of the figure is turned, each with its fixed length. The hands stay on the bar and are turned to hold it (under it for a curl, over it for a pull-up). A foot that stands on the floor stays flat on it, and in a wide stance the hips come down to let it. Forearms stay upright under a bar in a press. Palms lie flat on the floor in a push-up. The unit tests check all of this for every move.'],
+  ['Where the figure comes from.', 'It is "Sports_Male_04" from the Microsoft Rocketbox avatar library, used under the MIT license: a man in a sleeveless top, shorts and trainers. You picked it. The library\'s model and two colour pictures (about 25 MB) are shrunk by a script to one file of about 0.3 MB: its face bones are folded into the head, repeated points are merged, the pictures are stored as WebP. The license note is in the repo next to the file.'],
+  ['It works offline.', 'The 3D parts (the moves in depth, the stage, the needed parts of three.js and the figure) add about 0.9 MB, kept with the app\'s offline copy. The live check starts a workout with the network off and sees the figure play. The single-file build for claude.ai carries them inside the page, which grows from 0.37 MB to 1.3 MB.'],
+  ['The flat drawings stay as a stand-in.', 'While the 3D parts load, and where they cannot be had, each exercise has its flat drawing from version 1.10, which plays on a tap as before. "Exercises in 3D" in Settings switches between the two.'],
 ];
 
 // Version 1.10: nothing earned is lost, the whole plan after every workout, a workout that goes its own way, and every exercise in motion.
@@ -225,6 +240,9 @@ const bugs = [
 ];
 
 const limits = [
+  ['The 3D figure has not been on a real phone.', 'It was run in desktop Chrome with a phone-sized window, where it draws and plays. How fast it is on your Android phone, and whether the phone allows 3D at all, is not known. If it is slow or missing, "Exercises in 3D" in Settings brings the flat drawings back.'],
+  ['The moves are mine, not a trainer\'s.', 'They are worked out from numbers I set for each move and were checked by eye on the sheets in this report and by the unit tests. No person was filmed and no trainer has looked at them. They show the general way a lift goes. Some are plain or a little stiff: the chest-supported row has the knees on the floor, wrists do not bend except in a push-up, and the shoulder blades do not move.'],
+  ['One figure, and the skin can crease.', 'There is one figure, a man. At the ends of a move, where a joint is bent far or a forearm is turned over, the skin and clothes of the model can pinch or twist, because it has no extra bones for that.'],
   ['No real call to Claude or OpenAI was made.', 'There is no API key for either on this machine. Both paths were run with the official SDKs against local stand-ins, and each request was checked field by field. The first real call could still be turned down by an API for a reason a stand-in cannot show.'],
   ['The model\'s planning has only met stand-ins.', 'Reviewing what to train today, reordering the plan after a workout and planning the next run were all tested with canned answers. The app checks whatever a model sends against its own list, but how sensible a real model\'s choices are is untested.'],
   ['The web lookup of machines has only met stand-ins.', 'The search tools, the paused-search case and the source check all ran against fake search results. With a real key the lookup also depends on web search being allowed for that key, and on what the search finds. How good the descriptions of real machines are is untested.'],
@@ -357,10 +375,18 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
   </section>
 
   <section>
+    <p class="eyebrow">New in version 1.11</p>
+    <h2>Every exercise done by a figure in 3D</h2>
+    <div>${v111.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
+    <p class="muted" style="margin-top:14px">Every move in 3D, at the start and at the end of a rep. In the app they move, and can be turned.</p>
+    <div class="moves">${move3dSheets.map((f) => `<img src="shots/${f}" alt="Exercises done by the 3D figure, start and end of each" loading="lazy">`).join('')}</div>
+  </section>
+
+  <section>
     <p class="eyebrow">New in version 1.10</p>
     <h2>Nothing earned is lost, the whole plan after every workout, and every exercise in motion</h2>
     <div>${v110.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
-    <p class="muted" style="margin-top:14px">Every move, at the start and at the end of a rep. In the app they move.</p>
+    <p class="muted" style="margin-top:14px">Every move as a flat drawing, at the start and at the end of a rep. Since version 1.11 these stand in where the 3D figure cannot be had.</p>
     <div class="moves">${moveSheets.map((f) => `<img src="shots/${f}" alt="Drawings of exercise moves, start and end of each" loading="lazy">`).join('')}</div>
   </section>
 
@@ -456,7 +482,7 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
     return `<details><summary>${esc(title)}: ${ok} of ${rs.length}</summary><p class="muted" style="margin-top:8px;font-size:14px">${esc(text)}</p><ul>${rs.map((r) => `<li><span class="tick">${r.ok ? '✓' : '✗'}</span> ${esc(r.name)}${r.ok ? '' : ` <b>(${esc(r.detail)})</b>`}</li>`).join('')}</ul></details>`;
   }).join('\n    ')}
     ${live ? `<details><summary>The live site: ${live.passed} of ${live.total}</summary><p class="muted" style="margin-top:8px;font-size:14px">Run against ${esc(live.url)} with <code>npm run check:live</code>, ${new Date(live.ranAt).toISOString().replace('T', ' ').slice(0, 16)} UTC. Real network, then the network switched off.</p><ul>${live.results.map((r) => `<li><span class="tick">${r.ok ? '✓' : '✗'}</span> ${esc(r.name)}${r.ok ? '' : ` <b>(${esc(r.detail)})</b>`}</li>`).join('')}</ul></details>` : ''}
-    <p class="muted">Plus ${unit.pass} unit tests (<code>npm test</code>) for the rules, the plan generator, the workout steps, the suggestions, the text reader, the request format and the cloud merge.</p>
+    <p class="muted">Plus ${unit.pass} unit tests (<code>npm test</code>) for the rules, the plan generator, the workout steps, the suggestions, the text reader, the request format, the cloud merge and the exercises in 3D.</p>
   </section>
 
   <section>

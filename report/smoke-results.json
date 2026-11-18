@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-18T13:06:02.691Z",
+  "ranAt": "2026-11-18T15:21:12.805Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 346,
-  "passed": 346,
+  "total": 361,
+  "passed": 361,
   "failed": 0,
   "results": [
     {
@@ -199,13 +199,19 @@
     },
     {
       "part": "A built-in",
-      "name": "each exercise in the preview has a drawing of how it is done, standing still until tapped",
+      "name": "each exercise in the preview has a 3D picture of how it is done, standing still",
       "ok": true,
       "detail": ""
     },
     {
       "part": "A built-in",
-      "name": "a tap plays it: the figure and the dumbbell move, the equipment stays put",
+      "name": "the figure is really drawn, a different picture for each exercise",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a tap opens it large under the name of the exercise, and there it plays",
       "ok": true,
       "detail": ""
     },
@@ -217,7 +223,25 @@
     },
     {
       "part": "A built-in",
-      "name": "a second tap stops it",
+      "name": "dragging sideways turns the figure around, and it plays on",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a tap on it pauses, and the line under it says so",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "paused, it holds still",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "closing it leaves the list as it was",
       "ok": true,
       "detail": ""
     },
@@ -229,7 +253,7 @@
     },
     {
       "part": "A built-in",
-      "name": "a new exercise starts with a drawing of how it is done, playing by itself",
+      "name": "a new exercise starts with a 3D picture of how it is done, playing by itself",
       "ok": true,
       "detail": ""
     },
@@ -259,7 +283,7 @@
     },
     {
       "part": "A built-in",
-      "name": "the drawing stays on the training screen during the set",
+      "name": "the picture stays on the training screen during the set",
       "ok": true,
       "detail": ""
     },
@@ -277,7 +301,7 @@
     },
     {
       "part": "A built-in",
-      "name": "the drawing stays during the rest too",
+      "name": "the picture stays during the rest too",
       "ok": true,
       "detail": ""
     },
@@ -1213,7 +1237,7 @@
     },
     {
       "part": "E single file",
-      "name": "single-file build exists, is small, and pulls in nothing from outside",
+      "name": "single-file build exists, stays under 2 MB, and pulls in nothing from outside",
       "ok": true,
       "detail": ""
     },
@@ -1226,6 +1250,12 @@
     {
       "part": "E single file",
       "name": "the single file runs the whole app with Claude and cloud save from the viewer",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "E single file",
+      "name": "the single file shows the exercises in 3D from what it carries inside",
       "ok": true,
       "detail": ""
     },
@@ -2071,7 +2101,67 @@
     },
     {
       "part": "J level",
-      "name": "with \"reduce motion\" on, the drawing stands still until it is tapped",
+      "name": "with \"reduce motion\" on, the picture stands still, and the large one plays only when tapped",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "no script errors with \"reduce motion\" on",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "without the 3D library each exercise still has its flat drawing, standing still with the end of the move faint behind",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "a tap plays the drawing where it is",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "and it really moves on screen",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "a second tap stops it",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "in a workout the flat drawing plays by itself and the line under it says how to play it again",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "no script errors without the 3D library",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "Settings has a switch for the 3D figure, on to begin with",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "switched off, the exercises show the flat drawings",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "switched on again, the 3D figure is back",
       "ok": true,
       "detail": ""
     },

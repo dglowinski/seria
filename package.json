@@ -1,6 +1,6 @@
 {
   "name": "seria",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "private": true,
   "type": "module",
   "description": "Seria - a gym training web app: weekly plan, guided sets, history, Claude coach.",
@@ -8,6 +8,8 @@
     "serve": "node scripts/serve.mjs",
     "test": "node --test tests/*.test.js",
     "vendor": "node scripts/build-vendor.mjs",
+    "figure": "node scripts/build-figure.mjs",
+    "moves3d": "node scripts/moves3d-gallery.mjs",
     "rules-doc": "node scripts/build-rules-doc.mjs",
     "build:artifact": "node scripts/build-artifact.mjs",
     "smoke": "node tests/e2e/smoke.mjs",
@@ -20,7 +22,8 @@
     "esbuild": "^0.28.2",
     "htm": "^3.1.1",
     "openai": "^7.56.0",
-    "playwright-core": "^1.65.0"
+    "playwright-core": "^1.65.0",
+    "three": "^0.187.0"
   },
   "repository": {
     "type": "git",
