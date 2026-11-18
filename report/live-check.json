@@ -1,9 +1,9 @@
 {
   "url": "https://dglowinski.github.io/seria/",
-  "ranAt": "2026-11-18T09:33:31.867Z",
+  "ranAt": "2026-11-18T10:02:07.404Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 26,
-  "passed": 26,
+  "total": 28,
+  "passed": 28,
   "results": [
     {
       "name": "the address answers over HTTPS",
@@ -106,7 +106,7 @@
       "detail": ""
     },
     {
-      "name": "asking the coach for a new plan builds one, says which session is next, and keeps the old plan",
+      "name": "asking the coach for a new plan in the chat builds one with no button, says which session is next, and keeps the old plan",
       "ok": true,
       "detail": ""
     },
@@ -116,7 +116,7 @@
       "detail": ""
     },
     {
-      "name": "the release is version 1.5.0, and the coach is sent the workouts on record and where the cycle stands",
+      "name": "the release is version 1.8.0, and the coach is sent the workouts on record and where the cycle stands",
       "ok": true,
       "detail": ""
     },
@@ -127,6 +127,16 @@
     },
     {
       "name": "the plan screen shows the version that is running",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "an exercise box shows how the last times went",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "supersets can be switched in Settings too, and the plan built since is made for them",
       "ok": true,
       "detail": ""
     },
