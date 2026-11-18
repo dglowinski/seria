@@ -1,9 +1,9 @@
 {
   "url": "https://dglowinski.github.io/seria/",
-  "ranAt": "2026-11-18T13:07:37.014Z",
+  "ranAt": "2026-11-18T15:24:27.727Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 33,
-  "passed": 33,
+  "total": 36,
+  "passed": 36,
   "results": [
     {
       "name": "the address answers over HTTPS",
@@ -91,7 +91,12 @@
       "detail": ""
     },
     {
-      "name": "the workout shows a drawing of how the first exercise is done, and it moves",
+      "name": "offline, the workout shows the first exercise done by the figure in 3D, playing",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a tap opens the figure large, and a drag turns it around",
       "ok": true,
       "detail": ""
     },
@@ -126,12 +131,17 @@
       "detail": ""
     },
     {
-      "name": "the release is version 1.10.0, and the coach is sent the workouts on record and where the cycle stands",
+      "name": "the release is version 1.11.0, and the coach is sent the workouts on record and where the cycle stands",
       "ok": true,
       "detail": ""
     },
     {
       "name": "the release has what 1.10 added: catch-up with the records, the whole plan after every workout, the abdominal machine, a move for every exercise",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the release has what 1.11 added: the exercises in 3D, the modelled figure, and the flat drawings to fall back on",
       "ok": true,
       "detail": ""
     },
@@ -146,7 +156,7 @@
       "detail": ""
     },
     {
-      "name": "every exercise in the session preview has a drawing of how it is done: still until tapped, then it plays",
+      "name": "every exercise in the session preview has a 3D picture of how it is done: still in the list, playing when opened large",
       "ok": true,
       "detail": ""
     },
@@ -162,6 +172,11 @@
     },
     {
       "name": "supersets can be switched in Settings too, and the plan built since is made for them",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Settings has the switch between the 3D figure and the flat drawings, on",
       "ok": true,
       "detail": ""
     },
