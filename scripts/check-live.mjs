@@ -149,13 +149,14 @@ try {
     return v.includes("APP_VERSION = '1.5.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
       && p.includes('where_the_cycle_stands') && p.includes('never swap one for variety alone') && s.includes('export function cycleNext');
   }));
+  await context.setOffline(false);
+  // Back online: the offline worker's own file is not kept in the offline copy, so it is read from the network.
   check('a new release loads by itself, and is fetched past the browser cache', await page.evaluate(async () => {
     const [a, w] = await Promise.all(['js/app.js', 'sw.js'].map((f) => fetch(f).then((r) => r.text())));
     return a.includes("addEventListener('controllerchange'") && w.includes("cache: 'reload'") && w.includes("cache: 'no-cache'");
   }));
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Plan' }).click();
   check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.5.0');
-  await context.setOffline(false);
   check('no script errors', errors.length === 0, errors.join(' | '));
 } catch (e) {
   check('the check ran to the end', false, String(e.message).split('\n')[0]);

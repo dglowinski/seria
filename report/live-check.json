@@ -1,9 +1,9 @@
 {
   "url": "https://dglowinski.github.io/seria/",
-  "ranAt": "2026-11-18T09:09:45.131Z",
+  "ranAt": "2026-11-18T09:33:31.867Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 24,
-  "passed": 24,
+  "total": 26,
+  "passed": 26,
   "results": [
     {
       "name": "the address answers over HTTPS",
@@ -116,7 +116,17 @@
       "detail": ""
     },
     {
-      "name": "the release is version 1.4.0, and the coach is sent the workouts on record",
+      "name": "the release is version 1.5.0, and the coach is sent the workouts on record and where the cycle stands",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a new release loads by itself, and is fetched past the browser cache",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the plan screen shows the version that is running",
       "ok": true,
       "detail": ""
     },
