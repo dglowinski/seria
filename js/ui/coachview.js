@@ -86,9 +86,10 @@ export function CoachScreen() {
         <span class="small muted" data-testid="ai-status">${status.label}</span>
         <span class="small accent">${status.kind === 'none' ? 'Connect an AI' : 'Change'}</span>
       </button>
-      ${all.length > 2 && html`<div class="chips" data-testid="chat-tools">
+      ${(all.length > 2 || state.plan) && html`<div class="chips" data-testid="chat-tools">
+        ${state.plan && html`<button class="chip accent" data-testid="chat-rebuild" disabled=${busy || !!store.activeSession(state)} onClick=${() => send('Rebuild my plan')}>Rebuild plan</button>`}
         ${hidden > 0 && html`<button class="chip" data-testid="chat-earlier" onClick=${earlier}>Show earlier messages (${hidden})</button>`}
-        ${!clearing && html`<button class="chip" data-testid="chat-clear" onClick=${() => setClearing(true)}>Clear chat</button>`}
+        ${all.length > 2 && !clearing && html`<button class="chip" data-testid="chat-clear" onClick=${() => setClearing(true)}>Clear chat</button>`}
         ${clearing && html`<span class="small muted">Clear the whole chat? Your plan, workouts and weights stay.</span>
           <button class="chip accent" data-testid="chat-clear-yes" onClick=${clear}>Clear it</button>
           <button class="chip" onClick=${() => setClearing(false)}>Keep it</button>`}

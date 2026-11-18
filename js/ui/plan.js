@@ -14,7 +14,7 @@ import { undoChange, redoChange, editChange, recordUpdate, reviewEquipment, star
 import { sourceName, aiReady, aiName } from '../ai/ai.js';
 import { primeAudio } from '../platform.js';
 import { APP_VERSION } from './prefs.js';
-import { PastResults } from './past.js';
+import { ProgressSteps } from './past.js';
 import { WeightSheet, WeightsFirst } from './weights.js';
 
 /**
@@ -183,7 +183,9 @@ export function PlanScreen() {
   };
   // A plan made before the mode was on is only paired where two exercises happen to meet. A new one is laid out for it.
   const notBuiltForIt = pairsOn && !plan.forPairs;
-  const buildForPairs = () => { go('coach'); userSays('Rebuild my plan'); };
+  // One tap, no second question: it is built at once, in the chat where its progress shows, and the old plan can be put back.
+  const rebuild = () => { go('coach'); userSays('Rebuild my plan'); };
+  const buildForPairs = rebuild;
 
   const trainNow = () => {
     if (active) { go('workout'); return; }
@@ -238,6 +240,8 @@ export function PlanScreen() {
           <span class="accent">${pairsOn ? 'On' : 'Off'}</span></button>
         ${notBuiltForIt && html`<div class="note small" data-testid="pairs-rebuild"><b>This plan was not made for supersets</b>Exercises are put together only where two that fit happen to sit side by side. A new plan is laid out for supersets: sessions with opposite muscle groups, and a partner next to each exercise where the training allows.
           <div class="chips" style="margin-top:8px"><button class="chip accent" data-testid="pairs-build" onClick=${buildForPairs}>Build a plan made for supersets</button></div></div>`}
+        <button class="row" data-testid="rebuild-plan" disabled=${!!active} onClick=${rebuild}>
+          <span class="stack tight"><b>Rebuild plan</b><span class="sub">${active ? 'Not while a workout is in progress.' : `A new plan from your settings, your workouts and what you told the coach${aiReady() ? `, built by ${aiName()}` : ''}. It starts where your cycle stands, and the plan you have now is kept so you can put it back.`}</span></span><span class="accent">Rebuild</span></button>
         <button class="row" data-testid="weights-link" onClick=${() => go('weights')}>
           <span class="stack tight"><b>Weights</b><span class="sub">${blank ? `${plural(blank, 'exercise')} in the plan ${blank === 1 ? 'has' : 'have'} no weight yet. Enter ${blank === 1 ? 'it' : 'them'} now, or when ${blank === 1 ? 'it comes' : 'they come'} up.` : 'What you lift on every exercise, and the step sizes'}</span></span><span class="accent">Open</span></button>
         ${state.proposals.length > 0 && html`<button class="row" onClick=${() => go('review')}>
@@ -316,7 +320,7 @@ export function DayScreen({ dayId }) {
             <p><b>${ex.sets} × ${ex.reps} reps</b> <span class="muted small">(range ${ex.repLo}-${ex.repHi}) · ${mate ? `rest alone ${restText(ex.restSec)}` : `rest ${restText(ex.restSec)}`}</span></p>
             <div class="spread"><p class="small grow">${ex.load ? html`<b>${fmtLoad(ex.loadType, ex.load.value)}</b> <span class="muted">· step ${num(ex.load.step)}</span>` : html`<span class="muted">Weight: ${loadMethod(ex)}</span>`}</p>
               <button class="chip" data-testid="edit-weight" aria-label=${`Set the weight for ${ex.name}`} onClick=${() => setWeightFor(ex.exerciseId)}>${ex.load ? 'Change' : 'Set weight'}</button></div>
-            <${PastResults} sessions=${state.sessions} exerciseId=${ex.exerciseId} loadType=${ex.loadType} />
+            <${ProgressSteps} sessions=${state.sessions} exerciseId=${ex.exerciseId} loadType=${ex.loadType} now=${{ reps: ex.reps, load: ex.load?.value ?? null }} />
           </li>`;
         })}
       </ol>

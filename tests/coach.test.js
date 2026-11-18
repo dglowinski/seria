@@ -11,8 +11,8 @@ import { askAgain, reviewRunning, setWeight } from '../js/ai/coach.js';
 import { userSays, buildPlan, canRestorePlan, restorePlan, recentCount } from '../js/ai/coach.js';
 import { continueFrom, cycleNext } from '../js/domain/schedule.js';
 import { knownWeights, fillLoads, fitPlan, fillPairs, normalizePlan, dayMinutes } from '../js/domain/planner.js';
-import { exerciseHistory } from '../js/domain/progression.js';
-import { resultLine, stepText } from '../js/ui/past.js';
+import { progressSteps } from '../js/domain/progression.js';
+import { stepLine, stepText } from '../js/ui/past.js';
 import { emptyProfile, generatePlan, missingFields, units } from '../js/domain/planner.js';
 import { emptyEquipment, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail, machineForExercise, machineLabel, isAvailable, isListed, EQUIPMENT, allExercises, SKETCH_IDS, sketchForExercise, sketchForEquipment, EXERCISES } from '../js/domain/catalog.js';
 import { SKETCHES } from '../js/ui/sketch.js';
@@ -825,31 +825,41 @@ test('coach screen: only the conversation in progress shows, back to the last lo
   assert.equal(recentCount([msg(600), msg(599), msg(1)]), 2, 'a lone new message keeps the one before it in view');
 });
 
-test('earlier results of an exercise: newest first, each with how it moved on from the time before', () => {
-  const workout = (id, daysAgo, sets, status = 'done') => ({
+test('progress of an exercise: every time reps were added or the weight went up, newest first, and nothing else', () => {
+  // What the plan asked for on each day (reps, load), with one set done each time.
+  const workout = (id, daysAgo, reps, load, status = 'done') => ({
     id, status, startedAt: eveningAgo(daysAgo),
-    exercises: [{ exerciseId: 'db_bench_press', loadType: 'dumbbell', sets: sets.map(([load, reps, st = 'done']) => ({ status: st, actual: st === 'done' ? { load, reps } : null })) },
-      { exerciseId: 'db_row', loadType: 'dumbbell', sets: [{ status: 'done', actual: { load: 24, reps: 10 } }] }],
+    exercises: [{ exerciseId: 'db_bench_press', loadType: 'dumbbell', sets: [{ status: 'done', planned: { reps, load }, actual: { reps, load: load ?? 18 } }, { status: 'skipped', planned: { reps, load }, actual: null }] },
+      { exerciseId: 'db_row', loadType: 'dumbbell', sets: [{ status: 'done', planned: { reps: 10, load: 24 }, actual: { reps: 10, load: 24 } }] }],
   });
   const all = [
-    workout('a', 9, [[20, 8], [20, 8], [20, 8]]),
-    workout('b', 6, [[20, 9], [20, 9], [20, 8]]),
-    workout('c', 3, [[22, 8], [22, 8], [22, 7]]),
-    workout('d', 1, [[22, 8], [24, 6], [24, 6, 'skipped']]),
-    workout('now', 0, [[24, 8]], 'active'),
+    workout('a', 15, 8, null), // the first time: no weight in the plan yet, 18 kg chosen on the day
+    workout('b', 12, 8, 18),
+    workout('c', 9, 9, 18),
+    workout('d', 6, 10, 18),
+    workout('e', 3, 8, 20), // more weight, and the reps start again lower
+    workout('f', 1, 8, 20), // nothing moved
+    workout('now', 0, 9, 20, 'active'),
     { id: 'run', kind: 'activity', status: 'done', startedAt: eveningAgo(2) },
   ];
-  const h = exerciseHistory(all, 'db_bench_press');
-  assert.deepEqual(h.map((e) => e.sessionId), ['d', 'c', 'b', 'a'], 'done workouts only, newest first');
-  assert.deepEqual(h[0].sets, [{ load: 22, reps: 8 }, { load: 24, reps: 6 }], 'only sets that were done');
-  assert.deepEqual(h.map((e) => e.step), [{ load: 2 }, { load: 2 }, { reps: 2 }, null]);
-  assert.equal(resultLine(h[1], 'dumbbell'), '22 kg × 8, 8, 7'); assert.equal(resultLine(h[0], 'dumbbell'), '22×8, 24×6 kg');
-  assert.equal(resultLine({ sets: [{ load: 0, reps: 9 }, { load: 0, reps: 8 }] }, 'bodyweight'), 'Bodyweight × 9, 8');
-  assert.equal(resultLine({ sets: [{ load: 45, reps: 10 }] }, 'machine'), 'setting 45 × 10');
-  assert.equal(stepText(h[0].step, 'dumbbell'), '+2 kg'); assert.equal(stepText(h[2].step, 'dumbbell'), '+2 reps'); assert.equal(stepText(null), '');
-  assert.equal(stepText({}, 'dumbbell'), 'same'); assert.equal(stepText({ load: -2.5 }, 'dumbbell'), '−2.5 kg'); assert.equal(stepText({ reps: -1 }), '−1 rep'); assert.equal(stepText({ load: 5 }, 'machine'), '+5');
-  assert.deepEqual(exerciseHistory(all, 'db_bench_press', { skip: 'd' }).map((e) => e.sessionId), ['c', 'b', 'a']);
-  assert.deepEqual(exerciseHistory(all, 'never_done'), []); assert.deepEqual(exerciseHistory(null, 'x'), []);
+  const steps = progressSteps(all, 'db_bench_press', { reps: 9, load: 20 });
+  assert.deepEqual(steps.map((s) => [new Date(s.at).getDate() === new Date(eveningAgo(1)).getDate(), stepText(s, 'dumbbell'), stepLine(s, 'dumbbell')]), [
+    [true, '+1 rep', '8 → 9 reps'], // earned in the last workout, already in the plan
+    [false, '+2 kg', '18 → 20 kg, reps 10 → 8'],
+    [false, '+1 rep', '9 → 10 reps'],
+    [false, '+1 rep', '8 → 9 reps'],
+  ], 'four steps: the first day and the day nothing moved are not steps');
+  assert.equal(steps[1].at, eveningAgo(6), 'a step is dated by the workout that earned it');
+  // Without the target as it stands, only steps between workouts show; the workout in progress is left out by its id.
+  assert.equal(progressSteps(all, 'db_bench_press').length, 3);
+  assert.equal(progressSteps([...all, { ...workout('g', 0.5, 9, 20), startedAt: Date.now() - 3600e3 }], 'db_bench_press', { reps: 9, load: 20 }, { skip: 'g' }).length, 4);
+  // A step back is a step too, and other units read right.
+  const back = progressSteps([workout('x', 5, 10, 22), workout('y', 2, 10, 20)], 'db_bench_press', { reps: 10, load: 20 });
+  assert.equal(stepText(back[0], 'dumbbell'), '−2 kg'); assert.equal(stepLine(back[0], 'dumbbell'), '22 → 20 kg');
+  assert.equal(stepText({ load: { by: 5, from: 40, to: 45 } }, 'machine'), '+5'); assert.equal(stepLine({ load: { by: 5, from: 40, to: 45 } }, 'machine'), '40 → 45');
+  assert.equal(stepLine({ load: { by: 2.5, from: 0, to: 2.5 } }, 'bodyweight'), '0 → 2.5 kg added'); assert.equal(stepText({ reps: { by: -2, from: 10, to: 8 } }), '−2 reps');
+  assert.deepEqual(progressSteps(all, 'db_row', { reps: 10, load: 24 }), [], 'an exercise that has not moved shows nothing');
+  assert.deepEqual(progressSteps(all, 'never_done', { reps: 8, load: 10 }), []); assert.deepEqual(progressSteps(null, 'x'), []);
 });
 
 test('supersets: the coach reads the wish from plain words and is told to build plans for them', () => {

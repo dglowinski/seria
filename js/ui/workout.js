@@ -19,7 +19,7 @@ import { substitutesFor, exerciseById, equipmentNames, zoneOf, machineForExercis
 import { MachineInfo } from './equipment.js';
 import { Sketch, sketchNote } from './sketch.js';
 import { StepPicker, loadLabel } from './weights.js';
-import { PastResults } from './past.js';
+import { ProgressSteps } from './past.js';
 import { describeChange } from '../domain/progression.js';
 import { afterSetSaved, afterWorkout, rememberWeight } from '../ai/coach.js';
 import { sourceName } from '../ai/ai.js';
@@ -418,7 +418,8 @@ export function Workout() {
 
       <${SetList} ex=${ex} nowIdx=${setIdx} onEdit=${(i) => setSheet({ edit: i })} />
 
-      <${PastResults} key=${ex.exerciseId} sessions=${state.sessions} exerciseId=${ex.exerciseId} loadType=${ex.loadType} skip=${session.id} />
+      <${ProgressSteps} key=${ex.exerciseId} sessions=${state.sessions} exerciseId=${ex.exerciseId} loadType=${ex.loadType} skip=${session.id}
+        now=${{ reps: ex.sets[0]?.planned?.reps ?? null, load: ex.sets[0]?.planned?.load ?? null }} />
 
       ${waiting && html`<div class="chips">
         <button class="chip" data-testid="busy" onClick=${() => setSheet('busy')}>Machine busy? Not now</button>

@@ -143,9 +143,9 @@ try {
   await page.getByTestId('restore-plan').click();
   const back = await read();
   check('"Put the old plan back" undoes the rebuild', back.id === was.id && back.before === null && (await page.getByTestId('restore-plan').count()) === 0, JSON.stringify(back));
-  check('the release is version 1.8.0, and the coach is sent the workouts on record and where the cycle stands', await page.evaluate(async () => {
+  check('the release is version 1.9.0, and the coach is sent the workouts on record and where the cycle stands', await page.evaluate(async () => {
     const [v, p, s] = await Promise.all(['js/ui/prefs.js', 'js/ai/prompts.js', 'js/domain/schedule.js'].map((f) => fetch(f).then((r) => r.text())));
-    return v.includes("APP_VERSION = '1.8.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
+    return v.includes("APP_VERSION = '1.9.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
       && p.includes('where_the_cycle_stands') && p.includes('never swap one for variety alone') && s.includes('export function cycleNext')
       && p.includes('you are the coach: you decide what the training is') && p.includes('superset_with_next');
   }));
@@ -156,13 +156,21 @@ try {
     return a.includes("addEventListener('controllerchange'") && w.includes("cache: 'reload'") && w.includes("cache: 'no-cache'");
   }));
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Plan' }).click();
-  check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.8.0');
-  // The one set logged above shows as the exercise's earlier result in the session's preview.
+  check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.9.0');
+  // Progress in the exercise box: nothing while the target has not moved, then a step once the weight goes up.
   await page.getByTestId('plan-session').filter({ hasText: 'Upper body A' }).first().click();
   await page.getByTestId('start-day').waitFor({ timeout: 8000 });
-  const past = page.getByTestId('day-exercise').first().getByTestId('past');
-  check('an exercise box shows how the last times went', (await past.getByTestId('past-row').count()) === 1 && /^Last time/.test(await past.textContent()) && /20 kg × \d+/.test(await past.getByTestId('past-row').first().textContent()), await past.textContent().catch(() => 'no list'));
-  await page.getByRole('button', { name: 'Settings' }).click();
+  const box = page.getByTestId('day-exercise').first();
+  const quiet = (await box.getByTestId('past').count()) === 0;
+  await box.getByTestId('edit-weight').click();
+  await page.fill('#weight-value', '22');
+  await page.getByTestId('weight-save').click();
+  await box.getByTestId('past').waitFor({ timeout: 5000 }).catch(() => {});
+  check('an exercise box shows its progress: nothing until the target moves, then the step, with what changed', quiet && (await box.getByTestId('past-row').count()) === 1 && /^Progress: the last step/.test(await box.getByTestId('past').textContent())
+    && /20 → 22 kg\s*\+2 kg$/.test((await box.getByTestId('past-row').first().textContent()).replace(/\s+/g, ' ')), await box.textContent().catch(() => 'no box'));
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Plan' }).click();
+  check('the Plan tab has a "Rebuild plan" button', /^Rebuild plan/.test(await page.getByTestId('rebuild-plan').textContent().catch(() => '')));
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   check('supersets can be switched in Settings too, and the plan built since is made for them', (await page.locator('#pref-pairs').getAttribute('aria-checked').catch(() => null)) === 'true'
     && /Supersets/.test(await page.locator('main').textContent()));
   check('no script errors', errors.length === 0, errors.join(' | '));

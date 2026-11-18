@@ -99,29 +99,34 @@ function facts(ex) {
 }
 
 /**
- * What was done on one exercise, workout by workout, newest first: the day and
- * the load and reps of each set done. `skip` leaves out one workout, the one
- * in progress. Each entry also says how it moved on from the time before:
- * more load, or more reps at the same load.
+ * How an exercise has moved on: every time its target changed from one workout
+ * to the next, newest first. A step is reps added or taken off, weight put on
+ * or taken off, or both (more weight, and the reps start again lower). Each is
+ * dated by the workout that earned it. `now` is the target as it stands, in the
+ * plan or in the workout in progress, so the step made after the last workout
+ * shows too. `skip` leaves out one workout, the one in progress.
  */
-export function exerciseHistory(sessions, exerciseId, { skip = null } = {}) {
-  const out = [];
+export function progressSteps(sessions, exerciseId, now = null, { skip = null } = {}) {
+  const points = [];
   const past = (sessions || []).filter((s) => s.kind !== 'activity' && s.status === 'done' && s.id !== skip && Array.isArray(s.exercises))
-    .sort((a, b) => b.startedAt - a.startedAt);
+    .sort((a, b) => a.startedAt - b.startedAt);
   for (const s of past) {
-    const sets = s.exercises.filter((ex) => ex.exerciseId === exerciseId)
-      .flatMap((ex) => ex.sets.filter((st) => st.status === 'done' && st.actual).map((st) => ({ reps: st.actual.reps, load: st.actual.load ?? 0 })));
-    if (sets.length) out.push({ sessionId: s.id, at: s.startedAt, sets });
+    const ex = s.exercises.find((x) => x.exerciseId === exerciseId && x.sets.some((st) => st.status === 'done'));
+    if (!ex) continue;
+    const first = ex.sets.find((st) => st.status === 'done');
+    // The target the plan had that day. With no weight in the plan yet, the weight chosen for the first set.
+    points.push({ at: s.startedAt, reps: ex.sets[0].planned?.reps ?? first.actual?.reps, load: ex.sets[0].planned?.load ?? first.actual?.load ?? null });
   }
-  const top = (e) => Math.max(...e.sets.map((x) => x.load));
-  const reps = (e) => e.sets.reduce((n, x) => n + (x.reps || 0), 0);
-  out.forEach((e, i) => {
-    const before = out[i + 1];
-    if (!before) { e.step = null; return; }
-    const load = Math.round((top(e) - top(before)) * 100) / 100;
-    e.step = load ? { load } : reps(e) - reps(before) ? { reps: reps(e) - reps(before) } : {};
-  });
-  return out;
+  if (now && points.length) points.push({ at: null, reps: now.reps, load: now.load ?? null });
+  const steps = [];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]; const b = points[i];
+    const load = a.load != null && b.load != null ? Math.round((b.load - a.load) * 100) / 100 : 0;
+    const reps = a.reps != null && b.reps != null ? b.reps - a.reps : 0;
+    if (!load && !reps) continue;
+    steps.push({ at: a.at, load: load ? { by: load, from: a.load, to: b.load } : null, reps: reps ? { by: reps, from: a.reps, to: b.reps } : null });
+  }
+  return steps.reverse();
 }
 
 /** Most recent finished session before this one that includes the exercise. */

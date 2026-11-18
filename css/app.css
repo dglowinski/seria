@@ -122,7 +122,7 @@ details.note > summary { cursor: pointer; }
 .note.thinking .dots span { background: var(--accent); }
 .dots { display: inline-flex; align-items: center; flex: none; }
 li.paired { border-left: 3px solid var(--accent); }
-/* Earlier results in an exercise box: small print that stays out of the way. */
+/* How an exercise has progressed, in its box: small print that stays out of the way. */
 .past { display: grid; gap: 3px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; }
 .past-title { font-weight: 700; }
 .past-more { background: none; border: 0; padding: 0 0 0 12px; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }

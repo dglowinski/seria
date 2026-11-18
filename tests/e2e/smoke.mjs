@@ -633,7 +633,7 @@ await guarded(async () => {
   check('a weight in the plan can be set by hand from the session preview', await until(async () => (await state(page)).plan.days[3].exercises[0].load.value === 21) && (await state(page)).weights.db_bench_press.by === 'hand');
 
   // --- settings for the workout, then backup, erase, restore
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   check('settings: the next set can start by itself, and there is a word on signals with the screen off', (await page.locator('#pref-autostart').getAttribute('aria-checked')) === 'true'
     && ((await page.locator('#pref-notify').count()) + (await page.getByTestId('notify-unavailable').count())) === 1 && /With the screen off a web page is not allowed to vibrate/.test(await page.locator('main').textContent()));
   await page.getByTestId('test-signal').click();
@@ -648,7 +648,7 @@ await guarded(async () => {
   await page.getByRole('button', { name: 'Erase everything' }).click();
   await page.getByTestId('confirm-reset').click();
   check('erase clears plan and history', (await state(page)).plan === null && (await state(page)).sessions.length === 0);
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.setInputFiles('#import-file', file);
   await page.getByText('Backup restored').waitFor();
   check('restore brings them back', (await state(page)).plan.version === vKeep && (await state(page)).sessions.length === 1 && (await state(page)).proposals.length >= 2);
@@ -1009,7 +1009,7 @@ await guarded(async () => {
   await shot(page, '23-viewer-restored');
   await page.getByRole('button', { name: 'End workout' }).click();
   await page.getByRole('button', { name: 'Finish and save' }).click();
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByTestId('export').click();
   await page.waitForFunction(() => !!window.__saved);
   check('backup goes through the viewer save dialog', /seria-backup-.*\.json/.test(await page.evaluate(() => window.__saved)));
@@ -1218,7 +1218,7 @@ await guarded(async () => {
     && (await page.getByTestId('update-message').textContent()) === 'Solid session.' && (await state(page)).plan.days[0].exercises[0].load.value === 22);
 
   // a model that turns down the reasoning setting, and a model id typed by hand
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   oai.state.rejectReasoning = true;
   let n = oai.state.requests.length;
   await page.getByTestId('test-claude').click();
@@ -1261,7 +1261,7 @@ await guarded(async () => {
   oai.state.fail = null;
 
   // switching back: each provider keeps its own key
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByTestId('provider-anthropic').click();
   check('switching to Claude with no Claude key falls back to the built-in coach', await until(async () => /Built-in coach/.test(await page.getByTestId('claude-status').textContent())));
   await page.getByTestId('provider-openai').click();
@@ -1646,7 +1646,7 @@ await guarded(async () => {
   st = await state(page);
   check('"Clear chat" empties the chat and leaves the plan alone', st.chat.length === 0 && st.plan.days.length === 3 && st.sessions.length === 1 && (await page.getByText('Tell me about your goal').count()) === 1, JSON.stringify([st.chat.length, st.plan.days.length]));
 
-  // earlier results in the exercise box: the last few times in small print, the rest on request
+  // progress in the exercise box: the last few steps (reps added, weight put on) in small print, the rest on request
   await page.evaluate(() => {
     const st = JSON.parse(localStorage.getItem('seria.state.v1'));
     const base = st.sessions[0];
@@ -1654,7 +1654,11 @@ await guarded(async () => {
       const c = JSON.parse(JSON.stringify(base));
       c.id = `${base.id}-c${k}`;
       for (const key of ['startedAt', 'endedAt', 'updatedAt']) if (c[key]) c[key] -= k * 3 * 864e5;
-      for (const ex of c.exercises) for (const s of ex.sets) if (s.actual && s.actual.load) s.actual.load = Math.max(s.actual.load - 2 * k, 2);
+      for (const ex of c.exercises) {
+        const top = (ex.sets.find((x) => x.actual && x.actual.load) || {}).actual?.load;
+        if (!top) continue;
+        for (const s of ex.sets) { s.planned.load = Math.max(top - 2 * k, 2); if (s.actual && s.actual.load) s.actual.load = s.planned.load; } // the plan asked for 2 kg less each time further back
+      }
       st.sessions.push(c);
     }
     localStorage.setItem('seria.state.v1', JSON.stringify(st));
@@ -1665,25 +1669,39 @@ await guarded(async () => {
   await openSession(page, 'Push');
   const past = page.getByTestId('day-exercise').first().getByTestId('past');
   const rowText = async (i) => (await past.getByTestId('past-row').nth(i).textContent()).replace(/\s+/g, ' ');
-  check('a session shows, for each exercise, how the last few times went', (await past.getByTestId('past-row').count()) === 3 && /^Last 3 times/.test(await past.textContent()) && /^\d+ \w{3}\s*20 kg × \d+, \d+, \d+\s*\+2 kg$/.test(await rowText(0))
-    && /18 kg/.test(await rowText(1)) && (await past.getByTestId('past-more').textContent()).trim() === 'Show all 5', `${await past.textContent()} :: ${await rowText(0)}`);
-  check('an exercise never done shows nothing there', (await page.getByTestId('day-exercise').nth(2).getByTestId('past').count()) === 0 && (await page.getByTestId('day-exercise').count()) === 3);
+  check('a session shows, for each exercise, its last few steps: when the weight went up or reps were added', (await past.getByTestId('past-row').count()) === 3 && /^Progress: the last 3 steps/.test(await past.textContent()) && /^\d+ \w{3}\s*20 → 22 kg\s*\+2 kg$/.test(await rowText(0))
+    && /18 → 20 kg/.test(await rowText(1)) && (await past.getByTestId('past-more').textContent()).trim() === 'Show all 5', `${await past.textContent()} :: ${await rowText(0)}`);
+  check('an exercise that has not moved shows nothing there', (await page.getByTestId('day-exercise').nth(2).getByTestId('past').count()) === 0 && (await page.getByTestId('day-exercise').count()) === 3);
   await shot(page, '53-past-day');
   await past.getByTestId('past-more').click();
-  check('"Show all" opens the whole list, and it closes again', (await past.getByTestId('past-row').count()) === 5 && /^All 5 times/.test(await past.textContent()) && /12 kg/.test(await rowText(4))
+  check('"Show all" opens the whole list, and it closes again', (await past.getByTestId('past-row').count()) === 5 && /^Progress: all 5 steps/.test(await past.textContent()) && /12 → 14 kg/.test(await rowText(4))
     && (await past.getByTestId('past-more').textContent()).trim() === 'Show fewer');
   await startWith(page, 'start-day');
   if (await until(() => page.getByTestId('today-start').isVisible(), 800)) await startWith(page, 'today-start');
   await main(page).waitFor();
-  check('the workout shows the same for the exercise in hand, without the workout in progress', (await page.getByTestId('past').count()) === 1 && (await page.getByTestId('past-row').count()) === 3 && /20 kg × /.test((await page.getByTestId('past-row').first().textContent())));
+  check('the workout shows the same for the exercise in hand, without the workout in progress', (await page.getByTestId('past').count()) === 1 && (await page.getByTestId('past-row').count()) === 3 && /20 → 22 kg/.test((await page.getByTestId('past-row').first().textContent())));
   await shot(page, '54-past-workout');
   await page.getByRole('button', { name: 'End workout' }).click();
   await page.getByRole('button', { name: 'Discard workout' }).click();
   await page.getByTestId('train-now').waitFor();
 
+  // a button for it too: "Rebuild plan" on the Plan tab builds at once and shows it in the chat
+  const idBefore = (await state(page)).plan.id;
+  const askedSoFar = sent('new_plan').length;
+  check('the Plan tab has a "Rebuild plan" button that says what it does', /^Rebuild plan/.test(await page.getByTestId('rebuild-plan').textContent()) && /kept so you can put it back/.test(await page.getByTestId('rebuild-plan').textContent()));
+  await page.getByTestId('rebuild-plan').click();
+  await page.getByTestId('restore-plan').waitFor({ timeout: 8000 });
+  st = await state(page);
+  check('one tap rebuilds the plan, with no second question, and lands in the chat with the way back', st.plan.id !== idBefore && st.planBefore.plan.id === idBefore && sent('new_plan').length === askedSoFar + 1 && page.url().includes('#coach')
+    && (await page.getByTestId('assumptions').count()) === 0 && (await page.getByTestId('chat-rebuild').count()) === 1, JSON.stringify([st.plan.id, idBefore]));
+  await page.getByTestId('restore-plan').click();
+  await until(async () => (await state(page)).plan.id === idBefore);
+  await tab(page, 'Plan').click();
+  await page.getByTestId('timeline').waitFor();
+
   // the pairs switch is always on the Plan tab, and in Settings too
   check('the pairs switch is on the Plan tab whatever the plan', (await page.getByTestId('pairs-toggle').count()) === 1);
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.locator('#pref-pairs').click();
   st = await state(page);
   check('pairs can also be switched on in Settings', st.profile.pairs === true && (await page.locator('#pref-pairs').getAttribute('aria-checked')) === 'true');
