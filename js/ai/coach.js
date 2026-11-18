@@ -260,6 +260,11 @@ const lastAsked = (chat) => [...chat].reverse().find((m) => m.role === 'coach' &
 // Words that ask for a new plan. For the built-in coach; a connected model reads this itself.
 const asksRebuild = (text) => /\b(re-?build|re-?generate|re-?do|re-?make|re-?plan)\b[^.?!]*\bplan\b|\b(a|another) new plan\b|\bplan\b[^.?!]*\b(again|from scratch)\b/i.test(text);
 
+// What a plan is built on. When one of these changes in the chat and a plan exists, the plan is rebuilt at once.
+const SHAPES = ['goal', 'months', 'daysPerWeek', 'days', 'minutes', 'cycleWeeks', 'pairs', 'avoid', 'include', 'avoidTags'];
+const reshaped = (a, b) => SHAPES.some((k) => JSON.stringify(a[k] ?? null) !== JSON.stringify(b[k] ?? null));
+
+/** One turn of the built-in coach. Returns true when the plan should be rebuilt right after. */
 function localTurn(text) {
   const st = store.getState();
   const asked = lastAsked(st.chat.slice(0, -1));
@@ -280,46 +285,59 @@ function localTurn(text) {
     store.say('coach', [ack, q, profile.pairs ? '' : 'And if you would rather do supersets, two exercises in turns, than sit through rests, say so.'].filter(Boolean).join(' '), { asks: 'extras', chips: profile.pairs ? ['No, nothing'] : ['No, nothing', 'I like supersets'] });
     return;
   }
-  if (got.length || !st.plan || asksRebuild(text)) {
-    store.say('coach', [ack, st.plan ? 'Here is what I would rebuild the plan on.' : 'Here is what I will build the plan on. Tell me if anything is off.'].filter(Boolean).join(' '), { kind: 'assumptions' });
-    return;
+  // With a plan in place, saying it is enough: the plan is rebuilt at once and the old one is kept, so no button is needed.
+  if (st.plan && (reshaped(st.profile, profile) || asksRebuild(text))) {
+    store.say('coach', [ack, 'I am rebuilding your plan with that.'].filter(Boolean).join(' '));
+    return true;
   }
-  store.say('coach', 'With the built-in coach I can change your goal, sessions a week, session length, and which exercises to skip or include. For anything else, connect Claude or OpenAI in Settings, or swap an exercise during a workout.', { chips: ['Rebuild my plan'] });
+  if (!st.plan) {
+    store.say('coach', [ack, 'Here is what I will build the plan on. Tell me if anything is off.'].filter(Boolean).join(' '), { kind: 'assumptions' });
+    return false;
+  }
+  if (got.length) { store.say('coach', `${ack || 'Noted.'} That does not change the plan itself.`); return false; }
+  store.say('coach', 'With the built-in coach I can change your goal, sessions a week, session length, supersets, and which exercises to skip or include. Say it and the plan is rebuilt. For anything else, connect Claude or OpenAI in Settings, or swap an exercise during a workout.', { chips: ['Rebuild my plan'] });
+  return false;
 }
 
-/** Handle one message from the user. */
+/**
+ * Handle one message from the user. With a plan in place the chat alone
+ * updates it: single changes are made at once, and anything that needs a new
+ * plan rebuilds it at once, with the old plan kept so it can be put back.
+ * Only the very first plan waits for a tap, on the summary of what it is built on.
+ */
 export async function userSays(text) {
   const message = text.trim();
   if (!message || busy) return;
   store.say('user', message);
   if (/^rebuild my plan$/i.test(message) && !missingFields(store.getState().profile).length) {
-    store.say('coach', 'Here is what I would rebuild the plan on.', { kind: 'assumptions' });
+    if (store.getState().plan) { store.say('coach', 'I am rebuilding your plan.'); await buildPlan(); return; }
+    store.say('coach', 'Here is what I will build the plan on. Tell me if anything is off.', { kind: 'assumptions' });
     return;
   }
-  if (!aiReady()) { localTurn(message); return; }
+  if (!aiReady()) { if (localTurn(message)) await buildPlan(); return; }
   const src = aiSource();
   const name = aiName();
-  let rebuild = false;
+  let rebuild = null;
   setBusy(true);
   try {
     const st = store.getState();
     const out = await ask(interviewRequest({ profile: st.profile, equipment: st.equipment, plan: st.plan, chat: st.chat.slice(0, -1), message, sessions: st.sessions, weights: st.weights }));
     const now = store.getState();
     const profile = mergeAiProfile(now.profile, out.profile, now.equipment);
-    const before = JSON.stringify(now.profile);
     store.set({ profile });
     const changes = now.plan ? fromAiChanges(out.changes, { plan: now.plan, equipment: now.equipment, mode: 'after_session' }) : [];
     const textOut = [out.message, ...out.questions].filter(Boolean).join('\n') || 'Okay.';
+    const complete = !missingFields(profile).length;
     if (changes.length) {
       // What the user asked for is done at once; the chat shows each change with its Undo.
       const update = recordUpdate({ mode: 'coach', source: src, changes });
       store.say('coach', textOut, { via: src, kind: 'proposal', proposalId: update.id });
-    } else if ((out.rebuild_plan || out.plan) && now.plan && !missingFields(profile).length) {
-      // Asked for in words, so it is built now. The plan it replaces is kept and can be put back.
+    } else if (now.plan && complete && (out.rebuild_plan || out.plan || reshaped(now.profile, profile))) {
+      // Asked for in words, or what the plan is built on changed: it is rebuilt now. The plan it replaces is kept and can be put back.
       // A model that answers with the whole plan right here is taken at its word, so the chat and the plan agree.
-      store.say('coach', out.message || 'I will build a new plan from your results so far.', { via: src });
-      rebuild = out.plan ? { plan: out.plan, outlook: out.outlook, questions: [], message: '' } : {};
-    } else if (out.ready_for_plan && !missingFields(profile).length && (!now.plan || JSON.stringify(profile) !== before)) {
+      store.say('coach', out.message || 'I will build a new plan from that and your results so far.', { via: src });
+      rebuild = out.plan ? { ready: { plan: out.plan, outlook: out.outlook, questions: [], message: '' } } : {};
+    } else if (!now.plan && out.ready_for_plan && complete) {
       store.say('coach', textOut, { via: src, kind: 'assumptions' });
     } else {
       store.say('coach', textOut, { via: src });
@@ -327,12 +345,12 @@ export async function userSays(text) {
   } catch (e) {
     if (e?.code !== 'cancelled') {
       store.say('coach', `${e instanceof AiError ? e.message : `${name} did not answer.`} I carried on with the built-in coach.`, { kind: 'notice' });
-      localTurn(message);
+      if (localTurn(message)) rebuild = { byRules: true };
     }
   } finally {
     setBusy(false);
   }
-  if (rebuild) await buildPlan(rebuild.plan ? { ready: rebuild } : {});
+  if (rebuild) await buildPlan(rebuild);
 }
 
 const agoWords = (ts, now) => { const d = daysBetween(ts, now); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`; };
@@ -374,8 +392,9 @@ function keepReps(next, old) {
  * on after the last one instead of starting over, keeps the weights and the
  * reps reached, and the plan it replaces is kept so it can be put back.
  * `ready` is a model's answer that already holds the plan, when the chat got one.
+ * `byRules` skips the model: it has just failed, so asking it again would only fail again.
  */
-export async function buildPlan({ ready = null } = {}) {
+export async function buildPlan({ ready = null, byRules = false } = {}) {
   if (busy) return;
   const st = store.getState();
   if (missingFields(st.profile).length) return;
@@ -384,7 +403,7 @@ export async function buildPlan({ ready = null } = {}) {
   let plan = null;
   let via;
   let said = '';
-  if (aiReady()) {
+  if (aiReady() && !byRules) {
     const src = aiSource();
     const name = aiName();
     setBusy(true);
@@ -392,7 +411,7 @@ export async function buildPlan({ ready = null } = {}) {
       const out = ready || await ask(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights, plan: st.plan, sessions: st.sessions, chat: st.chat }));
       if (out.plan) {
         const res = normalizePlan(out.plan, st.profile, st.equipment, weights);
-        fitPlan(res.plan, st.profile);
+        fitPlan(res.plan, st.profile, { slack: 0.1 }); // the minutes are a preference: only a clear overrun is cut back
         plan = fillOptional(refreshPlan({ ...res.plan, source: src, outlook: out.outlook ? { text: out.outlook, by: src } : null }), st.profile, st.equipment, weights);
         via = src;
         said = st.plan ? out.message : '';
@@ -419,6 +438,7 @@ export async function buildPlan({ ready = null } = {}) {
   if (!plan) plan = continueFrom(generatePlan(now.profile, now.equipment, weights), now.sessions);
   const old = now.plan;
   if (old) {
+    if (plan.id === old.id) plan.id = `${plan.id}b`; // built in the same instant: still a plan of its own
     keepReps(plan, old);
     refreshPlan(plan);
     plan.version = (old.version || 1) + 1;
@@ -525,7 +545,7 @@ export function planNextRun() {
       const now = store.getState();
       if (!out.plan || !now.plan || now.plan.id !== planId || !runFinished(now.plan) || store.activeSession(now)) return;
       const res = normalizePlan(out.plan, now.profile, now.equipment, knownWeights(now.weights, now.sessions, now.plan));
-      fitPlan(res.plan, now.profile);
+      fitPlan(res.plan, now.profile, { slack: 0.1 });
       keepReps(res.plan, now.plan);
       const next = refreshPlan({ ...res.plan, source: src, version: (now.plan.version || 1) + 1, outlook: out.outlook ? { text: out.outlook, by: src } : now.plan.outlook || null });
       next.queue = { ...next.queue, run: queueState(now.plan).run + 1 };

@@ -281,6 +281,8 @@ export function arrangeForPairs(exercises, goal) {
 /**
  * Mark the neighbours of one session that pair up, top to bottom, or clear the
  * marks when `on` is false. Returns true when a mark changed.
+ * In a plan a model built, the model says which two go together and that is
+ * used as it stands; in a rule-built plan rule PAR-1 decides.
  */
 export function pairUp(exercises, goal, on = true) {
   let changed = false; let n = 0;
@@ -289,9 +291,13 @@ export function pairUp(exercises, goal, on = true) {
     changed = true;
     if (v) ex.pair = v; else delete ex.pair;
   };
+  // A session the coach marked itself keeps the supersets the coach chose (`chosen` on both
+  // exercises); the rule decides only where nobody chose.
+  const byCoach = exercises.some((x) => 'chosen' in x);
+  const fits = (a, b) => (byCoach ? !!a.chosen && a.chosen === b.chosen && !a.optional && !b.optional : canPair(a, b, goal));
   for (let i = 0; i < exercises.length; i++) {
     const a = exercises[i]; const b = exercises[i + 1];
-    if (on && b && canPair(a, b, goal)) { const id = `p${++n}`; mark(a, id); mark(b, id); i++; } else mark(a, null);
+    if (on && b && fits(a, b)) { const id = `p${++n}`; mark(a, id); mark(b, id); i++; } else mark(a, null);
   }
   return changed;
 }
@@ -325,10 +331,15 @@ export function fillPairs(plan, profile = {}) {
   return next;
 }
 
-/** Trim every session of a plan to its time budget, counting the time the way the plan will be done. */
-export function fitPlan(plan, profile = {}) {
+/**
+ * Trim every session of a plan to its time budget, counting the time the way
+ * the plan will be done. `slack` is how far over a session may run before it is
+ * trimmed: for a plan a model built, the minutes are the user's preference and
+ * the model may run a little over for a reason, so only a clear overrun is cut.
+ */
+export function fitPlan(plan, profile = {}, { slack = 0 } = {}) {
   const seconds = profile?.pairs ? pairedSeconds(plan.goal, false) : daySeconds;
-  for (const d of plan.days) fitToBudget(d.exercises, plan.minutes, seconds);
+  for (const d of plan.days) if (seconds(d.exercises) > plan.minutes * 60 * (1 + slack)) fitToBudget(d.exercises, plan.minutes, seconds);
   return plan;
 }
 
@@ -779,13 +790,15 @@ export function normalizePlan(raw, profile, equipment, weights = {}, now = Date.
   const weeks = cycleWeeks(profile);
   const days = [];
   for (const rd of raw?.days || []) {
-    if (days.length >= perWeek * CYCLE.maxWeeks) break;
+    if (days.length >= MAX_DAYS * CYCLE.maxWeeks) break;
     const di = days.length + 1;
     const exercises = [];
     const used = new Set();
+    let open = null; // a superset the model began on the exercise before
+    let sup = 0;
     for (const re of rd.exercises || []) {
       const x = all.find((y) => y.id === re.exercise_id);
-      if (!x || !canDo(equipment, x) || used.has(x.id)) { dropped.push(re.exercise_id); continue; }
+      if (!x || !canDo(equipment, x) || used.has(x.id)) { dropped.push(re.exercise_id); open = null; continue; }
       used.add(x.id);
       const tier = ['main', 'secondary', 'accessory'].includes(re.role) ? re.role : 'accessory';
       const base = prescribe(goal, tier, level, x.load);
@@ -800,8 +813,13 @@ export function normalizePlan(raw, profile, equipment, weights = {}, now = Date.
         sets, repLo, repHi, reps: repLo,
         restSec: clampInt(re.rest_seconds, 20, 360, base.rest),
         load: known ? { value: known.value, step: known.step } : (x.load === 'bodyweight' ? { value: 0, step: PROGRESSION.defaultStep.bodyweight } : null),
+        chosen: null, // which superset the model put it in, if any
       });
+      // The model's own supersets: "this one and the next". Two exercises each, never a chain of three.
+      const me = exercises[exercises.length - 1];
+      if (open) { me.chosen = open.chosen; open = null; } else if (re.superset_with_next === true) { me.chosen = `c${++sup}`; open = me; }
     }
+    if (open) open.chosen = null; // the last exercise has no next
     if (!exercises.length) continue;
     // Optional extras the model picked for this session. With none, the rules pick them below.
     const optional = [];
@@ -833,6 +851,10 @@ export function normalizePlan(raw, profile, equipment, weights = {}, now = Date.
   }
   // Keep the model's order within a week, weeks in order, ids and keys in sequence.
   days.sort((a, b) => a.week - b.week);
+  // Sessions a week as the model laid them out: sessions per seven days, going by its own rest days.
+  // The user's setting is a preference; a model that plans more or fewer for a reason is taken at its word.
+  const span = days.reduce((n, d) => n + d.restAfter + 1, 0);
+  const made = span > 0 ? Math.min(Math.max(Math.round((days.length * 7) / span), 1), MAX_DAYS) : perWeek;
   let lastWeek = 0; let slot = 0;
   days.forEach((d, i) => {
     slot = d.week === lastWeek ? slot + 1 : 1; lastWeek = d.week;
@@ -845,7 +867,7 @@ export function normalizePlan(raw, profile, equipment, weights = {}, now = Date.
   nameSessions(days);
   const plan = {
     id: `plan_${now.toString(36)}`, version: 1, createdAt: now, rulesVersion: RULES_VERSION, source: 'claude',
-    goal, level, minutes: clampMinutes(profile.minutes), perWeek, cycleWeeks: Math.max(lastWeek, 1), forPairs: !!profile.pairs, days,
+    goal, level, minutes: clampMinutes(profile.minutes), perWeek: made, cycleWeeks: Math.max(lastWeek, 1), forPairs: !!profile.pairs, days,
     notes: (raw.notes || []).map((n) => String(n).slice(0, 200)).slice(0, 6),
   };
   plan.queue = newRun(plan);

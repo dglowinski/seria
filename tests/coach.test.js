@@ -10,7 +10,7 @@ import { recommend, completeDay, queueState } from '../js/domain/schedule.js';
 import { askAgain, reviewRunning, setWeight } from '../js/ai/coach.js';
 import { userSays, buildPlan, canRestorePlan, restorePlan, recentCount } from '../js/ai/coach.js';
 import { continueFrom, cycleNext } from '../js/domain/schedule.js';
-import { knownWeights, fillLoads } from '../js/domain/planner.js';
+import { knownWeights, fillLoads, fitPlan, fillPairs, normalizePlan, dayMinutes } from '../js/domain/planner.js';
 import { exerciseHistory } from '../js/domain/progression.js';
 import { resultLine, stepText } from '../js/ui/past.js';
 import { emptyProfile, generatePlan, missingFields, units } from '../js/domain/planner.js';
@@ -727,11 +727,9 @@ test('rebuild: the new plan starts after the last workout, keeps reps and weight
   let st = store.getState();
   const old = st.plan;
   const reps = benchIn(old)[0].reps; // already one up from the workout
-  await userSays('Please regenerate my plan'); // the built-in coach shows what it would rebuild on first
-  assert.equal(store.getState().chat.slice(-1)[0].kind, 'assumptions');
-  assert.equal(store.getState().plan.id, old.id, 'nothing is replaced before the button');
-  await buildPlan();
+  await userSays('Please regenerate my plan'); // said in words, it is built at once: no button to press
   st = store.getState();
+  assert.equal(st.chat.slice(-2)[0].text, 'I am rebuilding your plan with that.');
   assert.notEqual(st.plan.id, old.id); assert.equal(st.plan.version, (old.version || 1) + 1);
   assert.equal(queueState(st.plan).queue[0].id, 'd2', 'not the session trained yesterday');
   assert.ok(benchIn(st.plan).length > 0 && benchIn(st.plan).every((x) => x.reps === reps), 'the reps reached are kept');
@@ -863,4 +861,70 @@ test('supersets: the coach reads the wish from plain words and is told to build 
   assert.ok(/The plan must still make sense as training/.test(SYSTEM_PROMPT) && /do not like waiting around between sets/.test(SYSTEM_PROMPT));
   const made = generatePlan({ ...SET_UP, pairs: true }, emptyEquipment(), W0);
   assert.equal(made.forPairs, true); assert.ok(!generatePlan(SET_UP, emptyEquipment(), W0).forPairs);
+});
+
+test('the chat alone updates the plan: a change to what it is built on rebuilds it at once, and the old plan is kept', async () => {
+  settledApp();
+  train('d1', () => null, eveningAgo(1));
+  const old = store.getState().plan;
+  await userSays('Make it four days a week');
+  let st = store.getState();
+  assert.equal(st.profile.daysPerWeek, 4); assert.notEqual(st.plan.id, old.id); assert.equal(st.plan.perWeek, 4);
+  assert.equal(st.planBefore.plan.id, old.id); assert.ok(canRestorePlan());
+  assert.ok(!st.chat.some((m) => m.kind === 'assumptions'), 'no summary card and no button on the way');
+  assert.match(st.chat.slice(-2)[0].text, /4 days a week\. I am rebuilding your plan with that\./);
+  assert.equal(st.chat.slice(-1)[0].kind, 'plan');
+  // Supersets, said in words.
+  const before = st.plan.id;
+  await userSays('I hate sitting around between sets');
+  st = store.getState();
+  assert.equal(st.profile.pairs, true); assert.notEqual(st.plan.id, before); assert.equal(st.plan.forPairs, true);
+  assert.ok(st.plan.days.every((d) => d.exercises.some((x) => x.pair)));
+  // Something that does not shape the plan leaves it alone, and so does small talk.
+  const kept = st.plan.id;
+  await userSays('thanks, that looks good');
+  assert.equal(store.getState().plan.id, kept);
+  // The very first plan still waits for a tap on the summary of what it is built on.
+  store.replaceState({ ...emptyState(), profile: { ...SET_UP, askedExtras: true }, equipment: emptyEquipment() });
+  await userSays('I can do 45 minutes');
+  st = store.getState();
+  assert.equal(st.plan, null); assert.equal(st.chat.slice(-1)[0].kind, 'assumptions');
+});
+
+test('a model decides the training: its week, its supersets and a small overrun stand; the settings are preferences', () => {
+  const eq = emptyEquipment();
+  const profile = { ...SET_UP, pairs: true }; // the setting says three sessions a week, 50 minutes
+  const ex = (id, role, next = false, sets = 3) => ({ exercise_id: id, role, sets, rep_low: 8, rep_high: 10, rest_seconds: 90, superset_with_next: next });
+  const day = (title, rest, list) => ({ week: 1, title, rest_days_after: rest, exercises: list, optional_exercises: [] });
+  const raw = { notes: [], days: [
+    day('Upper', 0, [ex('db_bench_press', 'main', true), ex('db_row', 'main'), ex('db_shoulder_press', 'secondary'), ex('pull_up', 'secondary', true), ex('db_curl', 'accessory'), ex('db_lateral_raise', 'accessory', true)]),
+    day('Lower', 1, [ex('goblet_squat', 'main', true), ex('db_rdl', 'main'), ex('db_calf_raise', 'accessory')]),
+    day('Upper again', 0, [ex('incline_db_press', 'main'), ex('chin_up', 'main')]),
+    day('Lower again', 2, [ex('db_reverse_lunge', 'main'), ex('db_calf_raise', 'accessory')]),
+  ] };
+  const { plan } = normalizePlan(raw, profile, eq, {});
+  assert.equal(plan.perWeek, 4, 'four sessions in seven days, by its own rest days, although the setting says three');
+  const d1 = plan.days[0].exercises;
+  assert.ok(d1[0].pair && d1[0].pair === d1[1].pair, 'the superset the model marked');
+  assert.ok(!d1[2].pair, 'the rule would pair these two; the model did not, so they stay apart');
+  assert.ok(d1[3].pair && d1[3].pair === d1[4].pair, 'a pair the model chose, whatever the rule thinks of it');
+  assert.ok(!d1[5].pair, 'the last exercise has no next');
+  const d2 = plan.days[1].exercises;
+  assert.ok(d2[0].pair && d2[0].pair === d2[1].pair, 'the model may even superset a squat: its call');
+  // The user's switch still rules: off means no supersets, on brings the model's choice back.
+  const off = fillPairs(plan, { pairs: false });
+  assert.ok(off.days.every((d) => d.exercises.every((x) => !x.pair)));
+  const on = fillPairs(off, { pairs: true });
+  assert.deepEqual(on.days[0].exercises.map((x) => !!x.pair), [true, true, false, true, true, false]);
+  // Time: a session a little over the preferred minutes stands, one far over is cut back.
+  const long = (n) => ({ ...plan, minutes: 50, days: [{ ...plan.days[0], exercises: Array.from({ length: n }, (_, i) => ({ ...d1[2], key: `k${i}`, tier: i < 2 ? 'main' : 'accessory', sets: 3, chosen: null })) }] });
+  const mins = (p) => dayMinutes(p.days[0].exercises);
+  const sizes = [4, 5, 6, 7, 8].map((n) => [n, mins(long(n))]);
+  const near = sizes.find(([, m]) => m > 50 && m <= 55); const far = sizes.find(([, m]) => m > 56);
+  assert.ok(near && far, JSON.stringify(sizes));
+  assert.equal(fitPlan(long(near[0]), {}, { slack: 0.1 }).days[0].exercises.length, near[0], 'a few minutes over is the model\'s call');
+  assert.ok(mins(fitPlan(long(far[0]), {}, { slack: 0.1 })) <= 50, 'a clear overrun is cut back to the minutes');
+  assert.ok(mins(fitPlan(long(near[0]), {})) <= 50, 'a rule-built plan keeps to the minutes exactly');
+  assert.ok(/They are the user's preferences, and you are the coach: you decide what the training is/.test(SYSTEM_PROMPT) && /You choose the supersets yourself/.test(SYSTEM_PROMPT) && /no button for the user to press/.test(SYSTEM_PROMPT));
+  assert.equal(OUTPUT_SCHEMA.properties.plan.anyOf[0].properties.days.items.properties.exercises.items.properties.superset_with_next.type, 'boolean');
 });

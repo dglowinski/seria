@@ -15,6 +15,8 @@ export function canned(payload) {
     }
     // A model that answers with a whole plan in the chat, without the flag: the app must not leave it unused.
     if (payload.current_plan && /fresh start/i.test(msg)) return { ...empty, message: 'Here is a fresh plan: push, pull and legs.', plan: canned({ ...payload, mode: 'next_run' }).plan };
+    // Something the plan is built on, said in the chat: the profile changes and the flag asks for the new plan.
+    if (payload.current_plan && /two days|2 days/i.test(msg)) return { ...empty, message: 'Two days a week it is. I will rebuild the plan for that.', rebuild_plan: true, profile: { ...payload.profile_so_far, months_training: payload.profile_so_far.months_training, days_per_week: 2, weekdays: [], pair_exercises: payload.profile_so_far.pair_exercises, minutes_per_session: payload.profile_so_far.minutes_per_session, preferences: null, limitations: null } };
     if (payload.current_plan && /shorter|fewer sets/i.test(msg)) {
       const ex = payload.current_plan.sessions[0].exercises[0];
       return { ...empty, message: 'I can trim the first lift of the first session.', changes: [{ exercise_key: ex.exercise_key, field: 'sets', new_value: ex.sets - 1, new_exercise_id: null, reason: `You asked for a shorter session, so ${ex.name} drops from ${ex.sets} to ${ex.sets - 1} sets.` }] };
@@ -62,7 +64,8 @@ export function canned(payload) {
     // `extra`: optional exercises for the end of the session. One is made up, to be dropped by the app.
     const day = (title, rest, ids, extra = []) => ({
       week: 1, title, rest_days_after: rest,
-      exercises: ids.filter((id) => id === 'ghost_lift' || have.has(id)).map((id, i) => ({ exercise_id: id, role: i < 2 ? 'main' : 'accessory', sets: 3, rep_low: 8, rep_high: 10, rest_seconds: 90 })),
+      // With supersets on, the double makes its own: the first two of every session, whatever the app's rule would do.
+      exercises: ids.filter((id) => id === 'ghost_lift' || have.has(id)).map((id, i) => ({ exercise_id: id, role: i < 2 ? 'main' : 'accessory', sets: 3, rep_low: 8, rep_high: 10, rest_seconds: 90, superset_with_next: !!(payload.profile || payload.profile_so_far || {}).pair_exercises && i === 0 })),
       optional_exercises: extra.map((id) => ({ exercise_id: id, sets: 2, rep_low: 10, rep_high: 12, rest_seconds: 60, why: `Test double: ${id} fits the end of this session.` })),
     });
     if (mode === 'next_run') {

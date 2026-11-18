@@ -136,18 +136,18 @@ try {
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Coach' }).click();
   await page.fill('#coach-input', 'Please regenerate my plan');
   await page.getByRole('button', { name: 'Send' }).click();
-  await page.getByTestId('build-plan').last().click();
-  await page.getByTestId('restore-plan').waitFor({ timeout: 8000 });
+  await page.getByTestId('restore-plan').waitFor({ timeout: 8000 }); // said in the chat, built at once: no button
   const now = await read();
-  check('asking the coach for a new plan builds one, says which session is next, and keeps the old plan', now.id !== was.id && now.before === was.id && now.version === was.version + 1
+  check('asking the coach for a new plan in the chat builds one with no button, says which session is next, and keeps the old plan', now.id !== was.id && now.before === was.id && now.version === was.version + 1
     && now.said.kind === 'plan' && now.said.replaced === true && / is next\.| starts with /.test(now.said.text) && now.note.length > 20, JSON.stringify(now));
   await page.getByTestId('restore-plan').click();
   const back = await read();
   check('"Put the old plan back" undoes the rebuild', back.id === was.id && back.before === null && (await page.getByTestId('restore-plan').count()) === 0, JSON.stringify(back));
-  check('the release is version 1.7.0, and the coach is sent the workouts on record and where the cycle stands', await page.evaluate(async () => {
+  check('the release is version 1.8.0, and the coach is sent the workouts on record and where the cycle stands', await page.evaluate(async () => {
     const [v, p, s] = await Promise.all(['js/ui/prefs.js', 'js/ai/prompts.js', 'js/domain/schedule.js'].map((f) => fetch(f).then((r) => r.text())));
-    return v.includes("APP_VERSION = '1.7.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
-      && p.includes('where_the_cycle_stands') && p.includes('never swap one for variety alone') && s.includes('export function cycleNext');
+    return v.includes("APP_VERSION = '1.8.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
+      && p.includes('where_the_cycle_stands') && p.includes('never swap one for variety alone') && s.includes('export function cycleNext')
+      && p.includes('you are the coach: you decide what the training is') && p.includes('superset_with_next');
   }));
   await context.setOffline(false);
   // Back online: the offline worker's own file is not kept in the offline copy, so it is read from the network.
@@ -156,7 +156,7 @@ try {
     return a.includes("addEventListener('controllerchange'") && w.includes("cache: 'reload'") && w.includes("cache: 'no-cache'");
   }));
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Plan' }).click();
-  check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.7.0');
+  check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.8.0');
   // The one set logged above shows as the exercise's earlier result in the session's preview.
   await page.getByTestId('plan-session').filter({ hasText: 'Upper body A' }).first().click();
   await page.getByTestId('start-day').waitFor({ timeout: 8000 });

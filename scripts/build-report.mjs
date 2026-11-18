@@ -121,6 +121,14 @@ const v11 = [
   ['The long view.', 'A plain-words outlook on the Plan tab: what this round holds, how it gets harder, what changes round to round, what happens when it stalls, and what would be added with more time. A connected model adds its own.'],
 ];
 
+// Version 1.8: the settings are preferences, the model decides, and the chat alone updates the plan.
+const v18 = [
+  ['Settings are preferences, and the model decides.', 'Goal, sessions a week, minutes, supersets and exercises to skip go to the model as what you would like, with the conversation and your workouts. It is told that it is the coach: it weighs them, draws its own conclusions from what you say and from your records, builds the training, and says so when it departs from a setting.'],
+  ['The app takes the model\'s plan as it comes.', 'Its sessions a week (read from its own rest days), the supersets it marks itself (before, the app paired by rule), and a session up to a tenth over your minutes all stand. Two things stay fixed: only exercises your gym allows, and none you asked to avoid. The check that a new plan does not open with the session you just trained stays as a safety net.'],
+  ['The chat alone updates the plan.', 'Say what you want and it happens, with no button: single changes are made at once with an Undo, and anything the plan is built on (days, minutes, goal, supersets) or a request for a new plan rebuilds it at once. The old plan is kept and can be put back. Only the very first plan waits for a tap.'],
+  ['Without a model.', 'The built-in coach does the same from the chat for the things it understands, and the training rules follow the settings to the letter.'],
+];
+
 // Version 1.7: supersets as a mode the plan is built for.
 const v17 = [
   ['Supersets are a mode now, and are called that.', 'What the app called pairs is now "Supersets": two exercises that use different muscles, done in turns. It is for people who would rather do a set of something else than sit through a rest, and it also makes sessions shorter.'],
@@ -319,6 +327,12 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
       <div class="rowx head"><span>The design says</span><span>Status</span><span>The app does</span></div>
       ${spec.map(([a, s, b]) => `<div class="rowx"><span>${esc(a)}</span><span><span class="pill ${s === 'changed' ? 'mostly' : s}">${s === 'done' ? 'Done' : s === 'changed' ? 'Changed' : 'Mostly'}</span></span><span class="muted">${esc(b)}</span></div>`).join('\n      ')}
     </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">New in version 1.8</p>
+    <h2>Your settings are preferences, the model decides, and the chat alone updates the plan</h2>
+    <div>${v18.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
   </section>
 
   <section>

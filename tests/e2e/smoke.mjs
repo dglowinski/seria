@@ -891,8 +891,8 @@ await guarded(async () => {
   api.state.fail = 401;
   await say(page, 'Make it four days a week');
   await page.getByText(/rejected the API key/).waitFor();
-  await page.getByTestId('assumptions').last().waitFor();
-  check('a failing key gives a plain message and the built-in coach answers', (await state(page)).profile.daysPerWeek === 4);
+  check('a failing key gives a plain message, and the built-in coach answers and rebuilds the plan from the chat alone', await until(async () => { const s = await state(page); return s.profile.daysPerWeek === 4 && s.plan.perWeek === 4 && s.plan.source === 'rules'; }, 6000)
+    && (await page.getByText(/rejected the API key/).count()) === 1 && (await page.getByTestId('assumptions').count()) === 0, JSON.stringify([(await state(page)).plan.perWeek, (await state(page)).plan.source]));
   await shot(page, '20-claude-fallback');
   await tab(page, 'Equipment').click();
   await page.getByTestId('add-machine').click();
@@ -1257,8 +1257,7 @@ await guarded(async () => {
   await tab(page, 'Coach').click();
   await say(page, 'Make it four days a week');
   await page.getByText(/OpenAI rejected the API key/).waitFor();
-  await page.getByTestId('assumptions').last().waitFor();
-  check('a failing OpenAI key gives a plain message and the built-in coach answers', (await state(page)).profile.daysPerWeek === 4);
+  check('a failing OpenAI key gives a plain message and the built-in coach answers', await until(async () => { const s = await state(page); return s.profile.daysPerWeek === 4 && s.plan.perWeek === 4; }, 6000));
   oai.state.fail = null;
 
   // switching back: each provider keeps its own key
@@ -1387,7 +1386,17 @@ await guarded(async () => {
   await page.getByText('Tell me about your goal').waitFor();
   await say(page, "I want to build muscle. I've trained for a year. I can come four times a week for 60 minutes.");
   await page.getByText(/movements you want to skip/).waitFor();
+  check('the coach asks about supersets along with what to skip', /would rather do supersets/.test(await page.locator('.chat .bubble').last().textContent()) && (await page.getByRole('button', { name: 'I like supersets' }).count()) === 1);
   await page.getByRole('button', { name: 'No, nothing' }).click();
+  await page.getByTestId('assumptions').waitFor();
+  const sw = page.getByTestId('assume-pairs-switch');
+  check('the summary before the first plan has the supersets switch, off', (await sw.getAttribute('aria-checked')) === 'false' && /Turn them on if you would rather do a set of something else/.test(await page.getByTestId('assume-pairs').textContent()));
+  await sw.click();
+  check('switched on there, the summary says the plan is built for supersets', await until(async () => (await state(page)).profile.pairs === true) && (await sw.getAttribute('aria-checked')) === 'true'
+    && /The plan is built for supersets/.test(await page.getByTestId('assume-pairs').textContent()) && /Supersets/.test(await page.getByTestId('assumptions').locator('dl').textContent()));
+  await shot(page, '55-supersets-mode');
+  await sw.click();
+  await until(async () => (await state(page)).profile.pairs === false);
   await page.getByTestId('build-plan').click();
   await page.getByTestId('open-plan').click();
   await page.getByRole('heading', { name: 'Your plan' }).waitFor();
@@ -1526,21 +1535,14 @@ await guarded(async () => {
   const offer = page.getByTestId('pairs-rebuild');
   check('with alternating on, the plan says it was not made for it and offers one that is', (await state(page)).profile.pairs === true && /not made for supersets/.test(await offer.textContent()) && /^Supersets/.test(await page.getByTestId('pairs-toggle').textContent()), await page.getByTestId('pairs-toggle').textContent());
   await page.getByTestId('pairs-build').click();
-  await page.getByTestId('assumptions').waitFor();
-  const sw = page.getByTestId('assume-pairs-switch');
-  check('the summary before a plan is built shows the mode, with its own switch', (await sw.getAttribute('aria-checked')) === 'true' && /The plan is built for supersets/.test(await page.getByTestId('assume-pairs').textContent()) && /Supersets/.test(await page.getByTestId('assumptions').locator('dl').textContent()));
-  await sw.click();
-  check('the switch on the summary turns it off', await until(async () => (await state(page)).profile.pairs === false) && (await sw.getAttribute('aria-checked')) === 'false' && !/Supersets/.test(await page.getByTestId('assumptions').locator('dl').textContent()));
-  await sw.click();
-  await until(async () => (await state(page)).profile.pairs === true);
-  await shot(page, '55-supersets-mode');
-  await page.getByTestId('build-plan').click();
-  await page.getByTestId('open-plan').click();
-  await page.getByTestId('timeline').waitFor();
+  await page.getByTestId('restore-plan').waitFor({ timeout: 8000 });
   st = await state(page);
   const pairsIn = (d) => new Set(d.exercises.map((x) => x.pair).filter(Boolean)).size;
-  check('the new plan is made for alternating: every session has pairs, and the offer is gone', st.plan.forPairs === true && st.plan.days.every((d) => pairsIn(d) >= 1) && pairsIn(st.plan.days[0]) >= 3
-    && (await page.getByTestId('pairs-rebuild').count()) === 0, JSON.stringify(st.plan.days.map((d) => [d.title, pairsIn(d)])));
+  check('one tap builds a plan made for supersets, with no second button: every session has them', st.plan.forPairs === true && st.plan.days.every((d) => pairsIn(d) >= 1) && pairsIn(st.plan.days[0]) >= 3
+    && (await page.getByTestId('assumptions').count()) === 0, JSON.stringify(st.plan.days.map((d) => [d.title, pairsIn(d)])));
+  await page.getByTestId('open-plan').click();
+  await page.getByTestId('timeline').waitFor();
+  check('and the offer is gone from the plan', (await page.getByTestId('pairs-rebuild').count()) === 0);
   check('no script errors in part H', errors.length === 0, errors.join(' | '));
   await context.close();
 });
@@ -1685,6 +1687,21 @@ await guarded(async () => {
   await page.locator('#pref-pairs').click();
   st = await state(page);
   check('pairs can also be switched on in Settings', st.profile.pairs === true && (await page.locator('#pref-pairs').getAttribute('aria-checked')) === 'true');
+
+  // the chat alone changes what the plan is built on; the settings are preferences, and the model's own choices stand
+  await tab(page, 'Coach').click();
+  const builds = sent('new_plan').length;
+  const planWas = st.plan.id;
+  await say(page, 'Make it two days a week.');
+  await until(async () => (await state(page)).plan.id !== planWas, 8000);
+  await page.getByTestId('restore-plan').waitFor({ timeout: 8000 });
+  st = await state(page);
+  const req = sent('new_plan').slice(-1)[0];
+  check('saying it in the chat is enough: the setting changes and the plan is rebuilt, with no summary card and no button', st.profile.daysPerWeek === 2 && sent('new_plan').length === builds + 1 && req.profile.sessions_per_week === 2 && req.profile.pair_exercises === true
+    && st.plan.id !== planWas && (await page.getByTestId('assumptions').count()) === 0 && st.chat.some((m) => m.text === 'Two days a week it is. I will rebuild the plan for that.'), JSON.stringify([st.profile.daysPerWeek, req.profile.sessions_per_week, st.chat.slice(-2).map((m) => m.text)]));
+  check('the settings are preferences: the model laid out three sessions a week, and that stands', st.plan.perWeek === 3 && st.plan.days.length === 3, `${st.plan.perWeek} a week`);
+  check('the model chose the supersets itself, and they are used as chosen, even one the app\'s own rule would not make', st.plan.days.every((d) => d.exercises[0].pair && d.exercises[0].pair === d.exercises[1].pair && d.exercises.slice(2).every((x) => !x.pair))
+    && st.plan.days[1].exercises[0].pattern === 'squat' && st.plan.days[1].exercises[1].pattern === 'hinge', JSON.stringify(st.plan.days.map((d) => d.exercises.map((x) => `${x.pattern}:${x.pair || '-'}`))));
   check('no script errors in part I', errors.length === 0, errors.join(' | '));
   await context.close();
 });

@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-18T09:47:18.758Z",
+  "ranAt": "2026-11-18T10:01:12.358Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 310,
-  "passed": 310,
+  "total": 315,
+  "passed": 315,
   "failed": 0,
   "results": [
     {
@@ -979,7 +979,7 @@
     },
     {
       "part": "B Claude API",
-      "name": "a failing key gives a plain message and the built-in coach answers",
+      "name": "a failing key gives a plain message, and the built-in coach answers and rebuilds the plan from the chat alone",
       "ok": true,
       "detail": ""
     },
@@ -1513,6 +1513,24 @@
     },
     {
       "part": "H pairs and the band",
+      "name": "the coach asks about supersets along with what to skip",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "the summary before the first plan has the supersets switch, off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
+      "name": "switched on there, the summary says the plan is built for supersets",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "H pairs and the band",
       "name": "\"Other\" opens the step field ready to type in",
       "ok": true,
       "detail": ""
@@ -1693,19 +1711,13 @@
     },
     {
       "part": "H pairs and the band",
-      "name": "the summary before a plan is built shows the mode, with its own switch",
+      "name": "one tap builds a plan made for supersets, with no second button: every session has them",
       "ok": true,
       "detail": ""
     },
     {
       "part": "H pairs and the band",
-      "name": "the switch on the summary turns it off",
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "part": "H pairs and the band",
-      "name": "the new plan is made for alternating: every session has pairs, and the offer is gone",
+      "name": "and the offer is gone from the plan",
       "ok": true,
       "detail": ""
     },
@@ -1856,6 +1868,24 @@
     {
       "part": "I coach and history",
       "name": "pairs can also be switched on in Settings",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "saying it in the chat is enough: the setting changes and the plan is rebuilt, with no summary card and no button",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "the settings are preferences: the model laid out three sessions a week, and that stands",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "the model chose the supersets itself, and they are used as chosen, even one the app's own rule would not make",
       "ok": true,
       "detail": ""
     },
