@@ -122,6 +122,12 @@ details.note > summary { cursor: pointer; }
 .note.thinking .dots span { background: var(--accent); }
 .dots { display: inline-flex; align-items: center; flex: none; }
 li.paired { border-left: 3px solid var(--accent); }
+/* Earlier results in an exercise box: small print that stays out of the way. */
+.past { display: grid; gap: 3px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; }
+.past-title { font-weight: 700; }
+.past-more { background: none; border: 0; padding: 0 0 0 12px; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
+.past-row { display: grid; grid-template-columns: 3.6em 1fr auto; gap: 8px; align-items: baseline; }
+.past-row .up { color: var(--accent); }
 .tag { font-size: 12px; font-weight: 700; letter-spacing: .04em; border-radius: 6px; padding: 2px 7px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .tag.good { color: var(--accent); border-color: var(--accent); }
 .tag.warn { color: var(--warn); border-color: var(--warn); }

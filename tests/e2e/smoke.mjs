@@ -1622,6 +1622,48 @@ await guarded(async () => {
   await page.getByTestId('chat-clear-yes').click();
   st = await state(page);
   check('"Clear chat" empties the chat and leaves the plan alone', st.chat.length === 0 && st.plan.days.length === 3 && st.sessions.length === 1 && (await page.getByText('Tell me about your goal').count()) === 1, JSON.stringify([st.chat.length, st.plan.days.length]));
+
+  // earlier results in the exercise box: the last few times in small print, the rest on request
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('seria.state.v1'));
+    const base = st.sessions[0];
+    for (let k = 1; k <= 4; k++) { // four older workouts of the same session, each 2 kg lighter than the next
+      const c = JSON.parse(JSON.stringify(base));
+      c.id = `${base.id}-c${k}`;
+      for (const key of ['startedAt', 'endedAt', 'updatedAt']) if (c[key]) c[key] -= k * 3 * 864e5;
+      for (const ex of c.exercises) for (const s of ex.sets) if (s.actual && s.actual.load) s.actual.load = Math.max(s.actual.load - 2 * k, 2);
+      st.sessions.push(c);
+    }
+    localStorage.setItem('seria.state.v1', JSON.stringify(st));
+  });
+  await page.reload();
+  await tab(page, 'Plan').click();
+  await page.getByTestId('timeline').waitFor();
+  await openSession(page, 'Push');
+  const past = page.getByTestId('day-exercise').first().getByTestId('past');
+  const rowText = async (i) => (await past.getByTestId('past-row').nth(i).textContent()).replace(/\s+/g, ' ');
+  check('a session shows, for each exercise, how the last few times went', (await past.getByTestId('past-row').count()) === 3 && /^Last 3 times/.test(await past.textContent()) && /^\d+ \w{3}\s*20 kg × \d+, \d+, \d+\s*\+2 kg$/.test(await rowText(0))
+    && /18 kg/.test(await rowText(1)) && (await past.getByTestId('past-more').textContent()).trim() === 'Show all 5', `${await past.textContent()} :: ${await rowText(0)}`);
+  check('an exercise never done shows nothing there', (await page.getByTestId('day-exercise').nth(2).getByTestId('past').count()) === 0 && (await page.getByTestId('day-exercise').count()) === 3);
+  await shot(page, '53-past-day');
+  await past.getByTestId('past-more').click();
+  check('"Show all" opens the whole list, and it closes again', (await past.getByTestId('past-row').count()) === 5 && /^All 5 times/.test(await past.textContent()) && /12 kg/.test(await rowText(4))
+    && (await past.getByTestId('past-more').textContent()).trim() === 'Show fewer');
+  await startWith(page, 'start-day');
+  if (await until(() => page.getByTestId('today-start').isVisible(), 800)) await startWith(page, 'today-start');
+  await main(page).waitFor();
+  check('the workout shows the same for the exercise in hand, without the workout in progress', (await page.getByTestId('past').count()) === 1 && (await page.getByTestId('past-row').count()) === 3 && /20 kg × /.test((await page.getByTestId('past-row').first().textContent())));
+  await shot(page, '54-past-workout');
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Discard workout' }).click();
+  await page.getByTestId('train-now').waitFor();
+
+  // the pairs switch is always on the Plan tab, and in Settings too
+  check('the pairs switch is on the Plan tab whatever the plan', (await page.getByTestId('pairs-toggle').count()) === 1);
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.locator('#pref-pairs').click();
+  st = await state(page);
+  check('pairs can also be switched on in Settings', st.profile.pairs === true && (await page.locator('#pref-pairs').getAttribute('aria-checked')) === 'true');
   check('no script errors in part I', errors.length === 0, errors.join(' | '));
   await context.close();
 });

@@ -98,6 +98,32 @@ function facts(ex) {
   };
 }
 
+/**
+ * What was done on one exercise, workout by workout, newest first: the day and
+ * the load and reps of each set done. `skip` leaves out one workout, the one
+ * in progress. Each entry also says how it moved on from the time before:
+ * more load, or more reps at the same load.
+ */
+export function exerciseHistory(sessions, exerciseId, { skip = null } = {}) {
+  const out = [];
+  const past = (sessions || []).filter((s) => s.kind !== 'activity' && s.status === 'done' && s.id !== skip && Array.isArray(s.exercises))
+    .sort((a, b) => b.startedAt - a.startedAt);
+  for (const s of past) {
+    const sets = s.exercises.filter((ex) => ex.exerciseId === exerciseId)
+      .flatMap((ex) => ex.sets.filter((st) => st.status === 'done' && st.actual).map((st) => ({ reps: st.actual.reps, load: st.actual.load ?? 0 })));
+    if (sets.length) out.push({ sessionId: s.id, at: s.startedAt, sets });
+  }
+  const top = (e) => Math.max(...e.sets.map((x) => x.load));
+  const reps = (e) => e.sets.reduce((n, x) => n + (x.reps || 0), 0);
+  out.forEach((e, i) => {
+    const before = out[i + 1];
+    if (!before) { e.step = null; return; }
+    const load = Math.round((top(e) - top(before)) * 100) / 100;
+    e.step = load ? { load } : reps(e) - reps(before) ? { reps: reps(e) - reps(before) } : {};
+  });
+  return out;
+}
+
 /** Most recent finished session before this one that includes the exercise. */
 function previousRun(exerciseId, session, past) {
   const earlier = past

@@ -44,6 +44,8 @@ const shots = [
   ['50-rebuild-chat', 'Ask for a new plan', 'It is built at once, from your workouts too. It starts after the last one, and the old plan can be put back.'],
   ['51-rebuild-plan', 'A rebuild, on the plan', 'The plan says it was rebuilt, by whom, and which session is next.'],
   ['52-chat-short', 'A short chat', 'The coach screen shows the conversation in progress. Earlier messages are a tap away.'],
+  ['53-past-day', 'How an exercise has gone', 'Each exercise box lists the last three times in small print, with what changed. "Show all" opens the rest.'],
+  ['54-past-workout', 'The same, mid-workout', 'Under the sets of the exercise in hand, out of the way.'],
   ['06-day', 'Session preview', 'Order, equipment, sets, reps, rest, and how the time adds up.'],
   ['40-day-optional', 'Optional extras', 'Each session lists up to two extras for the end, with the reason each one fits.'],
   ['44-pairs-switch', 'Pairs: one switch', 'On the Plan tab. It says what pairing saves, and what it costs: harder sets, two stations.'],
@@ -116,6 +118,12 @@ const v11 = [
   ['Changes are made, not proposed.', 'After a workout, from the chat and when equipment changes, the plan is updated without asking. "What changed" lists every change with its reason, an Undo and an Edit.'],
   ['A signal with the screen off.', 'A web page cannot vibrate behind a dark screen, so the app sends a notification when the rest ends (stand-alone app). The beep is scheduled ahead on the audio clock. Settings has a test button. Not tried on a real phone.'],
   ['The long view.', 'A plain-words outlook on the Plan tab: what this round holds, how it gets harder, what changes round to round, what happens when it stalls, and what would be added with more time. A connected model adds its own.'],
+];
+
+// Version 1.6: how each exercise has gone, and the pairs switch where it is looked for.
+const v16 = [
+  ['Earlier results in the exercise box.', 'In a session\'s preview and in the workout, each exercise lists the last three times it was done: the day, the load and reps of each set, and how it moved on from the time before ("+2 kg", "+1 rep", "same"). It is small print under the rest of the box. "Show all" opens the whole list; an exercise never done shows nothing.'],
+  ['The pairs switch is always there.', '"Pair exercises to save time" used to be hidden on the Plan tab when the plan had nothing to pair. It now always shows there, and it is in Settings too, under "Your plan". For a plan built around pairs, switch it on and ask the coach for a new plan.'],
 ];
 
 // Version 1.5: a new plan that starts in the right place, with its weights; a short chat; updates that arrive.
@@ -302,6 +310,12 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
       <div class="rowx head"><span>The design says</span><span>Status</span><span>The app does</span></div>
       ${spec.map(([a, s, b]) => `<div class="rowx"><span>${esc(a)}</span><span><span class="pill ${s === 'changed' ? 'mostly' : s}">${s === 'done' ? 'Done' : s === 'changed' ? 'Changed' : 'Mostly'}</span></span><span class="muted">${esc(b)}</span></div>`).join('\n      ')}
     </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">New in version 1.6</p>
+    <h2>How each exercise has gone, and the pairs switch where you look for it</h2>
+    <div>${v16.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
   </section>
 
   <section>

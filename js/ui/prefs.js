@@ -7,7 +7,7 @@ import { inViewer, runtime, onRuntime, saveFile, isStandalone, primeAudio, beep,
 import { cloud, onCloud, syncNow, CLOUD_TEXT } from '../cloud.js';
 import { RULES, SOURCES, RULES_VERSION, RULES_UPDATED, PRESCRIPTION, GOALS } from '../domain/rules.js';
 
-export const APP_VERSION = '1.5.0';
+export const APP_VERSION = '1.6.0';
 let installEvent = null;
 if (typeof window !== 'undefined') window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; });
 
@@ -120,6 +120,12 @@ export function PrefsScreen() {
       ${status.source && html`
         <button class="cta ghost" data-testid="test-claude" disabled=${test.state === 'busy'} onClick=${runTest}>Test the connection</button>
         ${test.text && html`<p class=${`small ${test.state === 'bad' ? '' : 'muted'}`} data-testid="test-result" style=${test.state === 'bad' ? 'color:var(--bad)' : ''}>${test.text}</p>`}`}
+    </section>
+
+    <section class="stack">
+      <h3>Your plan</h3>
+      <${Switch} id="pref-pairs" label="Pair exercises to save time" hint="Two exercises that use different muscles are done in turns, so one rests while the other works: the same sets in less time. The plan you have is paired at once. For a plan built around pairs, ask the coach for a new plan with this on. Also on the Plan tab."
+        on=${!!state.profile.pairs} onChange=${(v) => { store.set({ profile: { ...state.profile, pairs: v } }); toast(v ? 'Pairs on' : 'Pairs off. One exercise at a time'); }} />
     </section>
 
     <section class="stack">

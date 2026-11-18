@@ -14,6 +14,7 @@ import { undoChange, redoChange, editChange, recordUpdate, reviewEquipment, star
 import { sourceName, aiReady, aiName } from '../ai/ai.js';
 import { primeAudio } from '../platform.js';
 import { APP_VERSION } from './prefs.js';
+import { PastResults } from './past.js';
 import { WeightSheet, WeightsFirst } from './weights.js';
 
 /**
@@ -227,11 +228,11 @@ export function PlanScreen() {
         ${recent.map((a) => html`<p class="small muted" data-testid="recent-activity">${a.title} ${agoText(a.startedAt, now)}: ${a.minutes} min, ${(EFFORTS[a.effort]?.label || '').toLowerCase()}${activityGroups(a).length ? '. Counted toward recovery.' : '.'}</p>`)}
         <button class="row" data-testid="log-activity" onClick=${() => setSheet('activity')}>
           <span class="stack tight"><b>Did something else?</b><span class="sub">Log a run, a ride or a game. The plan takes it into account.</span></span><span class="accent">Log</span></button>
-        ${(saves > 0 || pairsOn) && html`<button class=${`row ${pairsOn ? 'on' : ''}`} role="switch" aria-checked=${pairsOn} data-testid="pairs-toggle" onClick=${togglePairs}>
+        <button class=${`row ${pairsOn ? 'on' : ''}`} role="switch" aria-checked=${pairsOn} data-testid="pairs-toggle" onClick=${togglePairs}>
           <span class="stack tight"><b>Pair exercises to save time</b><span class="sub">${pairsOn
     ? `On${saves > 0 ? `: sessions are about ${saves} min shorter` : ''}. Two exercises that use different muscles are done in turns, so one rests while the other works. The sets feel harder, and you need both stations free.`
-    : `Two exercises that use different muscles are done in turns, so one rests while the other works. Same sets, about ${saves} min less a session. The sets feel harder, and you need both stations free.`}</span></span>
-          <span class="accent">${pairsOn ? 'On' : 'Off'}</span></button>`}
+    : `Two exercises that use different muscles are done in turns, so one rests while the other works. Same sets, ${saves > 0 ? `about ${saves} min less a session` : 'in less time'}. The sets feel harder, and you need both stations free.`}${saves > 0 ? '' : ' In this plan few exercises sit next to one they can pair with: ask the coach for a new plan with this on, and it is built for pairs.'}</span></span>
+          <span class="accent">${pairsOn ? 'On' : 'Off'}</span></button>
         <button class="row" data-testid="weights-link" onClick=${() => go('weights')}>
           <span class="stack tight"><b>Weights</b><span class="sub">${blank ? `${plural(blank, 'exercise')} in the plan ${blank === 1 ? 'has' : 'have'} no weight yet. Enter ${blank === 1 ? 'it' : 'them'} now, or when ${blank === 1 ? 'it comes' : 'they come'} up.` : 'What you lift on every exercise, and the step sizes'}</span></span><span class="accent">Open</span></button>
         ${state.proposals.length > 0 && html`<button class="row" onClick=${() => go('review')}>
@@ -310,6 +311,7 @@ export function DayScreen({ dayId }) {
             <p><b>${ex.sets} × ${ex.reps} reps</b> <span class="muted small">(range ${ex.repLo}-${ex.repHi}) · ${mate ? `rest alone ${restText(ex.restSec)}` : `rest ${restText(ex.restSec)}`}</span></p>
             <div class="spread"><p class="small grow">${ex.load ? html`<b>${fmtLoad(ex.loadType, ex.load.value)}</b> <span class="muted">· step ${num(ex.load.step)}</span>` : html`<span class="muted">Weight: ${loadMethod(ex)}</span>`}</p>
               <button class="chip" data-testid="edit-weight" aria-label=${`Set the weight for ${ex.name}`} onClick=${() => setWeightFor(ex.exerciseId)}>${ex.load ? 'Change' : 'Set weight'}</button></div>
+            <${PastResults} sessions=${state.sessions} exerciseId=${ex.exerciseId} loadType=${ex.loadType} />
           </li>`;
         })}
       </ol>

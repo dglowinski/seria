@@ -11,6 +11,8 @@ import { askAgain, reviewRunning, setWeight } from '../js/ai/coach.js';
 import { userSays, buildPlan, canRestorePlan, restorePlan, recentCount } from '../js/ai/coach.js';
 import { continueFrom, cycleNext } from '../js/domain/schedule.js';
 import { knownWeights, fillLoads } from '../js/domain/planner.js';
+import { exerciseHistory } from '../js/domain/progression.js';
+import { resultLine, stepText } from '../js/ui/past.js';
 import { emptyProfile, generatePlan, missingFields, units } from '../js/domain/planner.js';
 import { emptyEquipment, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail, machineForExercise, machineLabel, isAvailable, isListed, EQUIPMENT, allExercises, SKETCH_IDS, sketchForExercise, sketchForEquipment, EXERCISES } from '../js/domain/catalog.js';
 import { SKETCHES } from '../js/ui/sketch.js';
@@ -823,4 +825,31 @@ test('coach screen: only the conversation in progress shows, back to the last lo
   assert.equal(recentCount(Array.from({ length: 30 }, (_, i) => msg(30 - i))), 4, 'four at most');
   assert.equal(recentCount([msg(600), msg(599), msg(3), msg(2), msg(1)]), 3, 'yesterday stays out');
   assert.equal(recentCount([msg(600), msg(599), msg(1)]), 2, 'a lone new message keeps the one before it in view');
+});
+
+test('earlier results of an exercise: newest first, each with how it moved on from the time before', () => {
+  const workout = (id, daysAgo, sets, status = 'done') => ({
+    id, status, startedAt: eveningAgo(daysAgo),
+    exercises: [{ exerciseId: 'db_bench_press', loadType: 'dumbbell', sets: sets.map(([load, reps, st = 'done']) => ({ status: st, actual: st === 'done' ? { load, reps } : null })) },
+      { exerciseId: 'db_row', loadType: 'dumbbell', sets: [{ status: 'done', actual: { load: 24, reps: 10 } }] }],
+  });
+  const all = [
+    workout('a', 9, [[20, 8], [20, 8], [20, 8]]),
+    workout('b', 6, [[20, 9], [20, 9], [20, 8]]),
+    workout('c', 3, [[22, 8], [22, 8], [22, 7]]),
+    workout('d', 1, [[22, 8], [24, 6], [24, 6, 'skipped']]),
+    workout('now', 0, [[24, 8]], 'active'),
+    { id: 'run', kind: 'activity', status: 'done', startedAt: eveningAgo(2) },
+  ];
+  const h = exerciseHistory(all, 'db_bench_press');
+  assert.deepEqual(h.map((e) => e.sessionId), ['d', 'c', 'b', 'a'], 'done workouts only, newest first');
+  assert.deepEqual(h[0].sets, [{ load: 22, reps: 8 }, { load: 24, reps: 6 }], 'only sets that were done');
+  assert.deepEqual(h.map((e) => e.step), [{ load: 2 }, { load: 2 }, { reps: 2 }, null]);
+  assert.equal(resultLine(h[1], 'dumbbell'), '22 kg × 8, 8, 7'); assert.equal(resultLine(h[0], 'dumbbell'), '22×8, 24×6 kg');
+  assert.equal(resultLine({ sets: [{ load: 0, reps: 9 }, { load: 0, reps: 8 }] }, 'bodyweight'), 'Bodyweight × 9, 8');
+  assert.equal(resultLine({ sets: [{ load: 45, reps: 10 }] }, 'machine'), 'setting 45 × 10');
+  assert.equal(stepText(h[0].step, 'dumbbell'), '+2 kg'); assert.equal(stepText(h[2].step, 'dumbbell'), '+2 reps'); assert.equal(stepText(null), '');
+  assert.equal(stepText({}, 'dumbbell'), 'same'); assert.equal(stepText({ load: -2.5 }, 'dumbbell'), '−2.5 kg'); assert.equal(stepText({ reps: -1 }), '−1 rep'); assert.equal(stepText({ load: 5 }, 'machine'), '+5');
+  assert.deepEqual(exerciseHistory(all, 'db_bench_press', { skip: 'd' }).map((e) => e.sessionId), ['c', 'b', 'a']);
+  assert.deepEqual(exerciseHistory(all, 'never_done'), []); assert.deepEqual(exerciseHistory(null, 'x'), []);
 });

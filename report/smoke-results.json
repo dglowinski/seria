@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-18T09:32:11.846Z",
+  "ranAt": "2026-11-18T09:39:17.643Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 300,
-  "passed": 300,
+  "total": 306,
+  "passed": 306,
   "failed": 0,
   "results": [
     {
@@ -1796,6 +1796,42 @@
     {
       "part": "I coach and history",
       "name": "\"Clear chat\" empties the chat and leaves the plan alone",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "a session shows, for each exercise, how the last few times went",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "an exercise never done shows nothing there",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "\"Show all\" opens the whole list, and it closes again",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "the workout shows the same for the exercise in hand, without the workout in progress",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "the pairs switch is on the Plan tab whatever the plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "pairs can also be switched on in Settings",
       "ok": true,
       "detail": ""
     },
