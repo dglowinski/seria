@@ -37,6 +37,7 @@ export const emptyState = () => ({
   profile: emptyProfile(),
   equipment: emptyEquipment(),
   plan: null,
+  planBefore: null, // the plan a rebuild replaced, kept so the rebuild can be taken back
   weights: {},
   sessions: [],
   deletedSessions: [],
@@ -71,6 +72,7 @@ export function hydrate(raw) {
   for (const k of ['sessions', 'deletedSessions', 'chat', 'proposals']) if (!Array.isArray(s[k])) s[k] = [];
   s.plan = upgradePlan(s.plan); // plans saved before cycles existed keep their sessions and gain a cycle
   if (!s.weights || typeof s.weights !== 'object') s.weights = {};
+  if (!s.planBefore?.plan?.days) s.planBefore = null;
   // A plan saved before optional extras existed gets them here, picked by the rules; one that has them keeps them.
   if (s.plan) { try { s.plan = fillPairs(fillOptional(s.plan, s.profile, s.equipment, s.weights), s.profile); } catch { /* the plan stays as saved */ } }
   s.schema = SCHEMA;

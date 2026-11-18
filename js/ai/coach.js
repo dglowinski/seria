@@ -7,7 +7,7 @@
 // generator builds the plan. Either way the app keeps working.
 
 import { GOALS, MAX_DAYS, CYCLE, SCHEDULE, EFFORTS, levelFor, activityGroups } from '../domain/rules.js';
-import { recommend, setOrder, setRests, completeDay, uncompleteDay, queueState, runFinished } from '../domain/schedule.js';
+import { recommend, plannedNext, lastTrained, continueFrom, daysBetween, setOrder, setRests, completeDay, uncompleteDay, queueState, runFinished } from '../domain/schedule.js';
 import { KEYWORDS, allExercises, canDo, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail } from '../domain/catalog.js';
 import {
   WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_NAMES, missingFields, generatePlan, normalizePlan, refreshPlan, fmtMonths,
@@ -235,6 +235,9 @@ const setBusy = (v) => { busy = v; for (const fn of busyListeners) fn(v); };
 
 const lastAsked = (chat) => [...chat].reverse().find((m) => m.role === 'coach' && m.kind !== 'notice')?.asks || null;
 
+// Words that ask for a new plan. For the built-in coach; a connected model reads this itself.
+const asksRebuild = (text) => /\b(re-?build|re-?generate|re-?do|re-?make|re-?plan)\b[^.?!]*\bplan\b|\b(a|another) new plan\b|\bplan\b[^.?!]*\b(again|from scratch)\b/i.test(text);
+
 function localTurn(text) {
   const st = store.getState();
   const asked = lastAsked(st.chat.slice(0, -1));
@@ -255,7 +258,7 @@ function localTurn(text) {
     store.say('coach', [ack, q].filter(Boolean).join(' '), { asks: 'extras', chips: ['No, nothing'] });
     return;
   }
-  if (got.length || !st.plan) {
+  if (got.length || !st.plan || asksRebuild(text)) {
     store.say('coach', [ack, st.plan ? 'Here is what I would rebuild the plan on.' : 'Here is what I will build the plan on. Tell me if anything is off.'].filter(Boolean).join(' '), { kind: 'assumptions' });
     return;
   }
@@ -274,10 +277,11 @@ export async function userSays(text) {
   if (!aiReady()) { localTurn(message); return; }
   const src = aiSource();
   const name = aiName();
+  let rebuild = false;
   setBusy(true);
   try {
     const st = store.getState();
-    const out = await ask(interviewRequest({ profile: st.profile, equipment: st.equipment, plan: st.plan, chat: st.chat.slice(0, -1), message }));
+    const out = await ask(interviewRequest({ profile: st.profile, equipment: st.equipment, plan: st.plan, chat: st.chat.slice(0, -1), message, sessions: st.sessions, weights: st.weights }));
     const now = store.getState();
     const profile = mergeAiProfile(now.profile, out.profile, now.equipment);
     const before = JSON.stringify(now.profile);
@@ -288,6 +292,11 @@ export async function userSays(text) {
       // What the user asked for is done at once; the chat shows each change with its Undo.
       const update = recordUpdate({ mode: 'coach', source: src, changes });
       store.say('coach', textOut, { via: src, kind: 'proposal', proposalId: update.id });
+    } else if ((out.rebuild_plan || out.plan) && now.plan && !missingFields(profile).length) {
+      // Asked for in words, so it is built now. The plan it replaces is kept and can be put back.
+      // A model that answers with the whole plan right here is taken at its word, so the chat and the plan agree.
+      store.say('coach', out.message || 'I will build a new plan from your results so far.', { via: src });
+      rebuild = out.plan ? { plan: out.plan, outlook: out.outlook, questions: [], message: '' } : {};
     } else if (out.ready_for_plan && !missingFields(profile).length && (!now.plan || JSON.stringify(profile) !== before)) {
       store.say('coach', textOut, { via: src, kind: 'assumptions' });
     } else {
@@ -301,32 +310,68 @@ export async function userSays(text) {
   } finally {
     setBusy(false);
   }
+  if (rebuild) await buildPlan(rebuild.plan ? { ready: rebuild } : {});
 }
 
-function planLine(plan) {
-  const first = plan.days[0];
+const agoWords = (ts, now) => { const d = daysBetween(ts, now); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`; };
+
+/**
+ * What is said about a plan just built. `chat` is the coach's message, `note`
+ * the line the plan screen shows. For a rebuild both name the session that is
+ * really next, worked out from the workouts on record.
+ */
+function planLine(plan, { sessions = [], now = Date.now(), old = null, said = '', byModel = false } = {}) {
   const n = plan.days.length;
-  return `Here is my proposal: the next ${n} session${n === 1 ? '' : 's'}, about ${Math.max(...plan.days.map((d) => d.estMinutes))} min each, with rest days between. It starts with ${first.title}: ${first.exercises[0].name.toLowerCase()} first. Tell me what to change, or just train: the plan is updated after every workout.`;
+  const size = `the next ${n} session${n === 1 ? '' : 's'}, about ${Math.max(...plan.days.map((d) => d.estMinutes))} min each, with rest days between`;
+  const next = plannedNext(plan, sessions, now);
+  const first = plan.days.find((d) => d.id === next?.dayId) || plan.days[0];
+  if (!old) return { chat: `Here is my proposal: ${size}. It starts with ${first.title}: ${first.exercises[0].name.toLowerCase()} first. Tell me what to change, or just train: the plan is updated after every workout.`, note: '' };
+  const last = lastTrained(sessions, now).last;
+  const recent = last && now - last.startedAt < SCHEDULE.breakDays * 864e5;
+  // "Carries on" is only said when a different session follows the last workout.
+  const from = !recent ? `It starts with ${first.title}.`
+    : first.title === last.title ? `${first.title} is next.`
+      : `It carries on from your last workout (${last.title}, ${agoWords(last.startedAt, now)}): ${first.title} is next.`;
+  const lead = said || (byModel ? 'Your new plan is ready.' : 'Your plan is rebuilt from the training rules, with your weights and the reps you have reached.');
+  return { chat: `${lead} It covers ${size}. ${from} Tell me what to change, or put the old plan back.`, note: `${lead} ${from}` };
 }
 
-/** Build the plan from the confirmed assumptions. */
-export async function buildPlan() {
+/** Rep targets already earned carry over to the same exercise in a new plan, inside its new range. */
+function keepReps(next, old) {
+  const reps = {};
+  for (const d of old.days) for (const ex of allEntries(d)) reps[ex.exerciseId] = ex.reps;
+  for (const d of next.days) for (const ex of allEntries(d)) if (reps[ex.exerciseId]) ex.reps = Math.min(Math.max(reps[ex.exerciseId], ex.repLo), ex.repHi);
+}
+
+/**
+ * Build the plan from the profile. When there is a plan already, this is a
+ * rebuild: the new plan is built from the workouts on record as well, carries
+ * on after the last one instead of starting over, keeps the weights and the
+ * reps reached, and the plan it replaces is kept so it can be put back.
+ * `ready` is a model's answer that already holds the plan, when the chat got one.
+ */
+export async function buildPlan({ ready = null } = {}) {
   if (busy) return;
   const st = store.getState();
   if (missingFields(st.profile).length) return;
   let plan = null;
   let via;
+  let said = '';
   if (aiReady()) {
     const src = aiSource();
     const name = aiName();
     setBusy(true);
     try {
-      const out = await ask(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights: st.weights }));
+      const out = ready || await ask(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights: st.weights, plan: st.plan, sessions: st.sessions, chat: st.chat }));
       if (out.plan) {
         const res = normalizePlan(out.plan, st.profile, st.equipment, st.weights);
         fitPlan(res.plan, st.profile);
         plan = fillOptional(refreshPlan({ ...res.plan, source: src, outlook: out.outlook ? { text: out.outlook, by: src } : null }), st.profile, st.equipment, st.weights);
         via = src;
+        said = st.plan ? out.message : '';
+        // The model was told what was trained last. If its plan still opens with that, the list is turned so it does not.
+        const turned = continueFrom(plan, st.sessions, Date.now(), { gentle: true });
+        if (turned !== plan) { plan = turned; said = ''; }
       } else if (out.questions.length) {
         store.say('coach', [out.message, ...out.questions].filter(Boolean).join('\n'), { via: src });
         return;
@@ -338,10 +383,43 @@ export async function buildPlan() {
       setBusy(false);
     }
   }
-  if (!plan) plan = generatePlan(st.profile, st.equipment, st.weights);
-  // The list of updates belongs to the old plan, so it goes.
-  store.set({ plan, proposals: [], profile: { ...store.getState().profile, askedExtras: true } });
-  store.say('coach', planLine(plan), { kind: 'plan', via });
+  const now = store.getState();
+  // A workout in progress runs on the plan it began with, so the plan is not replaced under it.
+  if (store.activeSession(now)) {
+    store.say('coach', 'A workout is in progress, so I left the plan as it is. Ask me again when the workout is done.', { kind: 'notice' });
+    return;
+  }
+  if (!plan) plan = continueFrom(generatePlan(now.profile, now.equipment, now.weights), now.sessions);
+  const old = now.plan;
+  if (old) {
+    keepReps(plan, old);
+    refreshPlan(plan);
+    plan.version = (old.version || 1) + 1;
+  }
+  const line = planLine(plan, { sessions: now.sessions, old, said, byModel: !!via });
+  if (old) plan.lastUpdate = { at: Date.now(), by: via || 'rules', text: line.note };
+  // The list of updates belongs to the old plan, so it goes with it.
+  store.set({
+    plan, proposals: [],
+    planBefore: old ? { plan: old, proposals: now.proposals.slice(-12), at: Date.now() } : null,
+    profile: { ...now.profile, askedExtras: true },
+  });
+  store.say('coach', line.chat, { kind: 'plan', via, replaced: !!old });
+}
+
+/** True while a rebuild can still be taken back: nothing has been trained on the new plan yet. */
+export function canRestorePlan(st = store.getState()) {
+  const b = st.planBefore;
+  return !!b?.plan && !!st.plan && b.plan.id !== st.plan.id && !store.activeSession(st) && !st.sessions.some((x) => x.planId === st.plan.id);
+}
+
+/** Take a rebuild back: the plan it replaced returns, with its list of changes. */
+export function restorePlan() {
+  const st = store.getState();
+  if (!canRestorePlan(st)) return false;
+  store.set({ plan: st.planBefore.plan, proposals: st.planBefore.proposals || [], planBefore: null });
+  store.say('coach', 'The old plan is back, as it was before the rebuild.', { kind: 'plan' });
+  return true;
 }
 
 // ---------------------------------------------------------------- train now
@@ -391,7 +469,7 @@ function withSchedule(plan, sched, sessions) {
 export function afterWorkout(session) {
   const st = store.getState();
   if (st.plan && session.planId === st.plan.id && session.exercises.some((ex) => ex.sets.some((x) => x.status === 'done'))) {
-    store.set({ plan: completeDay(st.plan, session.dayId) });
+    store.set({ plan: completeDay(st.plan, session.dayId), planBefore: null });
   }
   const proposal = reviewSession(session.id);
   const plan = store.getState().plan;
@@ -421,14 +499,11 @@ export function planNextRun() {
       if (!out.plan || !now.plan || now.plan.id !== planId || !runFinished(now.plan) || store.activeSession(now)) return;
       const res = normalizePlan(out.plan, now.profile, now.equipment, now.weights);
       fitPlan(res.plan, now.profile);
-      // Rep targets already earned carry over to the same exercise in the new run.
-      const reps = {};
-      for (const d of now.plan.days) for (const ex of allEntries(d)) reps[ex.exerciseId] = ex.reps;
-      for (const d of res.plan.days) for (const ex of allEntries(d)) if (reps[ex.exerciseId]) ex.reps = Math.min(Math.max(reps[ex.exerciseId], ex.repLo), ex.repHi);
+      keepReps(res.plan, now.plan);
       const next = refreshPlan({ ...res.plan, source: src, version: (now.plan.version || 1) + 1, outlook: out.outlook ? { text: out.outlook, by: src } : now.plan.outlook || null });
       next.queue = { ...next.queue, run: queueState(now.plan).run + 1 };
       next.lastUpdate = { at: Date.now(), by: src, text: out.message || 'The next run is planned from your results.' };
-      store.set({ plan: next });
+      store.set({ plan: next, planBefore: null });
       store.say('coach', `${out.message || 'I planned your next run from your results.'} Open the plan to see it, or tell me what to change.`, { via: src, kind: 'plan' });
     })
     .catch(() => { /* the same run simply starts again */ });

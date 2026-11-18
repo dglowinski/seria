@@ -11,6 +11,8 @@
 //   D  home-screen install files and offline start
 //   E  the single-file build that is published on claude.ai
 //   F  OpenAI through its API, against a local stand-in for api.openai.com
+//   G  optional extras    H  pairs and the workout band
+//   I  the coach knows the workouts on record, and a rebuild carries on from them
 //
 // Needs Google Chrome installed. Uses no real API key and no network.
 
@@ -1493,6 +1495,90 @@ await guarded(async () => {
   st = await state(page);
   check('pairs can be switched off again: one exercise at a time, as before', st.profile.pairs === false && st.plan.days.every((d) => d.exercises.every((x) => !x.pair)) && (await page.getByTestId('pairs-toggle').getAttribute('aria-checked')) === 'false');
   check('no script errors in part H', errors.length === 0, errors.join(' | '));
+  await context.close();
+});
+
+// =====================================================================  I
+part = 'I coach and history';
+await guarded(async () => {
+  const { context, page, errors } = await newPage();
+  const from = api.state.requests.length; // the stand-in keeps the requests of earlier parts too
+  const sent = (mode) => api.state.requests.slice(from).map((x) => { try { return JSON.parse(x.body.messages[0].content); } catch { return {}; } }).filter((x) => x.mode === mode);
+  await page.goto(`${BASE}#prefs`);
+  await page.fill('#api-key', 'sk-ant-test-key');
+  await page.locator('details summary').click();
+  await page.fill('#base-url', api.url);
+  await tab(page, 'Coach').click();
+  await say(page, 'Strength, a year in, three days a week, 50 minutes.');
+  await page.getByTestId('assumptions').waitFor();
+  await page.getByTestId('build-plan').click();
+  await page.getByTestId('open-plan').click();
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor();
+  const first = sent('new_plan').slice(-1)[0];
+  check('a first plan is asked for with nothing to carry on from', first.plan_being_replaced === null && first.recent_workouts.length === 0 && first.workouts_on_record === 0, JSON.stringify([first.plan_being_replaced, first.workouts_on_record]));
+
+  // one whole workout of the first session, three days ago
+  await startWith(page, 'train-now');
+  await main(page).waitFor();
+  await runWorkout(page);
+  if (await until(() => page.getByRole('button', { name: 'Finish and save' }).isVisible(), 1500)) await page.getByRole('button', { name: 'Finish and save' }).click();
+  await page.getByRole('heading', { name: 'Workout saved' }).waitFor();
+  await until(async () => (await state(page)).proposals.some((p) => p.mode === 'post_session' && !p.checking), 8000);
+  await page.getByTestId('to-plan').click();
+  await daysPass(page, 3);
+  let st = await state(page);
+  const old = st.plan;
+  const trained = st.sessions[0];
+  check('set-up: the first session was trained in full and came off the list', trained.title === 'Upper body' && trained.exercises.every((x) => x.sets.every((y) => y.status === 'done')) && old.queue.done.join() === 'd1', JSON.stringify([trained.title, old.queue]));
+
+  // the chat: the coach is sent the workouts on record
+  await tab(page, 'Coach').click();
+  await say(page, 'Please regenerate my plan.');
+  await page.getByTestId('restore-plan').waitFor({ timeout: 8000 });
+  const talk = sent('interview').slice(-1)[0];
+  const lastOut = talk.recent_workouts[0];
+  check('the coach gets the last workout with the chat: when, what, and every set', talk.workouts_on_record === 1 && lastOut.title === 'Upper body' && lastOut.days_ago === 3
+    && lastOut.exercises.length === trained.exercises.length && lastOut.exercises[0].reps.length === trained.exercises[0].sets.length && lastOut.exercises[0].skipped_sets === 0, JSON.stringify(lastOut).slice(0, 300));
+  check('and where the plan stands: what is done, what is next, how long each muscle group has rested', talk.current_plan.list.done.join() === 'd1' && !!talk.next_session.session_id && talk.next_session.session_id !== 'd1'
+    && talk.hours_since_muscle_group_was_trained.Chest >= 70 && /^\d{4}-\d\d-\d\d$/.test(talk.today.date), JSON.stringify([talk.next_session, talk.hours_since_muscle_group_was_trained]));
+
+  // asked for in words, the new plan is built at once, from the records
+  const build = sent('new_plan').slice(-1)[0];
+  check('asking for a new plan builds one at once, and Claude gets the records, the old plan and the request', sent('new_plan').length === 2 && build.recent_workouts[0].title === 'Upper body' && build.plan_being_replaced.list.done.join() === 'd1'
+    && build.conversation.some((m) => m.from === 'user' && m.text === 'Please regenerate my plan.'), JSON.stringify([sent('new_plan').length, build.conversation]));
+  st = await state(page);
+  const texts = st.chat.map((m) => m.text);
+  check('the coach says what it is about to do, from the records', texts.includes('I will build a new plan from your results, starting after Upper body.'), texts.slice(-3).join(' | '));
+  check('the plan is replaced, and the one before is kept', st.plan.id !== old.id && st.plan.version === (old.version || 1) + 1 && st.plan.source === 'claude' && st.planBefore.plan.id === old.id, JSON.stringify([st.plan.id, old.id, st.plan.version]));
+  check('a plan that opens with the session just trained is turned, so the next one comes first', st.plan.days[0].title === 'Upper body' && st.plan.queue.order[0] === 'd2' && st.plan.days[1].title === 'Lower body', JSON.stringify(st.plan.queue));
+  const said = st.chat.slice(-1)[0];
+  check('the chat names the session that is really next, and why', said.kind === 'plan' && said.replaced === true && /It carries on from your last workout \(Upper body, 3 days ago\): Lower body is next\./.test(said.text), said.text);
+  check('weights from the workout stay in the new plan', st.plan.days[0].exercises[0].load.value === old.days[0].exercises[0].load.value && st.plan.days[0].exercises[0].load.value > 0, JSON.stringify(st.plan.days[0].exercises[0].load));
+  await shot(page, '50-rebuild-chat');
+
+  await page.getByTestId('open-plan').last().click();
+  await page.getByTestId('timeline').waitFor();
+  const note = await page.getByTestId('last-update').textContent();
+  check('the plan screen shows the rebuild: who, when, and what is next', /Updated .* by Claude/.test(note) && /Lower body is next/.test(note) && /Lower body/.test(await page.getByTestId('plan-session').first().textContent())
+    && new RegExp(`plan v${old.version + 1}\\.`).test(await page.locator('main').textContent()), `${note} :: ${await page.getByTestId('plan-session').first().textContent()}`);
+  await shot(page, '51-rebuild-plan');
+
+  // the way back
+  await page.getByTestId('plan-restore').click();
+  st = await state(page);
+  check('"Put the old plan back" brings back the plan as it was, with its list of changes', st.plan.id === old.id && st.planBefore === null && st.proposals.length > 0 && st.plan.queue.done.join() === 'd1'
+    && (await page.getByTestId('plan-restore').count()) === 0, JSON.stringify([st.plan.id, st.planBefore && st.planBefore.plan.id]));
+  await tab(page, 'Coach').click();
+  check('and the chat says so, with no second way back', /The old plan is back/.test((await state(page)).chat.slice(-1)[0].text) && (await page.getByTestId('restore-plan').count()) === 0);
+
+  // a model that answers with the whole plan in the chat: it is used, so the chat and the plan agree
+  const asked = sent('new_plan').length;
+  await say(page, 'I want a fresh start.');
+  await page.getByTestId('restore-plan').waitFor({ timeout: 8000 });
+  st = await state(page);
+  check('a plan the model sends in the chat itself becomes the plan, with no second request', st.plan.days.map((d) => d.title).join() === 'Push,Pull,Legs' && sent('new_plan').length === asked && st.planBefore.plan.id === old.id
+    && st.chat.slice(-2)[0].text === 'Here is a fresh plan: push, pull and legs.' && /^Your new plan is ready\./.test(st.chat.slice(-1)[0].text), JSON.stringify([st.plan.days.map((d) => d.title), st.chat.slice(-2).map((m) => m.text)]));
+  check('no script errors in part I', errors.length === 0, errors.join(' | '));
   await context.close();
 });
 

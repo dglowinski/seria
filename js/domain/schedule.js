@@ -261,6 +261,52 @@ export function setOrder(plan, order) {
   return next;
 }
 
+// How a recorded workout sits against a planned session, by sets per muscle group.
+// `repeat`: how much of the session's work the workout already did, 0 to 1.
+// `same`: how much the workout was this very session (most of it falls inside the
+// session and covers most of it), with shared exercises breaking ties.
+function against(day, workout) {
+  const want = dayGroups(day);
+  const got = doneGroups(workout);
+  const sum = (o) => Object.values(o).reduce((x, y) => x + y, 0);
+  let both = 0;
+  for (const name of Object.keys(got)) both += Math.min(got[name], want[name] || 0);
+  if (!both) return { repeat: 0, same: 0 };
+  const done = new Set(workout.exercises.filter((ex) => ex.sets.some((st) => st.status === 'done')).map((ex) => ex.exerciseId));
+  const shared = day.exercises.filter((ex) => done.has(ex.exerciseId)).length;
+  return { repeat: both / sum(want), same: Math.sqrt((both / sum(want)) * (both / sum(got))) + (0.01 * shared) / done.size };
+}
+
+const REPEAT = 0.7; // a session with this much of its work done in the last workout repeats it
+const NEAR = 0.15; // sessions this close to the most rested one count as just as rested
+
+/**
+ * A new plan carries on from the training so far, so a rebuilt plan does not
+ * hand back what was just trained. The list is turned, keeping its order, to
+ * start with a session whose muscles the last workout left alone: the first
+ * such session after the one the last workout was, or the first in the list
+ * when it was none of them. After a long break the list starts from the top.
+ * `gentle` is for a plan whose order was already chosen with the history in
+ * view: it is left alone unless it opens with a repeat of the last workout.
+ */
+export function continueFrom(plan, history = [], now = Date.now(), { gentle = false } = {}) {
+  const { last } = lastTrained(history, now);
+  const n = plan.days.length;
+  if (!last || n < 2 || now - last.startedAt >= SCHEDULE.breakDays * DAY) return plan;
+  const rows = plan.days.map((d) => against(d, last));
+  if (gentle && rows[0].repeat < REPEAT) return plan;
+  const least = Math.min(...rows.map((r) => r.repeat));
+  const rested = rows.map((r, i) => i).filter((i) => rows[i].repeat <= least + NEAR);
+  let was = -1; // the session the last workout was, if it was one of these
+  let top = REPEAT;
+  rows.forEach((r, i) => { if (r.same > top + 1e-9) { top = r.same; was = i; } });
+  let start = rested[0];
+  if (was >= 0) for (let k = 1; k <= n; k++) { const i = (was + k) % n; if (rested.includes(i)) { start = i; break; } }
+  if (!start) return plan;
+  const ids = plan.days.map((d) => d.id);
+  return setOrder(plan, [...ids.slice(start), ...ids.slice(0, start)]);
+}
+
 /** Set the planned rest after sessions, by session id. Values are days, 0 to 6. */
 export function setRests(plan, restById) {
   const next = clone(plan);

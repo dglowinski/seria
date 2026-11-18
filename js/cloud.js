@@ -20,7 +20,7 @@ function setStatus(status, error = '') {
   for (const fn of listeners) fn(cloud);
 }
 
-const MAIN_KEYS = ['schema', 'updatedAt', 'erasedAt', 'profile', 'equipment', 'plan', 'weights', 'deletedSessions', 'activeSessionId', 'chat', 'proposals'];
+const MAIN_KEYS = ['schema', 'updatedAt', 'erasedAt', 'profile', 'equipment', 'plan', 'planBefore', 'weights', 'deletedSessions', 'activeSessionId', 'chat', 'proposals'];
 const plain = (o) => JSON.parse(JSON.stringify(o));
 const mainDoc = (s) => plain(Object.fromEntries(MAIN_KEYS.map((k) => [k, s[k]])));
 

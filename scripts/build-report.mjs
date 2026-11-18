@@ -41,6 +41,8 @@ const shots = [
   ['30-train-now', 'Train now', 'On a day the plan did not have, you see what makes sense today and how the rest follows.'],
   ['32-train-now-claude', 'Train now, reviewed', 'With a model connected it reviews the pick against your history.'],
   ['33-next-run', 'The next run', 'When the list is done, the coach plans what comes next from your results.'],
+  ['50-rebuild-chat', 'Ask for a new plan', 'It is built at once, from your workouts too. It starts after the last one, and the old plan can be put back.'],
+  ['51-rebuild-plan', 'A rebuild, on the plan', 'The plan says it was rebuilt, by whom, and which session is next.'],
   ['06-day', 'Session preview', 'Order, equipment, sets, reps, rest, and how the time adds up.'],
   ['40-day-optional', 'Optional extras', 'Each session lists up to two extras for the end, with the reason each one fits.'],
   ['44-pairs-switch', 'Pairs: one switch', 'On the Plan tab. It says what pairing saves, and what it costs: harder sets, two stations.'],
@@ -113,6 +115,16 @@ const v11 = [
   ['Changes are made, not proposed.', 'After a workout, from the chat and when equipment changes, the plan is updated without asking. "What changed" lists every change with its reason, an Undo and an Edit.'],
   ['A signal with the screen off.', 'A web page cannot vibrate behind a dark screen, so the app sends a notification when the rest ends (stand-alone app). The beep is scheduled ahead on the audio clock. Settings has a test button. Not tried on a real phone.'],
   ['The long view.', 'A plain-words outlook on the Plan tab: what this round holds, how it gets harder, what changes round to round, what happens when it stalls, and what would be added with more time. A connected model adds its own.'],
+];
+
+// Version 1.4: the coach and the workouts on record.
+const v14 = [
+  ['What went wrong.', 'Asking the coach to regenerate the plan sent it the profile and the gym, but none of the workouts. So it built the same plan again from the top, and its first session was the one just trained. And when the model answered such a request in words only, nothing was built at all, whatever the chat said.'],
+  ['The coach now gets the records.', 'Every chat message and every request for a plan goes out with today\'s date, the last workouts exercise by exercise (planned and done), the hours since each muscle group was trained, other activities, the plan as it stands and what is next on it.'],
+  ['Asking for a new plan builds one.', 'Said in words, it is built at once. The coach first says what it will take into account, then the plan appears, in the chat and on the Plan tab. If the model sends a whole plan in a chat answer, that plan is used, so the chat and the plan cannot disagree.'],
+  ['A new plan carries on.', 'It starts with a session whose muscles the last workout left alone, the next one in the cycle, and keeps the weights and the reps already reached. A model is told to do this; if its plan still opens with a repeat of the last workout, the app turns the list. Without a model the training rules do the same.'],
+  ['The Plan tab shows it.', 'After a rebuild it says when the plan was rebuilt, by whom, and which session is next and why.'],
+  ['A way back.', '"Put the old plan back", in the chat and on the Plan tab, undoes a rebuild with its list of changes, until a workout is done on the new plan.'],
 ];
 
 // Version 1.3: notes from the gym.
@@ -281,6 +293,12 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
       <div class="rowx head"><span>The design says</span><span>Status</span><span>The app does</span></div>
       ${spec.map(([a, s, b]) => `<div class="rowx"><span>${esc(a)}</span><span><span class="pill ${s === 'changed' ? 'mostly' : s}">${s === 'done' ? 'Done' : s === 'changed' ? 'Changed' : 'Mostly'}</span></span><span class="muted">${esc(b)}</span></div>`).join('\n      ')}
     </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">New in version 1.4</p>
+    <h2>The coach knows your workouts, and a new plan carries on from them</h2>
+    <div>${v14.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
   </section>
 
   <section>

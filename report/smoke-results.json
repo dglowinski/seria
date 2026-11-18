@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-17T14:40:26.064Z",
+  "ranAt": "2026-11-18T09:08:46.363Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 277,
-  "passed": 277,
+  "total": 292,
+  "passed": 292,
   "failed": 0,
   "results": [
     {
@@ -1664,6 +1664,96 @@
     {
       "part": "H pairs and the band",
       "name": "no script errors in part H",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "a first plan is asked for with nothing to carry on from",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "set-up: the first session was trained in full and came off the list",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "the coach gets the last workout with the chat: when, what, and every set",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "and where the plan stands: what is done, what is next, how long each muscle group has rested",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "asking for a new plan builds one at once, and Claude gets the records, the old plan and the request",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "the coach says what it is about to do, from the records",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "the plan is replaced, and the one before is kept",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "a plan that opens with the session just trained is turned, so the next one comes first",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "the chat names the session that is really next, and why",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "weights from the workout stay in the new plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "the plan screen shows the rebuild: who, when, and what is next",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "\"Put the old plan back\" brings back the plan as it was, with its list of changes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "and the chat says so, with no second way back",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "a plan the model sends in the chat itself becomes the plan, with no second request",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "no script errors in part I",
       "ok": true,
       "detail": ""
     }

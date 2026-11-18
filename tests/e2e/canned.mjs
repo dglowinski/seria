@@ -3,11 +3,18 @@
 // path sees the same "model".
 // It must be self-contained: it is also injected into the page as text.
 export function canned(payload) {
-  const empty = { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [], equipment: null, schedule: null, outlook: null };
+  const empty = { message: '', questions: [], profile: null, ready_for_plan: false, rebuild_plan: false, plan: null, changes: [], equipment: null, schedule: null, outlook: null };
   const mode = payload.mode;
   if (mode === 'interview') {
     const msg = String(payload.user_message || '');
     if (/connection test/i.test(msg)) return { ...empty, message: 'Hello from the model' };
+    // Asked for a new plan while one exists: say so with the flag, and name what the records show.
+    if (payload.current_plan && /regenerate|rebuild/i.test(msg)) {
+      const last = (payload.recent_workouts || [])[0];
+      return { ...empty, message: `I will build a new plan from your results${last ? `, starting after ${last.title}` : ''}.`, rebuild_plan: true };
+    }
+    // A model that answers with a whole plan in the chat, without the flag: the app must not leave it unused.
+    if (payload.current_plan && /fresh start/i.test(msg)) return { ...empty, message: 'Here is a fresh plan: push, pull and legs.', plan: canned({ ...payload, mode: 'next_run' }).plan };
     if (payload.current_plan && /shorter|fewer sets/i.test(msg)) {
       const ex = payload.current_plan.sessions[0].exercises[0];
       return { ...empty, message: 'I can trim the first lift of the first session.', changes: [{ exercise_key: ex.exercise_key, field: 'sets', new_value: ex.sets - 1, new_exercise_id: null, reason: `You asked for a shorter session, so ${ex.name} drops from ${ex.sets} to ${ex.sets - 1} sets.` }] };
@@ -75,7 +82,7 @@ export function canned(payload) {
     }
     return {
       ...empty,
-      message: 'Your plan is set.',
+      message: payload.plan_being_replaced ? 'Test double: the same three sessions again.' : 'Your plan is set.',
       outlook: 'Test double: eight weeks of steady pressing and pulling. Reps climb first, then the load.',
       plan: {
         days: [

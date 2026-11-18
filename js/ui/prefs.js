@@ -7,7 +7,7 @@ import { inViewer, runtime, onRuntime, saveFile, isStandalone, primeAudio, beep,
 import { cloud, onCloud, syncNow, CLOUD_TEXT } from '../cloud.js';
 import { RULES, SOURCES, RULES_VERSION, RULES_UPDATED, PRESCRIPTION, GOALS } from '../domain/rules.js';
 
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 let installEvent = null;
 if (typeof window !== 'undefined') window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; });
 

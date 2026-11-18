@@ -10,7 +10,7 @@ import { describeChange, canUndo, isApplied, EDITABLE } from '../domain/progress
 import { exerciseById, machineForExercise, machineLabel, sketchForExercise } from '../domain/catalog.js';
 import { Sketch } from './sketch.js';
 import { RULES_VERSION, ACTIVITIES, EFFORTS, SCHEDULE, activityGroups } from '../domain/rules.js';
-import { undoChange, redoChange, editChange, recordUpdate, reviewEquipment, startTraining, reviewToday, logActivity, reviewWaiting, reviewRunning, askAgain } from '../ai/coach.js';
+import { undoChange, redoChange, editChange, recordUpdate, reviewEquipment, startTraining, reviewToday, logActivity, reviewWaiting, reviewRunning, askAgain, canRestorePlan, restorePlan } from '../ai/coach.js';
 import { sourceName, aiReady, aiName } from '../ai/ai.js';
 import { primeAudio } from '../platform.js';
 import { WeightSheet, WeightsFirst } from './weights.js';
@@ -196,7 +196,9 @@ export function PlanScreen() {
         It is going through your last workout. ${thinking.source === 'rules' ? 'The training rules have updated the plan for now; its changes take their place when it answers.' : 'The changes show here when it answers.'}</div>`}
       ${waiting && html`<p class="note warn small" data-testid="plan-pending"><b>The plan will be updated when you are online</b>Your last workout is saved and the training rules have updated the plan. ${aiName()} reviews it as soon as there is a connection.</p>`}
       ${plan.lastUpdate && now - plan.lastUpdate.at < 14 * 864e5 && html`<div class="note small" data-testid="last-update"><b>Updated ${dateText(plan.lastUpdate.at)} by ${sourceName(plan.lastUpdate.by)}</b>${plan.lastUpdate.text}
-        ${state.proposals.length > 0 && html`<div class="chips" style="margin-top:8px"><button class="chip" data-testid="see-changes" onClick=${() => go('review')}>What changed</button></div>`}</div>`}
+        ${(state.proposals.length > 0 || canRestorePlan(state)) && html`<div class="chips" style="margin-top:8px">
+          ${state.proposals.length > 0 && html`<button class="chip" data-testid="see-changes" onClick=${() => go('review')}>What changed</button>`}
+          ${canRestorePlan(state) && html`<button class="chip" data-testid="plan-restore" onClick=${() => { if (restorePlan()) toast('The old plan is back'); }}>Put the old plan back</button>`}</div>`}</div>`}
       ${broken.length > 0 && html`<div class="note warn">
         <b>${plural(broken.length, 'exercise')} need${broken.length === 1 ? 's' : ''} equipment you no longer have</b>
         <span class="muted small">${[...new Set(broken.map((b) => b.name))].join(', ')}</span>

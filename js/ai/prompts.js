@@ -5,16 +5,17 @@
 import { rulesAsText, RULES_VERSION, GOALS, levelFor, ACTIVITIES, activityGroups } from '../domain/rules.js';
 import { allExercises, canDo, equipmentList, isAvailable, isListed, PATTERNS, EQUIPMENT, LOADING, machineDetail, machineForExercise } from '../domain/catalog.js';
 import { WEEKDAYS, clampMinutes, sessionsPerWeek, cycleWeeks, dayOptional, pairMate, pairRestSec } from '../domain/planner.js';
-import { queueState, recommend, timeline, doneGroups, daysBetween } from '../domain/schedule.js';
+import { queueState, recommend, plannedNext, timeline, doneGroups, daysBetween } from '../domain/schedule.js';
 import { GROUP_OF, SKETCH_IDS } from '../domain/catalog.js';
 
 export const SYSTEM_PROMPT = `You are the training coach inside Seria, a gym training app. You build and update one person's resistance-training plan. The plan is a running list, not a calendar: train this, rest so many days, train that. The user works through it on whatever days they can, and it is updated after every workout from what was recorded. Each request names a mode: "interview", "new_plan", "train_now", "in_session", "after_session", "activity", "next_run" or "equipment".
 
-Each request gives you what the app has on record: goal and experience, training days and time budget, preferences and limitations, the current equipment list, the current plan, the results of the current session, earlier sessions, and the version of the training rules library. Follow the rules library below; the app's own generator uses the same one. Use only the recorded data you are given. Never assume a result that is not there.
+Each request gives you what the app has on record: goal and experience, training days and time budget, preferences and limitations, the current equipment list, the current plan, today's date, the recent workouts with what was planned and what was done in each, the results of the current session, and the version of the training rules library. Follow the rules library below; the app's own generator uses the same one. Use only the recorded data you are given. Never assume a result that is not there.
 
 Modes
-- interview: read the conversation and the user's latest message. Return the full profile as you now understand it, keeping earlier values unless the user changed them. If something a plan needs is missing (goal, experience, sessions per week, minutes per session), ask one or two specific questions in "questions" and set ready_for_plan to false. Ask once about movements to skip, limitations and favourite exercises if the user has not said. When nothing is missing, set ready_for_plan to true; the app then shows the assumptions and the user confirms. If a plan exists and the user asks to change it, return the change in "changes" instead of a new plan; say in "message" what you changed.
+- interview: read the conversation and the user's latest message. You also get today's date, the recent workouts exercise by exercise, the hours since each muscle group was trained, other activities, and the session the app has next: use them to answer questions about the training and to judge what the user asks for, and never say you cannot see the history when it is there. Return the full profile as you now understand it, keeping earlier values unless the user changed them. If something a plan needs is missing (goal, experience, sessions per week, minutes per session), ask one or two specific questions in "questions" and set ready_for_plan to false. Ask once about movements to skip, limitations and favourite exercises if the user has not said. When nothing is missing, set ready_for_plan to true; the app then shows the assumptions and the user confirms. If a plan exists and the user asks to change it, return the change in "changes" instead of a new plan; say in "message" what you changed. If a plan exists and the user asks for a new one (regenerate it, rebuild it, plan it again, start over), set rebuild_plan to true and say in "message", in one sentence, what the new plan will take into account; the app then builds it at once in new_plan mode, with this conversation and the records. When the user only changes something the plan is built on (goal, sessions per week, minutes), return it in the profile and leave rebuild_plan false; the app shows the new assumptions and the user confirms. Nothing else changes the plan, so never say it was changed or rebuilt unless you returned changes or set rebuild_plan. Leave "plan" null in this mode.
 - new_plan: build the plan in "plan": the sessions to do, in order, sessions_per_week of them for each of weeks_ahead weeks, each with its week number and rest_days_after, the days of rest before the next one (rests in one week add up to 7 minus the sessions that week). Use only exercise ids from available_exercises. Keep each session within the minutes per session, using the time model in the rules. Give the matching session of every week the same main lifts so they can progress, and let the secondary and accessory exercises take turns, so what did not fit one week is trained the next. Order each session as the rules say. Titles name the body parts, with no weekday and no letter. Give every session its optional_exercises as described under Optional extras. Fill "outlook" as described under The long view. If a plan truly cannot be built because information is missing, return questions and set plan to null.
+  When recent_workouts has entries, the user is already training and this plan takes the place of plan_being_replaced: carry on from the records, do not start over. Put first the session that should come next after the last workouts by the recovery rules, never one that trains again what the last workout trained when another session can go first. Read the results as in next_run: keep the main lifts that are progressing, change what has stalled or was skipped again and again. The conversation shows why the user asked for a new plan; build what they asked for. Then say in "message", in one or two sentences, what is different from the plan before and why the first session is the one it is.
 - next_run: the user has finished the sessions on the list. Plan the next run in "plan", in the same form as new_plan, from what the records show: keep what is progressing, change what has stalled or was skipped again and again, and keep the main lifts unless the results say otherwise. Say in "message", in one or two sentences, what changes and why, and fill "outlook" again for the round ahead.
 - train_now: the user wants to train today, and today is not the day the plan had for the next session. You get the list with what is done, skipped and still to do, the recent workouts with dates and sets done per muscle group, the hours since each muscle group was trained, how many days early or late today is, and the pick the app's own rules made. Decide what makes sense today and fill "schedule": first_session_id is the session to do now, from those still to do (stay with the app's pick unless the records give a reason not to); reason is one or two short sentences for the user; order lists the other sessions still to do in the order they should now follow; rest_days gives the days of rest after each of them, starting with today's, in that same order; ease_percent is how much lighter today's loads should be (0 to 20, usually 0; about 10 after ten days or more away). Follow the recovery rules in the library. If the content of later sessions should change because of this, add those as "changes"; otherwise leave changes empty.
 - in_session: the user is in the middle of a workout. Compare the sets done so far with their targets and take reps in reserve into account when given. Return changes only for sets and exercises that are not done yet, using fields "load", "reps" or "rest". Changes listed under already_applied were made by the app's own rules a moment ago: return a change for the same exercise and field only when you would set a different value; yours then replaces it.
@@ -66,6 +67,7 @@ export const OUTPUT_SCHEMA = obj({
     include_exercise_ids: list(str()),
   })),
   ready_for_plan: { type: 'boolean' },
+  rebuild_plan: { type: 'boolean', description: 'interview only: true when a plan exists and the user asks for a new one. The app then builds it at once. False in every other case.' },
   plan: nullable(obj({
     days: list(obj({
       week: { type: 'integer', description: 'Which week ahead this session belongs to, starting at 1.' },
@@ -217,24 +219,79 @@ function historyOut(session, past) {
 
 const body = (mode, data) => JSON.stringify({ mode, rules_version: RULES_VERSION, ...data });
 
-export function interviewRequest({ profile, equipment, plan, chat, message }) {
-  const conversation = chat.filter((m) => m.kind !== 'notice' && m.text).slice(-14).map((m) => ({ from: m.role === 'user' ? 'user' : 'coach', text: m.text }));
+const conversationOut = (chat, n) => (chat || []).filter((m) => m.kind !== 'notice' && m.text).slice(-n).map((m) => ({ from: m.role === 'user' ? 'user' : 'coach', text: m.text }));
+const loadsOut = (weights) => Object.fromEntries(Object.entries(weights || {}).map(([id, w]) => [id, w.value]));
+
+/** One recorded workout, exercise by exercise: what was planned and what was done. */
+const workoutOut = (x, now) => ({
+  date: new Date(x.startedAt).toISOString().slice(0, 10), days_ago: daysBetween(x.startedAt, now), title: x.title,
+  minutes: Math.round(((x.endedAt || x.updatedAt || x.startedAt) - x.startedAt) / 60000),
+  sets_done_by_muscle_group: doneGroups(x), planned_rest_days_after: x.restAfter ?? null, eased_percent: x.easePct || 0,
+  exercises: x.exercises.map((ex) => {
+    const done = ex.sets.filter((st) => st.status === 'done');
+    return {
+      exercise_id: ex.exerciseId, name: ex.name, planned: `${ex.sets.length} x ${ex.sets[0]?.planned.reps ?? '?'}`, planned_load: ex.sets[0]?.planned.load ?? null,
+      reps: done.map((st) => st.actual.reps), load: done.map((st) => st.actual.load), skipped_sets: ex.sets.length - done.length,
+    };
+  }),
+});
+
+/**
+ * Where the training stands today: the last workouts in full, how long each
+ * muscle group has rested, and what else was done. It goes with every request
+ * that talks about the plan or builds one, so neither starts from nothing.
+ */
+function trainingOut(sessions, now, n = 8) {
+  const done = (sessions || []).filter((x) => gym(x) && x.startedAt <= now).sort((a, b) => b.startedAt - a.startedAt);
+  const hours = {};
+  for (const x of done) for (const name of Object.keys(doneGroups(x))) if (!(name in hours)) hours[name] = Math.round((now - x.startedAt) / 3600e3);
+  const d = new Date(now);
+  return {
+    today: { date: d.toISOString().slice(0, 10), weekday: WEEKDAYS[(d.getDay() + 6) % 7] },
+    workouts_on_record: done.length,
+    recent_workouts: done.slice(0, n).map((x) => workoutOut(x, now)), // newest first
+    hours_since_muscle_group_was_trained: hours,
+    workouts_in_last_7_days: done.filter((x) => now - x.startedAt < 7 * 24 * 3600e3).length,
+    other_activities: activitiesOut(sessions || [], now),
+  };
+}
+
+/** What the app has next on the list, and when. */
+function nextOut(plan, sessions, now) {
+  const next = plan ? plannedNext(plan, sessions || [], now) : null;
+  if (!next) return null;
+  return { session_id: next.dayId, title: next.title, due_in_days: Math.max(daysBetween(now, next.dueAt), 0), why: next.reason };
+}
+
+export function interviewRequest({ profile, equipment, plan, chat, message, sessions = [], weights = {}, now = Date.now() }) {
   return body('interview', {
     profile_so_far: profileOut(profile),
     equipment: equipmentOut(equipment),
     available_exercises: exercisesOut(equipment),
     current_plan: planOut(plan),
-    conversation,
+    next_session: nextOut(plan, sessions, now),
+    ...trainingOut(sessions, now, 6),
+    known_loads: loadsOut(weights),
+    conversation: conversationOut(chat, 14),
     user_message: message,
   });
 }
 
-export function newPlanRequest({ profile, equipment, weights }) {
+/**
+ * A plan from the profile. When the user is already training, the records, the
+ * plan it replaces and the conversation go along, so the new plan carries on
+ * from them and does what was asked.
+ */
+export function newPlanRequest({ profile, equipment, weights, plan = null, sessions = [], chat = [], now = Date.now() }) {
   return body('new_plan', {
     profile: { ...profileOut(profile), sessions_per_week: sessionsPerWeek(profile), weeks_ahead: cycleWeeks(profile), minutes_per_session: clampMinutes(profile.minutes) },
     equipment: equipmentOut(equipment),
     available_exercises: exercisesOut(equipment),
-    known_loads: Object.fromEntries(Object.entries(weights || {}).map(([id, w]) => [id, w.value])),
+    known_loads: loadsOut(weights),
+    ...trainingOut(sessions, now),
+    plan_being_replaced: planOut(plan),
+    next_session_of_that_plan: nextOut(plan, sessions, now),
+    conversation: conversationOut(chat, 8),
   });
 }
 

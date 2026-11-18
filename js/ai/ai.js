@@ -61,6 +61,7 @@ export function tidy(out) {
     questions: Array.isArray(o.questions) ? o.questions.filter((q) => typeof q === 'string' && q.trim()).slice(0, 3) : [],
     profile: o.profile && typeof o.profile === 'object' ? o.profile : null,
     ready_for_plan: o.ready_for_plan === true,
+    rebuild_plan: o.rebuild_plan === true,
     plan: o.plan && typeof o.plan === 'object' && Array.isArray(o.plan.days) ? o.plan : null,
     changes: Array.isArray(o.changes) ? o.changes.filter((c) => c && typeof c === 'object') : [],
     equipment: o.equipment && typeof o.equipment === 'object' ? o.equipment : null,

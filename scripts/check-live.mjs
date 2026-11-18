@@ -126,6 +126,28 @@ try {
     return w.includes('What you lift now') && p.includes('Log another activity') && p.includes('The long view') && k.includes('Feel like a bit more?')
       && p.includes('Pair exercises to save time') && p.includes('is thinking') && w.includes('Weights for this session');
   }));
+
+  // A rebuild, still offline: asked for in words, built from what is on record, and it can be put back.
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Finish and save' }).click();
+  await page.getByRole('heading', { name: 'Workout saved' }).waitFor({ timeout: 8000 });
+  const read = () => page.evaluate(() => { const s = JSON.parse(localStorage.getItem('seria.state.v1')); return { id: s.plan.id, before: s.planBefore?.plan?.id || null, version: s.plan.version, said: s.chat[s.chat.length - 1], note: s.plan.lastUpdate?.text || '' }; });
+  const was = await read();
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Coach' }).click();
+  await page.fill('#coach-input', 'Please regenerate my plan');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByTestId('build-plan').last().click();
+  await page.getByTestId('restore-plan').waitFor({ timeout: 8000 });
+  const now = await read();
+  check('asking the coach for a new plan builds one, says which session is next, and keeps the old plan', now.id !== was.id && now.before === was.id && now.version === was.version + 1
+    && now.said.kind === 'plan' && now.said.replaced === true && / is next\.| starts with /.test(now.said.text) && now.note.length > 20, JSON.stringify(now));
+  await page.getByTestId('restore-plan').click();
+  const back = await read();
+  check('"Put the old plan back" undoes the rebuild', back.id === was.id && back.before === null && (await page.getByTestId('restore-plan').count()) === 0, JSON.stringify(back));
+  check('the release is version 1.4.0, and the coach is sent the workouts on record', await page.evaluate(async () => {
+    const [v, p, s] = await Promise.all(['js/ui/prefs.js', 'js/ai/prompts.js', 'js/domain/schedule.js'].map((f) => fetch(f).then((r) => r.text())));
+    return v.includes("APP_VERSION = '1.4.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan') && s.includes('export function continueFrom');
+  }));
   await context.setOffline(false);
   check('no script errors', errors.length === 0, errors.join(' | '));
 } catch (e) {

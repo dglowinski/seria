@@ -8,6 +8,8 @@ import { providerSays, ROOM } from '../js/ai/errors.js';
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT, LOOKUP_SYSTEM, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, lookupRequest, parseLookup, trainNowRequest, nextRunRequest, activityRequest } from '../js/ai/prompts.js';
 import { recommend, completeDay, queueState } from '../js/domain/schedule.js';
 import { askAgain, reviewRunning, setWeight } from '../js/ai/coach.js';
+import { userSays, buildPlan, canRestorePlan, restorePlan } from '../js/ai/coach.js';
+import { continueFrom } from '../js/domain/schedule.js';
 import { emptyProfile, generatePlan, missingFields, units } from '../js/domain/planner.js';
 import { emptyEquipment, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail, machineForExercise, machineLabel, isAvailable, isListed, EQUIPMENT, allExercises, SKETCH_IDS, sketchForExercise, sketchForEquipment, EXERCISES } from '../js/domain/catalog.js';
 import { SKETCHES } from '../js/ui/sketch.js';
@@ -71,7 +73,7 @@ test('claude profile: unknown ids and odd values are dropped', () => {
 });
 
 test('claude answer: missing or wrong fields never break the app', () => {
-  assert.deepEqual(tidy(null), { message: '', questions: [], profile: null, ready_for_plan: false, plan: null, changes: [], equipment: null, schedule: null, outlook: '' });
+  assert.deepEqual(tidy(null), { message: '', questions: [], profile: null, ready_for_plan: false, rebuild_plan: false, plan: null, changes: [], equipment: null, schedule: null, outlook: '' });
   assert.equal(tidy({ outlook: '  Eight  weeks\nof steady work. ' }).outlook, 'Eight weeks of steady work.');
   assert.equal(tidy({ schedule: { order: [] } }).schedule, null, 'a schedule with no first session is not a schedule');
   assert.equal(tidy({ equipment: 'lots' }).equipment, null);
@@ -641,4 +643,108 @@ test('review after a workout: one the model never answered gets the rule-based u
   setWeight(blank.exerciseId, blank.loadType, 30, 1.25);
   const filled = store.getState().plan.days[1].exercises.find((x) => x.exerciseId === blank.exerciseId);
   assert.deepEqual(filled.load, { value: 30, step: 1.25 });
+});
+
+// ---------------------------------------------------------------- the coach and the workouts on record
+
+const yesterdayEvening = () => { const d = new Date(); d.setDate(d.getDate() - 1); d.setHours(18, 0, 0, 0); return d.getTime(); };
+const SET_UP = { ...emptyProfile(), goal: 'strength', months: 12, daysPerWeek: 3, minutes: 50, askedExtras: true };
+/** An app whose plan was built a day ago, as in real use: a rebuild then gets an id of its own. */
+const settledApp = () => freshApp({ profile: SET_UP, plan: generatePlan(SET_UP, emptyEquipment(), W0, Date.now() - 864e5) });
+
+test('the coach is told where the training stands: the chat and a new plan both get the workouts on record', () => {
+  settledApp();
+  const s = train('d1', () => null, yesterdayEvening());
+  const st = store.getState();
+  const now = Date.now();
+  const a = JSON.parse(interviewRequest({ profile: st.profile, equipment: st.equipment, plan: st.plan, chat: [{ role: 'user', text: 'hi' }], message: 'What did I train last?', sessions: st.sessions, weights: st.weights, now }));
+  assert.equal(a.workouts_on_record, 1); assert.equal(a.recent_workouts[0].title, 'Upper body A'); assert.equal(a.recent_workouts[0].days_ago, 1);
+  const bench = a.recent_workouts[0].exercises.find((x) => x.exercise_id === 'db_bench_press');
+  const done = s.exercises.find((x) => x.exerciseId === 'db_bench_press').sets;
+  assert.deepEqual(bench.reps, done.map((x) => x.actual.reps)); assert.deepEqual(bench.load, done.map((x) => x.actual.load));
+  assert.equal(bench.skipped_sets, 0); assert.equal(bench.planned, `${done.length} x ${done[0].planned.reps}`);
+  assert.ok(a.hours_since_muscle_group_was_trained.Chest >= 6 && a.workouts_in_last_7_days === 1);
+  assert.equal(a.today.date, new Date(now).toISOString().slice(0, 10));
+  assert.deepEqual(a.current_plan.list.done, ['d1']);
+  assert.equal(a.next_session.session_id, 'd2'); assert.equal(a.next_session.title, 'Lower body A'); assert.ok(a.next_session.due_in_days >= 0);
+  assert.equal(a.known_loads.db_bench_press, st.weights.db_bench_press.value);
+  assert.equal(a.user_message, 'What did I train last?');
+  // A rebuild: the plan it replaces, the records and the words that asked for it all go along.
+  const b = JSON.parse(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights: st.weights, plan: st.plan, sessions: st.sessions, chat: [{ role: 'user', text: 'Please regenerate my plan' }, { role: 'coach', kind: 'notice', text: 'a notice' }], now }));
+  assert.equal(b.mode, 'new_plan'); assert.equal(b.recent_workouts[0].title, 'Upper body A'); assert.ok(b.recent_workouts[0].exercises.length > 2);
+  assert.deepEqual(b.plan_being_replaced.list.done, ['d1']); assert.equal(b.next_session_of_that_plan.session_id, 'd2');
+  assert.deepEqual(b.conversation, [{ from: 'user', text: 'Please regenerate my plan' }]);
+  // A first plan has nothing to carry on from, and the request shows that plainly.
+  const c = JSON.parse(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights: {} }));
+  assert.equal(c.plan_being_replaced, null); assert.deepEqual(c.recent_workouts, []); assert.equal(c.workouts_on_record, 0);
+  assert.ok(/carry on from the records/.test(SYSTEM_PROMPT) && /set rebuild_plan to true/.test(SYSTEM_PROMPT) && /never say you cannot see the history/.test(SYSTEM_PROMPT));
+  assert.equal(OUTPUT_SCHEMA.properties.rebuild_plan.type, 'boolean');
+  assert.equal(tidy({ rebuild_plan: true }).rebuild_plan, true); assert.equal(tidy({ rebuild_plan: 'yes' }).rebuild_plan, false);
+});
+
+test('a new plan carries on after the last workout instead of starting over', () => {
+  settledApp();
+  const s = train('d1', () => null, yesterdayEvening()); // Upper body A
+  const st = store.getState();
+  const fresh = generatePlan(st.profile, st.equipment, st.weights);
+  const ids = (p) => queueState(p).queue.map((d) => d.id);
+  assert.deepEqual(ids(fresh), ['d1', 'd2', 'd3', 'd4', 'd5', 'd6'], 'built from nothing, it starts at the top');
+  assert.deepEqual(ids(continueFrom(fresh, st.sessions)), ['d2', 'd3', 'd4', 'd5', 'd6', 'd1'], 'the session just trained goes to the back');
+  assert.equal(continueFrom(fresh, []), fresh, 'no workouts: nothing to carry on from');
+  assert.equal(continueFrom(fresh, st.sessions, Date.now() + 11 * 864e5), fresh, 'after a long break it starts from the top');
+  // One set is not a workout of that kind.
+  const tiny = { ...s, exercises: s.exercises.map((ex, i) => ({ ...ex, sets: ex.sets.map((x, j) => (i === 0 && j === 0 ? x : { ...x, status: 'skipped', actual: null })) })) };
+  assert.equal(continueFrom(fresh, [tiny]), fresh);
+  // A plan cut differently: after an upper-body workout, pressing and pulling both repeat it, so legs go first.
+  const part = (id, patterns) => ({ ...fresh.days[0], id, exercises: fresh.days[0].exercises.filter((x) => patterns.includes(x.pattern)) });
+  const ppl = { ...fresh, days: [part('p1', ['push_h', 'push_v']), part('p2', ['pull_h', 'pull_v']), fresh.days[1]], queue: undefined };
+  assert.ok(ppl.days[0].exercises.length > 0 && ppl.days[1].exercises.length > 0);
+  assert.deepEqual(ids(continueFrom(ppl, st.sessions)), ['d2', 'p1', 'p2']);
+  // A plan whose order was chosen with the history in view is left alone, unless it opens with the repeat.
+  const lowerFirst = { ...fresh, days: [fresh.days[1], fresh.days[0], ...fresh.days.slice(2)], queue: undefined };
+  assert.equal(continueFrom(lowerFirst, st.sessions, Date.now(), { gentle: true }), lowerFirst);
+  assert.equal(ids(continueFrom(fresh, st.sessions, Date.now(), { gentle: true }))[0], 'd2');
+  // The second upper-body session of the cycle is told apart from the first by its exercises.
+  settledApp();
+  const s4 = train('d4', () => null, yesterdayEvening());
+  assert.equal(s4.title, 'Upper body B');
+  assert.equal(ids(continueFrom(fresh, [s4]))[0], 'd5');
+});
+
+test('rebuild: the new plan starts after the last workout, keeps reps and weights, says what is next, and can be put back', async () => {
+  settledApp();
+  train('d1', () => null, yesterdayEvening());
+  let st = store.getState();
+  const old = st.plan;
+  const reps = benchIn(old)[0].reps; // already one up from the workout
+  await userSays('Please regenerate my plan'); // the built-in coach shows what it would rebuild on first
+  assert.equal(store.getState().chat.slice(-1)[0].kind, 'assumptions');
+  assert.equal(store.getState().plan.id, old.id, 'nothing is replaced before the button');
+  await buildPlan();
+  st = store.getState();
+  assert.notEqual(st.plan.id, old.id); assert.equal(st.plan.version, (old.version || 1) + 1);
+  assert.equal(queueState(st.plan).queue[0].id, 'd2', 'not the session trained yesterday');
+  assert.ok(benchIn(st.plan).length > 0 && benchIn(st.plan).every((x) => x.reps === reps), 'the reps reached are kept');
+  assert.equal(benchIn(st.plan)[0].load.value, benchIn(old)[0].load.value, 'and the weights');
+  const msg = st.chat.slice(-1)[0];
+  assert.equal(msg.kind, 'plan'); assert.equal(msg.replaced, true);
+  assert.match(msg.text, /It carries on from your last workout \(Upper body A, yesterday\): Lower body A is next\./);
+  assert.match(st.plan.lastUpdate.text, /Lower body A is next/); assert.equal(st.plan.lastUpdate.by, 'rules');
+  assert.equal(st.planBefore.plan.id, old.id); assert.deepEqual(st.proposals, []); assert.ok(canRestorePlan());
+  assert.equal(hydrate(JSON.parse(JSON.stringify(st))).planBefore.plan.id, old.id, 'the copy survives a reload');
+  assert.ok(restorePlan());
+  st = store.getState();
+  assert.equal(st.plan.id, old.id); assert.equal(st.planBefore, null); assert.ok(st.proposals.length > 0, 'its list of changes is back too');
+  assert.ok(!canRestorePlan() && !restorePlan());
+  // Once a workout is done on the new plan there is no way back, and the copy is dropped.
+  await buildPlan();
+  assert.ok(canRestorePlan());
+  train(queueState(store.getState().plan).queue[0].id);
+  assert.ok(!canRestorePlan()); assert.equal(store.getState().planBefore, null);
+  // A first plan is not a rebuild: nothing to put back, and the usual first message.
+  store.replaceState({ ...emptyState(), profile: SET_UP, equipment: emptyEquipment() });
+  await buildPlan();
+  st = store.getState();
+  assert.equal(st.planBefore, null); assert.ok(!st.chat.slice(-1)[0].replaced); assert.match(st.chat.slice(-1)[0].text, /^Here is my proposal: the next 6 sessions/);
+  assert.equal(st.plan.lastUpdate, undefined);
 });

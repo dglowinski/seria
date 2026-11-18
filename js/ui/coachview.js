@@ -2,10 +2,10 @@
 // building a plan, and takes typed or spoken answers. Speech lands in the text
 // field first so it can be fixed before sending.
 
-import { html, useState, useEffect, useRef, useStore, useSignal, Dock, Icon, go } from './kit.js';
+import { html, useState, useEffect, useRef, useStore, useSignal, Dock, Icon, go, toast } from './kit.js';
 import * as store from '../store.js';
 import { buildAssumptions, missingFields } from '../domain/planner.js';
-import { userSays, buildPlan, isBusy, onBusy, GREETING } from '../ai/coach.js';
+import { userSays, buildPlan, isBusy, onBusy, GREETING, canRestorePlan, restorePlan } from '../ai/coach.js';
 import { aiStatus, sourceName } from '../ai/ai.js';
 import { useVoiceInput } from './voice.js';
 import { ChangeCard } from './plan.js';
@@ -46,6 +46,8 @@ export function CoachScreen() {
 
   const chat = state.chat;
   const lastAssumptions = [...chat].reverse().find((m) => m.kind === 'assumptions')?.id;
+  // A rebuild can be taken back from the message that announced it, until a workout is done on the new plan.
+  const undoAt = canRestorePlan(state) ? [...chat].reverse().find((m) => m.kind === 'plan')?.id : null;
   const lastCoach = [...chat].reverse().find((m) => m.role === 'coach' && m.kind !== 'notice');
   const chips = !busy && chat[chat.length - 1]?.role === 'coach' ? (lastCoach?.chips || []) : [];
 
@@ -65,6 +67,7 @@ export function CoachScreen() {
           ${m.text && html`<p class=${`bubble ${m.role === 'user' ? 'reply' : ''} ${m.kind === 'notice' ? 'notice' : ''}`} data-role=${m.role}>${m.text}${m.via && m.via !== 'rules' ? html`<span class="via">${sourceName(m.via)}</span>` : ''}</p>`}
           ${m.kind === 'assumptions' && html`<${Assumptions} live=${m.id === lastAssumptions} />`}
           ${m.kind === 'plan' && html`<button class="cta card" data-testid="open-plan" onClick=${() => go('plan')}>Open my plan</button>`}
+          ${m.kind === 'plan' && m.replaced && m.id === undoAt && html`<button class="cta ghost card" data-testid="restore-plan" disabled=${busy} onClick=${() => { if (restorePlan()) toast('The old plan is back'); }}>Put the old plan back</button>`}
           ${m.kind === 'proposal' && (state.proposals.find((p) => p.id === m.proposalId)?.changes || []).map((c) => html`<${ChangeCard} key=${c.id} p=${{ id: m.proposalId }} c=${c} />`)}
         `)}
         ${busy && html`<p class="bubble" data-testid="thinking"><span class="dots"><span></span><span></span><span></span></span> Thinking…</p>`}
