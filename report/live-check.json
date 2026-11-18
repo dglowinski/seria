@@ -1,9 +1,9 @@
 {
   "url": "https://dglowinski.github.io/seria/",
-  "ranAt": "2026-11-18T10:27:23.491Z",
+  "ranAt": "2026-11-18T13:07:37.014Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 29,
-  "passed": 29,
+  "total": 33,
+  "passed": 33,
   "results": [
     {
       "name": "the address answers over HTTPS",
@@ -91,7 +91,17 @@
       "detail": ""
     },
     {
-      "name": "the workout shows a sketch of the equipment for the first exercise",
+      "name": "the workout shows a drawing of how the first exercise is done, and it moves",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "\"Machine busy?\" offers an optional extra in the meantime, and any other exercise or machine",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a set can be added by hand during the workout",
       "ok": true,
       "detail": ""
     },
@@ -116,7 +126,12 @@
       "detail": ""
     },
     {
-      "name": "the release is version 1.9.0, and the coach is sent the workouts on record and where the cycle stands",
+      "name": "the release is version 1.10.0, and the coach is sent the workouts on record and where the cycle stands",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the release has what 1.10 added: catch-up with the records, the whole plan after every workout, the abdominal machine, a move for every exercise",
       "ok": true,
       "detail": ""
     },
@@ -127,6 +142,11 @@
     },
     {
       "name": "the plan screen shows the version that is running",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "every exercise in the session preview has a drawing of how it is done: still until tapped, then it plays",
       "ok": true,
       "detail": ""
     },
