@@ -1,9 +1,9 @@
 {
   "url": "https://dglowinski.github.io/seria/",
-  "ranAt": "2026-11-18T10:02:07.404Z",
+  "ranAt": "2026-11-18T10:27:23.491Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 28,
-  "passed": 28,
+  "total": 29,
+  "passed": 29,
   "results": [
     {
       "name": "the address answers over HTTPS",
@@ -116,7 +116,7 @@
       "detail": ""
     },
     {
-      "name": "the release is version 1.8.0, and the coach is sent the workouts on record and where the cycle stands",
+      "name": "the release is version 1.9.0, and the coach is sent the workouts on record and where the cycle stands",
       "ok": true,
       "detail": ""
     },
@@ -131,7 +131,12 @@
       "detail": ""
     },
     {
-      "name": "an exercise box shows how the last times went",
+      "name": "an exercise box shows its progress: nothing until the target moves, then the step, with what changed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the Plan tab has a \"Rebuild plan\" button",
       "ok": true,
       "detail": ""
     },
