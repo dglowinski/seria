@@ -130,10 +130,16 @@ export function canned(payload) {
   if (mode === 'after_session') {
     const ex = payload.current_plan.sessions[0].exercises[0];
     const left = payload.current_plan.list.still_to_do_in_order;
+    // The whole plan: an exercise the user added by hand joins another session of the plan. One of them,
+    // a Nordic curl, makes the double say the plan no longer fits and must be built anew.
+    const byHand = payload.session.exercises.find((x) => x.added_by_hand && x.sets.some((s) => s.status === 'done'));
+    const other = payload.current_plan.sessions[1];
+    if (byHand && byHand.exercise_id === 'nordic_curl') return { ...empty, message: 'Test double: you keep adding hamstring work the plan lacks, so the plan is built anew around it.', rebuild_plan: true };
+    const whole = byHand && other ? [{ exercise_key: other.exercises[0].exercise_key, field: 'add', new_value: 2, new_exercise_id: byHand.exercise_id, reason: `Test double: you added ${byHand.name} by hand, so it joins ${other.title}.` }] : [];
     return {
       ...empty,
-      message: 'Solid session.',
-      changes: [{ exercise_key: ex.exercise_key, field: 'load', new_value: (ex.load || 20) + 2, new_exercise_id: null, reason: `Test double: every set of ${ex.name} was done, so add a step.` }],
+      message: whole.length ? 'Solid session. Test double: I went through the whole plan and put in what you added by hand; the rest stands.' : 'Solid session.',
+      changes: [{ exercise_key: ex.exercise_key, field: 'load', new_value: (ex.load || 20) + 2, new_exercise_id: null, reason: `Test double: every set of ${ex.name} was done, so add a step.` }, ...whole],
       // With two or more sessions left, swap the next two and give the new first one three days of rest after it.
       schedule: left.length >= 2 ? { first_session_id: left[1], reason: 'Test double: the second session moves up after this workout.', order: [left[0], ...left.slice(2)], rest_days: [3], ease_percent: null } : null,
     };

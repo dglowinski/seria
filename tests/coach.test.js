@@ -286,7 +286,8 @@ test('machines by maker: what the model knows is saved, and a web result needs a
 test('sketches: every kind of equipment has a drawing, and every exercise maps to the right one', () => {
   assert.deepEqual(Object.keys(SKETCHES).sort(), [...SKETCH_IDS].sort());
   for (const [id, sk] of Object.entries(SKETCHES)) { assert.ok(sk.name && sk.parts.length >= 2, id); for (const p of sk.parts) assert.ok(['f', 'p', 'm', 'mp', 'mr', 'c', 's', 'w', 'r'].includes(p[0]), `${id}: ${p[0]}`); }
-  for (const x of EQUIPMENT) assert.ok(SKETCHES[x.id], `no drawing for ${x.name}`);
+  for (const x of EQUIPMENT) assert.ok(SKETCHES[sketchForEquipment(emptyEquipment(), x.id)?.id], `no drawing for ${x.name}`);
+  assert.equal(sketchForEquipment(emptyEquipment(), 'ab_machine').id, 'ab', 'the abdominal machine uses the ab drawing');
   const eq = emptyEquipment(); Object.assign(eq.items, { leg_press: true, rack: true, cable: true, smith: true });
   const look = (id) => sketchForExercise(eq, EXERCISES.find((x) => x.id === id));
   assert.deepEqual(look('leg_press'), { id: 'leg_press', loading: undefined });
@@ -351,7 +352,7 @@ function freshApp(over = {}) {
   return store.getState();
 }
 /** Do a whole session through the store, as the workout screen does. */
-function train(dayId, repsFor = () => null, start = Date.now() - 3600e3) {
+function train(dayId, repsFor = () => null, start = Date.now() - 3600e3, { review = true } = {}) {
   let s = startTraining(dayId);
   s = { ...s, id: `s-${start.toString(36)}`, startedAt: start, log: [[0, 'start', dayId]] };
   store.set({ sessions: store.getState().sessions.map((x) => (x.status === 'active' ? s : x)), activeSessionId: s.id });
@@ -364,7 +365,7 @@ function train(dayId, repsFor = () => null, start = Date.now() - 3600e3) {
     if (s.phase === 'optional') s = S.endSession(s, t); // no optional extras today
   }
   store.putSession(s);
-  afterWorkout(s);
+  if (review) afterWorkout(s);
   return s;
 }
 const benchIn = (plan) => plan.days.flatMap((d) => d.exercises).filter((x) => x.exerciseId === 'db_bench_press');
@@ -738,7 +739,8 @@ test('rebuild: the new plan starts after the last workout, keeps reps and weight
   assert.equal(msg.kind, 'plan'); assert.equal(msg.replaced, true);
   assert.match(msg.text, /It carries on from your last workout \(Upper body A, yesterday\): Lower body A is next\./);
   assert.match(st.plan.lastUpdate.text, /Lower body A is next/); assert.equal(st.plan.lastUpdate.by, 'rules');
-  assert.equal(st.planBefore.plan.id, old.id); assert.deepEqual(st.proposals, []); assert.ok(canRestorePlan());
+  assert.equal(st.planBefore.plan.id, old.id); assert.ok(canRestorePlan());
+  assert.deepEqual(st.proposals.map((p) => p.mode), ['post_session'], 'only the review of the last workout stays, as a record');
   assert.equal(hydrate(JSON.parse(JSON.stringify(st))).planBefore.plan.id, old.id, 'the copy survives a reload');
   assert.ok(restorePlan());
   st = store.getState();
@@ -937,4 +939,285 @@ test('a model decides the training: its week, its supersets and a small overrun 
   assert.ok(mins(fitPlan(long(near[0]), {})) <= 50, 'a rule-built plan keeps to the minutes exactly');
   assert.ok(/They are the user's preferences, and you are the coach: you decide what the training is/.test(SYSTEM_PROMPT) && /You choose the supersets yourself/.test(SYSTEM_PROMPT) && /no button for the user to press/.test(SYSTEM_PROMPT));
   assert.equal(OUTPUT_SCHEMA.properties.plan.anyOf[0].properties.days.items.properties.exercises.items.properties.superset_with_next.type, 'boolean');
+});
+
+// ---------------------------------------------------------------- nothing a workout earned is lost
+
+import { catchUp, earnedTarget, applyPlanChange as applyChange, undoPlanChange as undoChangeTo, fromAiChanges as readChanges, describeChange as sayChange } from '../js/domain/progression.js';
+import { handEntry } from '../js/domain/planner.js';
+import { levelWithRecords } from '../js/ai/coach.js';
+import { MOVES, BODY, moveFor, frameAt, motion } from '../js/domain/moves.js';
+import { substitutesFor, PATTERNS } from '../js/domain/catalog.js';
+
+test('catch-up: a plan that missed what a workout earned takes that step, once, and leaves settled things alone', () => {
+  settledApp();
+  const s = train('d1', () => null, yesterdayEvening());
+  let st = store.getState();
+  assert.ok(st.sessions.find((x) => x.id === s.id).settled, 'a review that reached the plan settles the workout');
+  const reps = benchIn(st.plan)[0].reps; // one up from the workout
+  // The step is lost, as a rebuild used to lose it: reps back at the bottom, and no review on record for the workout.
+  const lost = JSON.parse(JSON.stringify(st.plan));
+  for (const d of lost.days) for (const ex of d.exercises) ex.reps = ex.repLo;
+  const open = st.sessions.map((x) => ({ ...x, settled: false }));
+  const res = catchUp(lost, open, st.weights);
+  assert.equal(benchIn(res.plan)[0].reps, reps); assert.ok(benchIn(res.plan).every((x) => x.reps === reps), 'wherever the exercise is in the plan');
+  assert.ok(res.moved.some((m) => m.exerciseId === 'db_bench_press' && m.text === `Dumbbell bench press ${reps} reps`));
+  assert.deepEqual(res.seen, [s.id]);
+  assert.equal(benchIn(lost)[0].reps, benchIn(lost)[0].repLo, 'the plan handed in is not changed');
+  assert.equal(catchUp(lost, st.sessions, st.weights).moved.length, 0, 'a workout that has been through its review is not worked in again');
+  const level = hydrate(JSON.parse(JSON.stringify(st))); // as the app loads it: weights chosen in the workout are in the plan
+  assert.equal(catchUp(level.plan, open, level.weights).moved.length, 0, 'a plan that is level stays as it is');
+  assert.equal(catchUp(res.plan, open, res.weights).moved.length, 0, 'and the step is taken once');
+  // A weight set after the workout, by a review or by hand, means the matter is settled.
+  const later = { ...st.weights, db_bench_press: { ...st.weights.db_bench_press, value: st.weights.db_bench_press.value + 2, at: Date.now() } };
+  assert.ok(!catchUp(lost, open, later).moved.some((m) => m.exerciseId === 'db_bench_press'));
+  // An exercise that is new to a plan picks up where its own last workout left it, review or not.
+  assert.ok(catchUp(lost, st.sessions, st.weights, { fresh: new Set(['db_bench_press']) }).moved.some((m) => m.exerciseId === 'db_bench_press'));
+  // A lighter comeback workout says nothing.
+  assert.equal(catchUp(lost, open.map((x) => ({ ...x, easePct: 10 })), st.weights).moved.length, 0);
+});
+
+test('catch-up: the top of the range earns more weight, and what the workout shows is read by the same rules as a review', () => {
+  settledApp();
+  const p0 = store.getState().plan;
+  const b0 = benchIn(p0)[0];
+  const s = train('d1', (ex) => ex.repHi, yesterdayEvening(), { review: false }); // done, but its review never reached the plan
+  let st = store.getState();
+  assert.deepEqual(earnedTarget(s.exercises.find((x) => x.exerciseId === 'db_bench_press')), { reps: b0.repLo, load: b0.load.value + b0.load.step });
+  const res = catchUp(st.plan, st.sessions, st.weights);
+  const b1 = benchIn(res.plan)[0];
+  assert.equal(b1.load.value, b0.load.value + b0.load.step); assert.equal(b1.reps, b1.repLo);
+  assert.equal(res.weights.db_bench_press.value, b1.load.value, 'the weight on record follows');
+  assert.match(res.moved.find((m) => m.exerciseId === 'db_bench_press').text, /^Dumbbell bench press 22 kg, \d+ reps$/);
+  // A set short of the target earns nothing; a set added by hand is not held against the plan.
+  const ex = JSON.parse(JSON.stringify(s.exercises.find((x) => x.exerciseId === 'db_bench_press')));
+  const planned = ex.sets[0].planned.reps;
+  for (const set of ex.sets) set.actual.reps = planned;
+  assert.equal(earnedTarget(ex).reps, planned + 1);
+  ex.sets.push({ planned: { reps: planned, load: 20 }, target: { reps: planned, load: 20 }, actual: { reps: planned - 3, load: 20, rir: null }, status: 'done', extra: true });
+  assert.equal(earnedTarget(ex).reps, planned + 1, 'a short extra set changes nothing');
+  ex.sets[0].actual.reps = planned - 1;
+  assert.deepEqual(earnedTarget(ex), { reps: planned, load: 20 }, 'short on a planned set: hold');
+  // When the app starts, the plan is brought level, and says so.
+  levelWithRecords();
+  st = store.getState();
+  assert.equal(benchIn(st.plan)[0].load.value, 22); assert.equal(st.plan.lastUpdate.by, 'rules');
+  assert.match(st.plan.lastUpdate.text, /^Caught up with your last workouts: /);
+  assert.ok(st.sessions.every((x) => x.settled));
+  const v = st.plan.version;
+  levelWithRecords();
+  assert.equal(store.getState().plan.version, v, 'nothing to do the second time');
+});
+
+test('a rebuild takes in a workout whose review never arrived, says so, and does not count it twice', async () => {
+  settledApp();
+  const p0 = store.getState().plan;
+  train('d1', () => null, yesterdayEvening(), { review: false });
+  await buildPlan();
+  let st = store.getState();
+  assert.equal(benchIn(st.plan)[0].reps, benchIn(p0)[0].reps + 1);
+  assert.match(st.chat.slice(-1)[0].text, /targets? takes? the step your last workouts earned: /);
+  assert.match(st.plan.lastUpdate.text, /Dumbbell bench press \d+ reps/);
+  assert.ok(st.sessions.every((x) => x.settled));
+  await buildPlan();
+  st = store.getState();
+  assert.equal(benchIn(st.plan)[0].reps, benchIn(p0)[0].reps + 1, 'the second rebuild keeps it, and adds nothing');
+  assert.doesNotMatch(st.chat.slice(-1)[0].text, /step your last workouts earned/);
+  // The workout was done on a plan that is gone: it gets a plain summary, and no second review against the new plan.
+  const u = reviewSession(st.sessions[0].id);
+  assert.equal(u.source, 'rules'); assert.deepEqual(u.changes, []); assert.match(u.message, /The plan was rebuilt after this workout, and its results are in the new plan\./);
+});
+
+// ---------------------------------------------------------------- added by hand, and a busy machine
+
+test('workout: a set or an exercise added by hand is extra work, on record but never held against the plan', () => {
+  settledApp();
+  const st = store.getState();
+  let s = S.startSession(st.plan, 'd1', 1000);
+  let t = 1000;
+  const doSet = (reps) => { if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t); s = S.beginSet(s, t += 1000); if (reps != null) s = S.editDraft(s, { reps }); s = S.finishSet(s, t += 1000); };
+  const n0 = s.exercises[0].sets.length;
+  doSet();
+  s = S.addSet(s, 0, t += 10);
+  const extra = s.exercises[0].sets[n0];
+  assert.ok(extra.extra); assert.equal(extra.status, 'pending'); assert.equal(extra.target.load, s.exercises[0].sets[0].actual.load); assert.equal(extra.target.reps, s.exercises[0].sets[0].target.reps);
+  assert.equal(S.counts(s).total, S.counts(S.startSession(st.plan, 'd1', 1000)).total + 1);
+  // An exercise from the catalog joins the end. In the plan elsewhere, it is done as the plan has it.
+  const crunch = allExercises(st.equipment).find((x) => x.id === 'crunch');
+  const entry = handEntry(crunch, { plan: st.plan, profile: st.profile, equipment: st.equipment, weights: st.weights });
+  assert.ok(entry.sets >= 1 && entry.sets <= 3 && entry.reps === entry.repLo && entry.load.value === 0);
+  const inPlan = st.plan.days[1].exercises[0];
+  const same = handEntry(allExercises(st.equipment).find((x) => x.id === inPlan.exerciseId), { plan: st.plan, profile: st.profile, equipment: st.equipment, weights: st.weights });
+  assert.deepEqual([same.sets, same.reps, same.repLo, same.repHi, same.restSec], [inPlan.sets, inPlan.reps, inPlan.repLo, inPlan.repHi, inPlan.restSec]);
+  const before = s.exercises.length;
+  s = S.addExercise(s, entry, t += 10);
+  const added = s.exercises[before];
+  assert.ok(added.added && added.exerciseId === 'crunch' && added.sets.length === entry.sets && !added.pair && !added.optional);
+  assert.equal(S.addExercise(s, entry, t), s, 'not twice while it still has sets to do');
+  assert.match(S.readLog(s).map((l) => l.text).join('\n'), /one more set added by hand[\s\S]*Crunch added by hand/);
+  // Ended now, what was added and not done leaves no trace.
+  const cut = S.endSession(s, t + 5);
+  assert.equal(cut.exercises[0].sets.length, n0); assert.ok(!cut.exercises.some((x) => x.added));
+  // Done: every planned set on target, the extra one short. The plan still moves on, and the summary says what was extra.
+  while (s.status === 'active' && s.phase !== 'optional') { const { ex, set } = S.current(s); doSet(set.extra ? set.target.reps - 3 : null); if (ex.added && !s.exercises.some((x) => x.sets.some((q) => q.status === 'pending'))) break; }
+  if (s.status === 'active') s = S.endSession(s, t += 10);
+  const first = S.exerciseSummary(s.exercises[0]);
+  assert.match(first.plan, new RegExp(`^${n0} × `)); assert.ok(first.notes.includes('1 extra set')); assert.notEqual(first.verdict, 'below plan');
+  assert.ok(S.exerciseSummary(s.exercises.find((x) => x.added)).notes.includes('Added by hand'));
+  const up = earnedTarget(s.exercises[0]);
+  assert.equal(up.reps, s.exercises[0].sets[0].planned.reps + 1, 'the short extra set did not cost the step');
+  // The model is told which work was added by hand.
+  const body = JSON.parse(sessionRequest({ mode: 'after_session', profile: st.profile, equipment: st.equipment, plan: st.plan, session: s, past: [s] }));
+  assert.equal(body.session.exercises[0].sets[n0].added_by_hand, true); assert.equal(body.session.exercises.find((x) => x.exercise_id === 'crunch').added_by_hand, true);
+  assert.equal(body.recent_workouts[0].exercises[0].extra_sets_added_by_hand, 1); assert.equal(body.recent_workouts[0].exercises[0].skipped_sets, 0);
+  assert.match(SYSTEM_PROMPT, /marked added_by_hand was added by the user during the workout, on top of the plan/);
+});
+
+test('workout: with every planned set done, an added set or exercise comes up at once; a skipped extra set just goes', () => {
+  settledApp();
+  const st = store.getState();
+  let s = S.startSession(st.plan, 'd1', 1000);
+  let t = 1000;
+  while (s.phase !== 'optional' && s.status === 'active') { if (S.needsWeight(s)) s = S.setStartingWeight(s, 20, 2, t); s = S.finishSet(S.beginSet(s, t += 1000), t += 1000); }
+  assert.equal(s.phase, 'optional', 'the session has optional extras, so it waits');
+  const last = S.lastSet(s);
+  let more = S.addSet(s, last.exIdx, t += 10);
+  assert.equal(more.phase, 'ready'); assert.equal(more.cursor.ex, last.exIdx); assert.ok(S.current(more).set.extra);
+  const n = more.exercises[last.exIdx].sets.length;
+  more = S.skipSet(more, t += 10);
+  assert.equal(more.exercises[last.exIdx].sets.length, n - 1, 'skipped, the extra set is simply gone');
+  assert.equal(more.phase, 'optional', 'and the workout is back on its last step');
+  const entry = handEntry(allExercises(st.equipment).find((x) => x.id === 'crunch'), { plan: st.plan, profile: st.profile, equipment: st.equipment });
+  const plus = S.addExercise(s, entry, t += 10);
+  assert.equal(plus.phase, 'ready'); assert.equal(S.current(plus).ex.exerciseId, 'crunch');
+  // During a rest for the move to the next station, one more set of the exercise just done takes over, with its own rest.
+  let r = S.startSession(st.plan, 'd1', 1000);
+  if (S.needsWeight(r)) r = S.setStartingWeight(r, 20, 2, 1000);
+  const firstKey = r.exercises[0].key;
+  let u = 1000;
+  while (S.current(r).ex.key === firstKey) { if (S.needsWeight(r)) r = S.setStartingWeight(r, 20, 2, u); r = S.finishSet(S.beginSet(r, u += 1000), u += 1000); }
+  assert.ok(r.rest.betweenExercises);
+  const back = S.addSet(r, 0, u + 5, { go: true });
+  assert.equal(back.cursor.ex, 0); assert.equal(back.phase, 'rest'); assert.ok(!back.rest.betweenExercises); assert.equal(back.rest.plannedSec, back.exercises[0].restSec);
+});
+
+test('machine busy: an optional extra can be done in the meantime, and the exercise is next after it', () => {
+  settledApp();
+  const st = store.getState();
+  let s = S.startSession(st.plan, 'd1', 1000);
+  const offer = S.optionalLeft(s);
+  assert.ok(offer.length > 0);
+  const cur = S.current(s).ex.key;
+  s = S.optionalNow(s, offer[0].key, 2000);
+  assert.equal(S.current(s).ex.exerciseId, offer[0].exerciseId); assert.ok(S.current(s).ex.optional); assert.equal(s.phase, 'ready');
+  assert.equal(s.exercises[s.cursor.ex + 1].key, cur); assert.equal(s.exercises[s.cursor.ex + 1].postponed, 1);
+  assert.ok(!S.optionalLeft(s).some((o) => o.key === offer[0].key), 'it is no longer on offer');
+  let t = 2000;
+  while (S.current(s).ex.optional) { if (S.needsWeight(s)) s = S.setStartingWeight(s, 10, 2, t); s = S.finishSet(S.beginSet(s, t += 1000), t += 1000); }
+  assert.equal(S.current(s).ex.key, cur, 'then the exercise that was put aside');
+  // It works for the last exercise left too, where "come back later" has nothing to offer.
+  let e = S.startSession(st.plan, 'd1', 1000);
+  while (S.hasOthers(e)) e = S.dropExercise(e, 1500);
+  assert.ok(!S.hasOthers(e)); assert.equal(S.postponeExercise(e), e);
+  const o = S.optionalLeft(e)[0];
+  const via = S.optionalNow(e, o.key, 2000);
+  assert.equal(S.current(via).ex.exerciseId, o.exerciseId); assert.ok(S.hasOthers(via));
+});
+
+// ---------------------------------------------------------------- machines: the abdominal machine, makers, variants
+
+test('equipment: the abdominal machine is in the catalog, a maker can be named in plain words, and a variant is a machine of its own', () => {
+  assert.ok(EQUIPMENT.some((x) => x.id === 'ab_machine' && x.name === 'Abdominal machine'));
+  assert.deepEqual(parseEquipmentText('Abdominal from Life Fitness'), { add: ['ab_machine'], off: [], custom: [], unknown: [], machines: [{ ref: 'ab_machine', vendor: 'Life Fitness' }] });
+  assert.deepEqual(parseEquipmentText('life fitness ab crunch machine').machines, [{ ref: 'ab_machine', vendor: 'Life Fitness' }]);
+  let n = 0;
+  const got = applyEquipmentRead(emptyEquipment(), parseEquipmentText('Abdominal from Life Fitness'), () => `cm-${++n}`);
+  assert.equal(got.equipment.items.ab_machine, true); assert.equal(machineDetail(got.equipment, 'ab_machine').vendor, 'Life Fitness');
+  const core = allExercises(got.equipment).filter((x) => x.pattern === 'core' && x.equip.every((id) => isAvailable(got.equipment, id))).sort((a, b) => a.rank - b.rank);
+  assert.equal(core[0].id, 'ab_machine_crunch', 'with the machine there, it is the first choice for the core');
+  // A leg extension and an iso-lateral one are two machines: the second is kept under its own name, with its maker.
+  const two = parseEquipmentText('Leg extension and an iso-lateral leg extension from Hammer Strength');
+  assert.deepEqual(two.add, ['leg_extension']); assert.deepEqual(two.custom, [{ name: 'Iso-lateral leg extension', pattern: 'knee_ext' }]);
+  assert.deepEqual(two.machines, [{ ref: 'Iso-lateral leg extension', vendor: 'Hammer Strength' }]);
+  const gym = applyEquipmentRead(emptyEquipment(), two, () => `cm-${++n}`).equipment;
+  const subs = substitutesFor(gym, 'leg_extension');
+  assert.equal(subs[0].name, 'Iso-lateral leg extension'); assert.ok(subs[0].close, 'so "Machine busy?" offers it first, as the same movement');
+  assert.deepEqual(parseEquipmentText('incline chest press').custom, [{ name: 'Incline chest press', pattern: 'push_h' }]);
+  assert.deepEqual(parseEquipmentText('no incline chest press').custom, [], 'a machine the gym lacks is not added');
+  assert.deepEqual(parseEquipmentText('an incline bench and cables').custom, [], 'a bench or a cable station serves many movements, so it stays what it is');
+  assert.match(SYSTEM_PROMPT, /iso-lateral, plate-loaded or incline version, also goes in custom under its own name/);
+});
+
+// ---------------------------------------------------------------- exercises in motion
+
+test('motion: every exercise has a drawing that moves, bones keep their length, and nothing leaves the frame', () => {
+  for (const x of EXERCISES) assert.ok(MOVES[moveFor(x)], `no move for ${x.id}`);
+  for (const p of Object.keys(PATTERNS)) assert.ok(MOVES[moveFor({ id: 'ex_cm-1', name: 'Some machine', pattern: p })], `no move for a machine that trains ${p}`);
+  assert.equal(moveFor({ id: 'ex_cm-2', name: 'Hip abduction', pattern: 'glute' }), 'abduction');
+  assert.equal(moveFor({ id: 'ex_cm-3', name: 'Seated leg curl', pattern: 'knee_flex' }), 'leg_curl_seated');
+  assert.equal(moveFor({ id: 'ex_cm-4', name: 'Iso-lateral leg extension', pattern: 'knee_ext' }), 'leg_extension');
+  assert.equal(moveFor(null), null);
+  const bones = [BODY.torso, BODY.neck, BODY.thigh, BODY.shin, BODY.upper, BODY.fore];
+  for (const id of Object.keys(MOVES)) {
+    const scale = (MOVES[id].fit || [1])[0];
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      const frame = frameAt(id, t);
+      for (const it of frame) {
+        const pts = it.k === 'circle' ? [[it.p[0] - it.r, it.p[1] - it.r], [it.p[0] + it.r, it.p[1] + it.r]] : it.l.flat();
+        for (const [x, y] of pts) assert.ok(Number.isFinite(x) && Number.isFinite(y) && x >= 2 && x <= 118 && y >= 2 && y <= 86.5, `${id} at ${t}: ${x.toFixed(1)}, ${y.toFixed(1)} is outside`);
+        // Seen from the side, the first two bones of the torso, an arm or a leg are always a known length.
+        if (MOVES[id].view !== 'front' && it.layer === 'body' && it.k === 'path') {
+          const line = it.l[0];
+          for (let i = 1; i < Math.min(line.length, 3); i++) {
+            const len = Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]) / scale;
+            assert.ok(bones.some((b) => Math.abs(b - len) < 0.2), `${id} at ${t}: a bone of ${len.toFixed(1)}`);
+          }
+        }
+      }
+    }
+    const m = motion(id);
+    assert.ok(m.parts.some((p) => (p.d || p.at).length > 1), `${id} does not move`);
+    for (const p of m.parts) assert.ok([1, m.steps + 1].includes((p.d || p.at).length));
+  }
+  assert.equal(motion('no_such_move'), null);
+  // A machine loaded with plates is drawn with plates.
+  assert.ok(motion('leg_extension', { plates: true }).parts.length !== motion('leg_extension').parts.length);
+});
+
+// ---------------------------------------------------------------- the whole plan, after every workout
+
+test('after a workout the model is asked to think the whole plan through, and can add an exercise or ask for a rebuild', () => {
+  settledApp();
+  const st = store.getState();
+  const s = train('d1', () => null, yesterdayEvening(), { review: false });
+  const now = store.getState();
+  assert.match(SYSTEM_PROMPT, /Second, the whole plan\. After every workout the rest of the plan is thought through again/);
+  assert.match(SYSTEM_PROMPT, /It is just as right when this look changes nothing beyond new weights and reps/);
+  assert.ok(OUTPUT_SCHEMA.properties.changes.items.properties.field.enum.includes('add'));
+  const after = JSON.parse(sessionRequest({ mode: 'after_session', profile: now.profile, equipment: now.equipment, plan: now.plan, session: s, past: now.sessions, chat: [{ role: 'user', text: 'More ab work please' }], weights: now.weights }));
+  assert.equal(after.current_plan.sessions.length, now.plan.days.length, 'every session of the plan goes along');
+  assert.equal(after.recent_workouts.length, 1); assert.ok(after.weekly_sets_in_the_plan.by_muscle_group.Chest > 0); assert.ok(Array.isArray(after.weekly_sets_in_the_plan.below_range));
+  assert.deepEqual(after.conversation, [{ from: 'user', text: 'More ab work please' }]); assert.equal(after.known_loads.db_bench_press, 20);
+  const during = JSON.parse(sessionRequest({ mode: 'in_session', profile: now.profile, equipment: now.equipment, plan: now.plan, session: s, past: now.sessions }));
+  assert.ok(!('recent_workouts' in during) && !('weekly_sets_in_the_plan' in during), 'a set in the middle of a workout does not carry all that');
+  // "add": a new exercise in another session than the one just trained.
+  const day = now.plan.days[1];
+  const anchor = day.exercises[0];
+  const raw = [
+    { exercise_key: anchor.key, field: 'add', new_value: 2, new_exercise_id: 'crunch', reason: 'More ab work was asked for.' },
+    { exercise_key: anchor.key, field: 'add', new_value: null, new_exercise_id: anchor.exerciseId, reason: 'Already there.' },
+    { exercise_key: anchor.key, field: 'add', new_value: 2, new_exercise_id: 'leg_press', reason: 'No such machine here.' },
+  ];
+  const changes = readChanges(raw, { plan: now.plan, equipment: now.equipment, mode: 'after_session' });
+  assert.equal(changes.length, 1, 'nothing twice in a session, nothing the gym cannot do');
+  assert.deepEqual(sayChange(changes[0]), { what: 'Added to', text: `${day.title}, 2 sets` }); assert.equal(changes[0].exerciseName, 'Crunch');
+  const done = applyChange(now.plan, changes[0], now.equipment, now.weights);
+  const d1 = done.plan.days[1];
+  assert.equal(d1.exercises.length, day.exercises.length + 1); assert.equal(d1.exercises[1].exerciseId, 'crunch'); assert.equal(d1.exercises[1].sets, 2);
+  assert.ok(d1.estMinutes >= day.estMinutes); assert.equal(new Set(done.plan.days.flatMap((d) => d.exercises.map((x) => x.key))).size, done.plan.days.flatMap((d) => d.exercises).length, 'its key is its own');
+  assert.equal(applyChange(done.plan, changes[0], now.equipment, done.weights).touched, 0, 'not added twice');
+  const back = undoChangeTo(done.plan, { ...changes[0], status: 'applied', undo: done.undo }, done.weights);
+  assert.equal(back.touched, 1); assert.deepEqual(back.plan.days[1].exercises.map((x) => x.exerciseId), day.exercises.map((x) => x.exerciseId));
+  assert.equal(tidy({ rebuild_plan: true }).rebuild_plan, true);
+  assert.equal(JSON.parse(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights: st.weights, plan: st.plan, why: 'The split no longer fits.' })).rebuild_reason, 'The split no longer fits.');
 });

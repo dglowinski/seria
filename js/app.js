@@ -12,7 +12,7 @@ import { EquipmentScreen } from './ui/equipment.js';
 import { PrefsScreen, RulesScreen, APP_VERSION } from './ui/prefs.js';
 import { Workout } from './ui/workout.js';
 import { WeightsScreen } from './ui/weights.js';
-import { retryPending, reviewEquipment, isBusy, reviewRunning } from './ai/coach.js';
+import { retryPending, reviewEquipment, isBusy, reviewRunning, levelWithRecords } from './ai/coach.js';
 
 const TABS = [['plan', 'Plan'], ['coach', 'Coach'], ['history', 'History'], ['equipment', 'Equipment']];
 const TAB_OF = { plan: 'plan', day: 'plan', review: 'plan', weights: 'plan', coach: 'coach', history: 'history', session: 'history', equipment: 'equipment' };
@@ -48,6 +48,8 @@ function App() {
   // once the app is up, and whenever the phone comes back online.
   useEffect(() => {
     if (!ready) return undefined;
+    // First the plan is brought level with the workouts on record, in case a rebuild left a workout's results out of it.
+    levelWithRecords();
     const t = setTimeout(retryPending, 1500);
     window.addEventListener('online', retryPending);
     return () => { clearTimeout(t); window.removeEventListener('online', retryPending); };

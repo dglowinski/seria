@@ -171,7 +171,7 @@ export function EquipmentScreen() {
       <div class="rule stack">
         <h4>Or pick from the list</h4>
         ${rest.map((x) => html`<button class="row" onClick=${() => { setItem(x.id, true); toast(`${x.name} added`); }}>
-          <${Sketch} small id=${x.id} /><b class="grow">${x.name}</b><span class="accent">Add</span></button>`)}
+          <${Look} eq=${eq} id=${x.id} /><b class="grow">${x.name}</b><span class="accent">Add</span></button>`)}
         ${!rest.length && html`<p class="muted small">Every machine from the list is already added.</p>`}
       </div>
       <div class="rule stack">

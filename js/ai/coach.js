@@ -13,8 +13,8 @@ import {
   WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_NAMES, missingFields, generatePlan, normalizePlan, refreshPlan, fmtMonths,
   trainingDays, clampMinutes, setPlanLoad, fillOptional, fitPlan, allEntries, knownWeights,
 } from '../domain/planner.js';
-import { inSessionHint, postSessionChanges, equipmentChanges, applyPlanChange, undoPlanChange, withValue, fromAiChanges, ruleSummary, isApplied } from '../domain/progression.js';
-import { applyHint, withoutHint, startSession, newActivity } from '../domain/session.js';
+import { inSessionHint, postSessionChanges, equipmentChanges, applyPlanChange, undoPlanChange, withValue, fromAiChanges, ruleSummary, isApplied, catchUp } from '../domain/progression.js';
+import { applyHint, withoutHint, startSession, newActivity, summarize } from '../domain/session.js';
 import * as store from '../store.js';
 import { ask, aiReady, aiSource, aiName, AiError, canLookUp, lookUpMachines } from './ai.js';
 import { interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, trainNowRequest, nextRunRequest, activityRequest } from './prompts.js';
@@ -360,7 +360,9 @@ const agoWords = (ts, now) => { const d = daysBetween(ts, now); return d <= 0 ? 
  * the line the plan screen shows. For a rebuild both name the session that is
  * really next, worked out from the workouts on record.
  */
-function planLine(plan, { sessions = [], now = Date.now(), old = null, said = '', byModel = false } = {}) {
+const movedNote = (moved) => (!moved.length ? '' : ` ${moved.length === 1 ? 'One target takes' : `${moved.length} targets take`} the step your last workouts earned: ${moved.slice(0, 3).map((m) => m.text).join('; ')}${moved.length > 3 ? `, and ${moved.length - 3} more` : ''}.`);
+
+function planLine(plan, { sessions = [], now = Date.now(), old = null, said = '', byModel = false, moved = [] } = {}) {
   const n = plan.days.length;
   const size = `the next ${n} session${n === 1 ? '' : 's'}, about ${Math.max(...plan.days.map((d) => d.estMinutes))} min each, with rest days between`;
   const next = plannedNext(plan, sessions, now);
@@ -376,7 +378,8 @@ function planLine(plan, { sessions = [], now = Date.now(), old = null, said = ''
   // Every weight on record is in the plan. What is still blank is an exercise never done before, and is named.
   const blank = [...new Set(plan.days.flatMap((d) => d.exercises).filter((ex) => !ex.load && ex.loadType !== 'bodyweight').map((ex) => ex.name))];
   const fresh = !blank.length ? '' : ` ${blank.length === 1 ? 'One exercise is' : `${blank.length} exercises are`} new to you, so ${blank.length === 1 ? 'it has' : 'they have'} no weight yet: ${blank.join(', ')}.`;
-  return { chat: `${lead} It covers ${size}. ${from}${fresh} Tell me what to change, or put the old plan back.`, note: `${lead} ${from}${fresh}` };
+  const steps = movedNote(moved);
+  return { chat: `${lead} It covers ${size}. ${from}${fresh}${steps} Tell me what to change, or put the old plan back.`, note: `${lead} ${from}${fresh}${steps}` };
 }
 
 /** Rep targets already earned carry over to the same exercise in a new plan, inside its new range. */
@@ -386,6 +389,46 @@ function keepReps(next, old) {
   for (const d of next.days) for (const ex of allEntries(d)) if (reps[ex.exerciseId]) ex.reps = Math.min(Math.max(reps[ex.exerciseId], ex.repLo), ex.repHi);
 }
 
+const idsIn = (plan) => new Set((plan?.days || []).flatMap((d) => allEntries(d).map((ex) => ex.exerciseId)));
+
+/**
+ * A new plan, brought level with the workouts on record (see catchUp): it takes
+ * the step each exercise's last workout earned, where the plan it replaces had
+ * not got it. An exercise the old plan did not have picks up where its own last
+ * workout left it, instead of starting from the bottom of its range.
+ */
+function levelled(plan, old, sessions, weights) {
+  const had = idsIn(old);
+  return catchUp(plan, sessions, weights, { fresh: new Set([...idsIn(plan)].filter((id) => !had.has(id))) });
+}
+
+/** Mark workouts as taken into the plan, so their results are not worked in a second time. */
+function settle(ids) {
+  const want = new Set(ids);
+  const st = store.getState();
+  const changed = st.sessions.filter((s) => want.has(s.id) && !s.settled).map((s) => s.id);
+  if (!changed.length) return;
+  store.set({ sessions: st.sessions.map((s) => (changed.includes(s.id) ? { ...s, settled: true } : s)) }, { sessions: changed });
+}
+
+/**
+ * Bring the plan level with the workouts on record. Run when the app starts: it
+ * repairs a plan that lost the steps a workout earned, because the plan was
+ * rebuilt before that workout's review reached it. A workout whose review is
+ * still on its way is left for that review.
+ */
+export function levelWithRecords() {
+  const st = store.getState();
+  if (!st.plan || store.activeSession(st) || busy) return;
+  const waiting = new Set(st.proposals.filter((p) => p.mode === 'post_session' && (p.checking || p.pending)).map((p) => p.sessionId));
+  const res = catchUp(st.plan, st.sessions, st.weights, { skip: (s) => waiting.has(s.id) });
+  if (res.moved.length) {
+    const text = `Caught up with your last workouts: ${res.moved.slice(0, 4).map((m) => m.text).join('; ')}${res.moved.length > 4 ? `, and ${res.moved.length - 4} more` : ''}.`;
+    store.set({ plan: noted({ ...res.plan, version: (st.plan.version || 1) + 1 }, 'rules', text), weights: res.weights });
+  }
+  settle(res.seen);
+}
+
 /**
  * Build the plan from the profile. When there is a plan already, this is a
  * rebuild: the new plan is built from the workouts on record as well, carries
@@ -393,8 +436,9 @@ function keepReps(next, old) {
  * reps reached, and the plan it replaces is kept so it can be put back.
  * `ready` is a model's answer that already holds the plan, when the chat got one.
  * `byRules` skips the model: it has just failed, so asking it again would only fail again.
+ * `why` is the reason for a rebuild that the review of the last workout asked for.
  */
-export async function buildPlan({ ready = null, byRules = false } = {}) {
+export async function buildPlan({ ready = null, byRules = false, why = '' } = {}) {
   if (busy) return;
   const st = store.getState();
   if (missingFields(st.profile).length) return;
@@ -408,7 +452,7 @@ export async function buildPlan({ ready = null, byRules = false } = {}) {
     const name = aiName();
     setBusy(true);
     try {
-      const out = ready || await ask(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights, plan: st.plan, sessions: st.sessions, chat: st.chat }));
+      const out = ready || await ask(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights, plan: st.plan, sessions: st.sessions, chat: st.chat, why }));
       if (out.plan) {
         const res = normalizePlan(out.plan, st.profile, st.equipment, weights);
         fitPlan(res.plan, st.profile, { slack: 0.1 }); // the minutes are a preference: only a clear overrun is cut back
@@ -443,14 +487,21 @@ export async function buildPlan({ ready = null, byRules = false } = {}) {
     refreshPlan(plan);
     plan.version = (old.version || 1) + 1;
   }
-  const line = planLine(plan, { sessions: now.sessions, old, said, byModel: !!via });
+  // A review still on its way is dropped with the old plan's list of updates, so the step its workout earned is taken here.
+  const level = levelled(plan, old, now.sessions, { ...weights, ...now.weights });
+  plan = level.plan;
+  const line = planLine(plan, { sessions: now.sessions, old, said, byModel: !!via, moved: old ? level.moved : [] });
   if (old) plan.lastUpdate = { at: Date.now(), by: via || 'rules', text: line.note };
-  // The list of updates belongs to the old plan, so it goes with it.
+  // The list of updates belongs to the old plan, so it goes with it. The finished review of the last workout
+  // stays, as a record of that workout: its changes can no longer be undone, and it is not asked for again.
+  const lastDone = store.doneWorkouts(now)[0];
+  const kept = now.proposals.filter((p) => p.mode === 'post_session' && p.sessionId === lastDone?.id && !p.checking && !p.pending);
   store.set({
-    plan, proposals: [], weights: { ...weights, ...now.weights },
+    plan, proposals: kept, weights: level.weights,
     planBefore: old ? { plan: old, proposals: now.proposals.slice(-12), at: Date.now() } : null,
     profile: { ...now.profile, askedExtras: true },
   });
+  settle(level.seen);
   store.say('coach', line.chat, { kind: 'plan', via, replaced: !!old });
 }
 
@@ -547,10 +598,14 @@ export function planNextRun() {
       const res = normalizePlan(out.plan, now.profile, now.equipment, knownWeights(now.weights, now.sessions, now.plan));
       fitPlan(res.plan, now.profile, { slack: 0.1 });
       keepReps(res.plan, now.plan);
-      const next = refreshPlan({ ...res.plan, source: src, version: (now.plan.version || 1) + 1, outlook: out.outlook ? { text: out.outlook, by: src } : now.plan.outlook || null });
+      // The review of the last workout may still be on its way, and it cannot reach a plan that has been replaced:
+      // the step that workout earned is taken here, by the rules.
+      const level = levelled(refreshPlan(res.plan), now.plan, now.sessions, now.weights);
+      const next = { ...level.plan, source: src, version: (now.plan.version || 1) + 1, outlook: out.outlook ? { text: out.outlook, by: src } : now.plan.outlook || null };
       next.queue = { ...next.queue, run: queueState(now.plan).run + 1 };
-      next.lastUpdate = { at: Date.now(), by: src, text: out.message || 'The next run is planned from your results.' };
-      store.set({ plan: next, planBefore: null });
+      next.lastUpdate = { at: Date.now(), by: src, text: `${out.message || 'The next run is planned from your results.'}${movedNote(level.moved)}` };
+      store.set({ plan: next, planBefore: null, weights: level.weights });
+      settle(level.seen);
       store.say('coach', `${out.message || 'I planned your next run from your results.'} Open the plan to see it, or tell me what to change.`, { via: src, kind: 'plan' });
     })
     .catch(() => { /* the same run simply starts again */ });
@@ -668,7 +723,11 @@ const reviews = new Map();
 
 // The update the training rules make for a finished workout, against the plan as it is now.
 function byRules(session, st) {
-  if (!st.plan || session.planId !== st.plan.id) return { fields: { source: 'rules', message: ruleSummary(session, []), changes: [] }, extra: {} };
+  if (!st.plan || session.planId !== st.plan.id) {
+    const sum = summarize(session);
+    const went = `${sum.done === sum.total ? `All ${sum.total} sets done` : `${sum.done} of ${sum.total} sets done`} in ${sum.minutes} min.`;
+    return { fields: { source: 'rules', message: `${went} The plan was rebuilt after this workout, and its results are in the new plan.`, changes: [] }, extra: {} };
+  }
   const done = applyAll(postSessionChanges(session, st.plan, st.sessions), st.plan, st.weights, st.equipment);
   const message = ruleSummary(session, done.changes.filter(isApplied));
   return { fields: { source: 'rules', message, changes: done.changes }, extra: { plan: noted(done.plan, 'rules', message), weights: done.weights } };
@@ -696,14 +755,24 @@ export function reviewSession(sessionId) {
   if (!session || session.status !== 'done' || session.kind === 'activity' || !st.plan) return null;
   const existing = st.proposals.find((p) => p.mode === 'post_session' && p.sessionId === sessionId);
   if (existing) return existing;
-  const wantAi = aiReady();
+  // A workout done on a plan that has since been replaced is not judged against the new one:
+  // the rebuild already took its results in, so it gets the plain summary and changes nothing.
+  const wantAi = aiReady() && session.planId === st.plan.id;
   if (wantAi && !isOffline()) {
     const update = store.addUpdate({ mode: 'post_session', source: aiSource(), sessionId, message: '', changes: [], checking: aiSource(), pending: false });
     askReview(update.id, session, st.plan);
     return update;
   }
   const r = byRules(session, st);
-  return store.addUpdate({ mode: 'post_session', sessionId, ...r.fields, checking: false, pending: wantAi }, r.extra);
+  const update = store.addUpdate({ mode: 'post_session', sessionId, ...r.fields, checking: false, pending: wantAi }, r.extra);
+  settleIfReached(session);
+  return update;
+}
+
+// A review that reached the plan the workout was done on settles that workout: the plan now says what follows from it.
+function settleIfReached(session) {
+  const plan = store.getState().plan;
+  if (plan && session.planId === plan.id) settle([session.id]);
 }
 
 // `planBefore` is the plan as the workout was done against it, before any rule-based changes.
@@ -713,7 +782,7 @@ function askReview(updateId, session, planBefore) {
   const name = aiName();
   const ctl = new AbortController();
   reviews.set(updateId, ctl);
-  ask(sessionRequest({ mode: 'after_session', profile: st.profile, equipment: st.equipment, plan: planBefore, session, past: st.sessions }), { signal: ctl.signal })
+  ask(sessionRequest({ mode: 'after_session', profile: st.profile, equipment: st.equipment, plan: planBefore, session, past: st.sessions, chat: st.chat, weights: st.weights }), { signal: ctl.signal })
     .then((out) => {
       const now = store.getState();
       const cur = now.proposals.find((p) => p.id === updateId);
@@ -734,6 +803,13 @@ function askReview(updateId, session, planBefore) {
       const message = out.message || cur.message || ruleSummary(session, changes.filter(isApplied));
       store.patchUpdate(updateId, { source: untouched || untouchedByRules(cur) ? src : cur.source, changes, message, schedule: sched?.reason || '', checking: false, pending: false, failed: '' },
         { plan: now.plan.id === planBefore.id ? noted(plan, src, message) : plan, weights });
+      if (now.plan.id === planBefore.id) settleIfReached(session);
+      // The look at the whole plan said it should be built anew: done at once, from the records, with the reason given.
+      // The plan it replaces can be put back from the chat.
+      if (out.rebuild_plan && untouched && !store.activeSession() && !busy) {
+        store.say('coach', `After your last workout I looked at the whole plan again and decided to rebuild it. ${message}`.trim(), { via: src });
+        buildPlan({ why: message });
+      }
     })
     .catch((e) => {
       if (e?.code === 'cancelled') return;
@@ -744,7 +820,7 @@ function askReview(updateId, session, planBefore) {
       const offline = e?.code === 'offline' || isOffline();
       const flags = { checking: false, pending: offline, failed: offline ? '' : (e instanceof AiError ? e.message : `${name} did not answer.`) };
       // Either way the plan is not left waiting: the training rules update it now.
-      if (untouchedByRules(cur)) { const r = byRules(session, now); store.patchUpdate(updateId, { ...r.fields, ...flags }, r.extra); } else store.patchUpdate(updateId, flags);
+      if (untouchedByRules(cur)) { const r = byRules(session, now); store.patchUpdate(updateId, { ...r.fields, ...flags }, r.extra); settleIfReached(session); } else store.patchUpdate(updateId, flags);
     })
     .finally(() => { if (reviews.get(updateId) === ctl) reviews.delete(updateId); });
 }
@@ -770,7 +846,7 @@ export function retryPending() {
     // Not sent now. With no connection it keeps waiting; a plan left without any update gets the rule-based one.
     const flags = { checking: false, pending: ready && offline };
     const s = store.sessionById(p.sessionId);
-    if (untouchedByRules(p) && s) { const r = byRules(s, store.getState()); store.patchUpdate(p.id, { ...r.fields, ...flags }, r.extra); } else store.patchUpdate(p.id, flags);
+    if (untouchedByRules(p) && s) { const r = byRules(s, store.getState()); store.patchUpdate(p.id, { ...r.fields, ...flags }, r.extra); settleIfReached(s); } else store.patchUpdate(p.id, flags);
   }
   if (!usable) return;
   st = store.getState();

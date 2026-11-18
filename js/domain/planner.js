@@ -763,6 +763,27 @@ export function fillLoads(plan, weights = {}) {
   return next;
 }
 
+/**
+ * A plan-style entry for an exercise picked by hand during a workout. When the
+ * plan has the exercise somewhere, it is done as the plan has it; otherwise as
+ * an accessory lift for the user's goal, at the weight on record.
+ */
+export function handEntry(cat, { plan = null, profile = {}, equipment, weights = {} } = {}) {
+  const inPlan = (plan?.days || []).flatMap((d) => allEntries(d)).find((ex) => ex.exerciseId === cat.id);
+  // The plan remembers the goal and level it was built for; they stand in when no profile is given.
+  const goal = GOALS[profile.goal] ? profile.goal : GOALS[plan?.goal] ? plan.goal : 'general';
+  const level = profile.months != null ? levelFor(profile.months) : plan?.level || levelFor(profile.months);
+  const base = prescribe(goal, 'accessory', level, cat.load);
+  const known = weights[cat.id];
+  return {
+    key: '', exerciseId: cat.id, name: cat.name, pattern: cat.pattern, tier: inPlan?.tier || 'accessory',
+    equipment: equipmentNames(equipment, cat), zone: zoneOf(equipment, cat), loadType: cat.load,
+    sets: inPlan?.sets ?? Math.min(base.sets, 3), repLo: inPlan?.repLo ?? base.repLo, repHi: inPlan?.repHi ?? base.repHi, reps: inPlan?.reps ?? base.repLo,
+    restSec: inPlan?.restSec ?? base.rest,
+    load: inPlan?.load ? { ...inPlan.load } : known ? { value: known.value, step: known.step } : (cat.load === 'bodyweight' ? { value: 0, step: PROGRESSION.defaultStep.bodyweight } : null),
+  };
+}
+
 /** Exercises in the plan whose equipment is no longer available. */
 export function brokenExercises(plan, equipment) {
   const all = allExercises(equipment);

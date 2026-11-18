@@ -4,7 +4,7 @@
 // made at once; each keeps what it replaced, so it can be undone.
 
 import { PROGRESSION } from './rules.js';
-import { fmtLoadShort, refreshPlan, allEntries } from './planner.js';
+import { fmtLoadShort, refreshPlan, allEntries, handEntry } from './planner.js';
 import { summarize } from './session.js';
 import { allExercises, canDo, equipmentNames, zoneOf, substitutesFor } from './catalog.js';
 
@@ -81,8 +81,10 @@ export function inSessionHint(session, exIdx, setIdx) {
 // ---------------------------------------------------------------- after session
 
 function facts(ex) {
-  const done = ex.sets.filter((st) => st.status === 'done');
-  const allDone = done.length === ex.sets.length;
+  // A set added by hand during the workout is extra work: it is on record, but it is not held against the plan.
+  const sets = ex.sets.filter((st) => !st.extra);
+  const done = sets.filter((st) => st.status === 'done');
+  const allDone = done.length === sets.length;
   const short = done.reduce((n, st) => n + Math.max(0, st.planned.reps - st.actual.reps), 0);
   const loads = [...new Set(done.map((st) => st.actual.load))];
   const plannedLoad = ex.sets[0].planned.load;
@@ -115,7 +117,9 @@ export function progressSteps(sessions, exerciseId, now = null, { skip = null } 
     if (!ex) continue;
     const first = ex.sets.find((st) => st.status === 'done');
     // The target the plan had that day. With no weight in the plan yet, the weight chosen for the first set.
-    points.push({ at: s.startedAt, reps: ex.sets[0].planned?.reps ?? first.actual?.reps, load: ex.sets[0].planned?.load ?? first.actual?.load ?? null });
+    // A swapped-in exercise carries the plan numbers of the one it stood in for, so its own first set counts instead.
+    const planned = ex.swappedFrom ? null : ex.sets[0].planned?.load;
+    points.push({ at: s.startedAt, reps: ex.sets[0].planned?.reps ?? first.actual?.reps, load: planned ?? first.actual?.load ?? null });
   }
   if (now && points.length) points.push({ at: null, reps: now.reps, load: now.load ?? null });
   const steps = [];
@@ -225,6 +229,114 @@ export function postSessionChanges(session, plan, past = []) {
   return changes;
 }
 
+// ---------------------------------------------------------------- catching up with the records
+
+/**
+ * The target a finished workout earned for one of its exercises, by the
+ * progression rules alone: the reps and the weight to aim for next time.
+ * Null when no planned set of it was done.
+ */
+export function earnedTarget(ex) {
+  const done = ex.sets.filter((st) => !st.extra && st.status === 'done' && st.actual);
+  if (!done.length) return null;
+  const p = ex.sets[0].planned || {};
+  // A swapped-in exercise carries the plan numbers of the one it stood in for: its own start is the first set done.
+  const load = (ex.swappedFrom ? null : p.load) ?? done[0].actual.load ?? null;
+  const reps = p.reps ?? done[0].actual.reps;
+  if (!Number.isFinite(ex.repLo) || !Number.isFinite(ex.repHi)) return { reps, load };
+  const step = ex.step ?? PROGRESSION.defaultStep[ex.loadType] ?? 2.5;
+  const own = { ...ex, sets: ex.sets.map((st) => ({ ...st, planned: { reps: st.planned?.reps ?? reps, load } })) };
+  const entry = { key: 'k', exerciseId: ex.exerciseId, reps, repLo: ex.repLo, repHi: ex.repHi, loadType: ex.loadType, load: load != null ? { value: load, step } : null };
+  const [c] = postSessionChanges({ id: 'x', startedAt: 0, easePct: 0, exercises: [own] }, { days: [{ id: 'd', exercises: [entry] }] }, []);
+  if (c?.field === 'load') return { reps: c.reps ?? reps, load: c.value };
+  if (c?.field === 'reps') return { reps: c.value, load };
+  return { reps, load };
+}
+
+/** The last workout that has each exercise, and what it earned. Lighter comeback workouts say nothing and are passed over. */
+function lastRuns(sessions) {
+  const out = {};
+  const past = (sessions || []).filter((s) => s.kind !== 'activity' && s.status === 'done' && !(s.easePct > 0) && Array.isArray(s.exercises))
+    .sort((a, b) => b.startedAt - a.startedAt);
+  for (const s of past) {
+    for (const ex of s.exercises) {
+      if (out[ex.exerciseId]) continue;
+      const earned = earnedTarget(ex);
+      if (!earned) continue;
+      const lifted = [...ex.sets].reverse().find((st) => st.status === 'done' && st.actual?.load != null)?.actual.load ?? null;
+      out[ex.exerciseId] = { session: s, ex, earned, lifted, end: s.endedAt || s.updatedAt || s.startedAt };
+    }
+  }
+  return out;
+}
+
+/**
+ * Bring a plan level with the workouts on record. A plan can fall behind them:
+ * the review of a workout never reached it because the plan was rebuilt first,
+ * or a new plan brought back an exercise that the plan before it did not have.
+ *
+ * For each exercise in the plan, the last workout that has it says where it
+ * stands: the reps and the weight that workout earned by the rules. The plan
+ * takes that unless something has settled the matter since:
+ *   - the workout has been through a review that reached the plan (`settled`),
+ *     which is not asked of an exercise that is new to the plan (`fresh`), or
+ *   - the weight on record was changed after the workout, by a review or by hand.
+ * Reps only ever go up here; a weight follows what the workout earned.
+ *
+ * @param {object} plan
+ * @param {object[]} sessions
+ * @param {object} weights
+ * @param {{fresh?: Set<string>, skip?: (session: object) => boolean}} [opts] skip: workouts to leave alone, such as one whose review is still on its way
+ * @returns {{plan: object, weights: object, moved: {exerciseId: string, name: string, text: string}[], seen: string[]}}
+ */
+export function catchUp(plan, sessions, weights = {}, { fresh = new Set(), skip = () => false } = {}) {
+  const runs = lastRuns(sessions);
+  const next = clone(plan);
+  const w = { ...weights };
+  const moved = [];
+  const seen = new Set();
+  const ids = [...new Set(next.days.flatMap((d) => allEntries(d).map((ex) => ex.exerciseId)))];
+  for (const id of ids) {
+    const run = runs[id];
+    if (!run || skip(run.session)) continue;
+    seen.add(run.session.id);
+    if (run.session.settled && !fresh.has(id)) continue;
+    const rec = w[id];
+    // Something set the weight after the workout: the plan already follows that.
+    if (rec && run.lifted != null && rec.value !== run.lifted && (rec.at || 0) >= run.end) continue;
+    const entries = next.days.flatMap((d) => allEntries(d)).filter((ex) => ex.exerciseId === id);
+    const sameRange = (ex) => ex.repLo === run.ex.repLo && ex.repHi === run.ex.repHi;
+    const anySame = entries.some(sameRange);
+    let from = null; let to = null;
+    for (const ex of entries) {
+      const before = { reps: ex.reps, load: ex.load?.value ?? null };
+      const loadTo = run.earned.load ?? before.load;
+      const loadMoves = loadTo != null && loadTo !== before.load && !(ex.loadType === 'bodyweight' && !loadTo && !before.load);
+      // The reps belong to one prescription. Another entry of the same exercise with its own range keeps its reps.
+      let repsTo = before.reps;
+      if (sameRange(ex) || !anySame) {
+        const want = Math.min(Math.max(run.earned.reps, ex.repLo), ex.repHi);
+        // A weight that really changes brings its own reps. Filling in a weight the plan lacked does not take reps away.
+        repsTo = loadMoves && before.load != null ? want : Math.max(before.reps, want);
+      }
+      if (!loadMoves && repsTo === before.reps) continue;
+      if (loadMoves) ex.load = { value: loadTo, step: ex.load?.step ?? rec?.step ?? run.ex.step ?? PROGRESSION.defaultStep[ex.loadType] ?? 2.5 };
+      ex.reps = repsTo;
+      if (!from) { from = before; to = { reps: repsTo, load: loadTo, type: ex.loadType }; }
+    }
+    if (!to) continue;
+    if (to.load != null && to.load !== (rec?.value ?? null)) {
+      w[id] = { ...(rec || {}), value: to.load, step: rec?.step ?? run.ex.step ?? PROGRESSION.defaultStep[to.type] ?? 2.5, type: to.type, at: Date.now(), by: 'records' };
+    }
+    const parts = [];
+    if (to.load !== from.load && to.load != null) parts.push(fmtLoadShort(to.type, to.load));
+    if (to.reps !== from.reps || parts.length) parts.push(`${to.reps} reps`);
+    moved.push({ exerciseId: id, name: entries[0].name, text: `${entries[0].name} ${parts.join(', ')}` });
+  }
+  if (!moved.length) return { plan, weights, moved, seen: [...seen] };
+  return { plan: refreshPlan(next), weights: w, moved, seen: [...seen] };
+}
+
 // ---------------------------------------------------------------- equipment
 
 /** Swaps for plan exercises whose equipment is no longer available. */
@@ -266,6 +378,24 @@ export function applyPlanChange(plan, change, equipment, weights = {}) {
   const next = clone(plan);
   const w = { ...weights };
   const undo = { planId: plan.id, items: [], weights: {}, days: [] };
+  // A new exercise for a session: it goes in right after the exercise the change names, done the way the plan
+  // has it elsewhere, or as an accessory lift at the weight on record.
+  if (change.field === 'add') {
+    const d = next.days.find((x) => x.exercises.some((ex) => ex.key === change.exerciseKey));
+    const cat = allExercises(equipment).find((x) => x.id === change.value);
+    if (!d || !cat || !canDo(equipment, cat) || d.exercises.some((ex) => ex.exerciseId === cat.id)) return { plan, weights, touched: 0, undo: null };
+    const entry = handEntry(cat, { plan: next, equipment, weights: w });
+    if (change.sets) entry.sets = clampInt(change.sets, 1, 6);
+    const keys = new Set(next.days.flatMap((x) => allEntries(x).map((ex) => ex.key)));
+    let n = 1;
+    while (keys.has(`${d.id}a${n}`)) n++;
+    entry.key = `${d.id}a${n}`;
+    d.exercises.splice(d.exercises.findIndex((ex) => ex.key === change.exerciseKey) + 1, 0, entry);
+    undo.items.push({ dayId: d.id, key: entry.key, field: 'add' });
+    next.version = (plan.version || 1) + 1;
+    next.updatedAt = Date.now();
+    return { plan: refreshPlan(next), weights: w, touched: 1, undo };
+  }
   const targets = [];
   // A session's optional extras can be changed like its own exercises.
   for (const d of next.days) {
@@ -352,6 +482,12 @@ export function undoPlanChange(plan, change, weights = {}) {
     if (back.has(it.dayId)) continue;
     const d = next.days.find((x) => x.id === it.dayId);
     if (!d) continue;
+    if (it.field === 'add') {
+      if (!d.exercises.some((x) => x.key === it.key) || d.exercises.length < 2) continue;
+      d.exercises = d.exercises.filter((x) => x.key !== it.key);
+      touched++;
+      continue;
+    }
     if (it.field === 'remove') {
       const list = d[it.list || 'exercises'] || (d[it.list] = []);
       if (list.some((x) => x.key === it.key)) continue;
@@ -432,7 +568,7 @@ export function ruleSummary(session, changes = []) {
   else parts.push(`${sum.highlights.slice(0, 2).join('; ')}${sum.highlights.length > 2 ? `, and ${sum.highlights.length - 2} more` : ''}.`);
   if (sum.rests && sum.rests.actual > sum.rests.planned * 1.3) parts.push(`Rests between sets ran to ${secText(sum.rests.actual)} on average against ${secText(sum.rests.planned)} planned.`);
   if (session.easePct > 0) parts.push('This was a lighter session to ease back in, so the plan keeps its numbers.');
-  else if (changes.length) parts.push(`Changed for next time: ${changes.slice(0, 3).map((c) => `${c.exerciseName} ${c.field === 'remove' ? 'removed' : `→ ${c.to}`}`).join('; ')}${changes.length > 3 ? `, and ${changes.length - 3} more` : ''}.`);
+  else if (changes.length) parts.push(`Changed for next time: ${changes.slice(0, 3).map((c) => `${c.exerciseName} ${c.field === 'remove' ? 'removed' : c.field === 'add' ? `added to ${c.to}` : `→ ${c.to}`}`).join('; ')}${changes.length > 3 ? `, and ${changes.length - 3} more` : ''}.`);
   else parts.push('Nothing in the plan needs to change yet.');
   return parts.join(' ');
 }
@@ -473,7 +609,14 @@ export function fromAiChanges(raw, { plan, session, equipment, mode }) {
     if (!found) continue;
     const { d, ex } = found;
     const base = { id: uid('chg'), scope: 'exercise', exerciseKey: ex.key, exerciseName: ex.name, dayIds: [d.id], reason };
-    if (field === 'exercise') {
+    if (field === 'add') {
+      // exercise_key names the exercise of the session the new one comes after. Nothing is added twice to one session.
+      const cat = all.find((x) => x.id === r.new_exercise_id);
+      if (!cat || !canDo(equipment, cat) || !d.exercises.includes(ex) || d.exercises.some((x) => x.exerciseId === cat.id)) continue;
+      const n = Number(r.new_value);
+      const sets = Number.isFinite(n) && n >= 1 ? clampInt(n, 1, 6) : null;
+      out.push({ ...base, exerciseName: cat.name, field, from: '', to: `${d.title}${sets ? `, ${sets} set${sets === 1 ? '' : 's'}` : ''}`, value: cat.id, sets });
+    } else if (field === 'exercise') {
       const cat = all.find((x) => x.id === r.new_exercise_id);
       // An optional extra must not repeat anything in its session; a session exercise may take the place of one of its extras.
       if (!cat || !canDo(equipment, cat) || cat.id === ex.exerciseId || (ex.optional ? allEntries(d) : d.exercises).some((x) => x.exerciseId === cat.id)) continue;
@@ -502,6 +645,7 @@ export function fromAiChanges(raw, { plan, session, equipment, mode }) {
 }
 
 export function describeChange(c) {
+  if (c.field === 'add') return { what: 'Added to', text: c.to };
   const what = { load: 'Weight', reps: 'Reps', sets: 'Sets', rest: 'Rest', exercise: 'Exercise', remove: 'Exercise' }[c.field] || 'Change';
   const extra = c.field === 'load' && c.reps != null ? `, ${c.reps} reps` : '';
   return { what, text: `${c.from} → ${c.to}${extra}` };

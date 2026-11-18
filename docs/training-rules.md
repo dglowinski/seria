@@ -1,4 +1,4 @@
-# Seria training rules, version 1.6.0
+# Seria training rules, version 1.7.0
 
 Last updated 2026-11-18. Generated from `js/domain/rules.js` with `npm run rules-doc`. Do not edit by hand: change the rules file, bump `RULES_VERSION`, and run the script again.
 
@@ -176,6 +176,11 @@ Seria is not medical advice. Stop if something hurts and see a professional.
 - Source: App convention
 - In the code: `repLo/repHi`
 
+**PRG-3.** What a workout earned is never lost. A plan that is rebuilt, or that the review of a workout never reached, takes the step that workout earned by rules PRG-1 and PRG-2, once. An exercise that comes back into a plan picks up where its own last workout left it, not at the bottom of its range. A weight set after the workout, by a review or by hand, settles the matter and is left alone.
+
+- Source: App convention
+- In the code: `history`, `repLo/repHi`
+
 ## Reading results
 
 **ADJ-1.** During a session: if a set ends short of its target with no reps in reserve, lower the load for the sets still to come, by about 5% for a miss of one rep and about 10% for two or more. If a set hits its target with 4 or more reps in reserve, raise the load one step for the remaining sets.
@@ -189,6 +194,16 @@ Seria is not medical advice. Stop if something hurts and see a professional.
 - In the code: `PROGRESSION.shortfallReps`, `deloadPct`
 
 **ADJ-3.** Judge only what was recorded: planned against done reps and load, reps in reserve when given, skipped sets, and earlier sessions of the same exercise. If the records do not justify a change, make none. Changes are made at once and listed with their reasons; each can be undone or corrected by hand.
+
+- Source: App convention
+- In the code: `history`
+
+**ADJ-4.** After every workout the whole plan is thought through again, not only the exercises just done: whether each exercise still earns its place, the sets a week for each muscle group, the time the sessions really take, the order and the rest days. A connected model does this. It may change any session, add an exercise to one, or ask for the plan to be built anew, which is rare. It is just as right for this look to change nothing beyond weights and reps: a plan that works is left as it is. With no model connected, the training rules move weights and reps only.
+
+- Source: App convention
+- In the code: `history`, `WEEKLY_SETS`
+
+**ADJ-5.** The plan is where a workout starts, not a fence around it. A set or an exercise added by hand during a workout goes on record and counts toward the week and toward recovery, but it is never held against the plan: a short extra set costs nothing, and work that was added and not done leaves no trace.
 
 - Source: App convention
 - In the code: `history`

@@ -9,17 +9,22 @@
 // A finished set is saved as planned; it can be nudged by a rep before the tap
 // or during the rest, or undone. Every tap is saved at once and written to the
 // workout's log; a reload lands back on the same step.
+// The plan is where the workout starts, not a fence around it: one more set of
+// an exercise, or another exercise altogether, can be added by hand at any time.
 
 import { html, useState, useEffect, useRef, useStore, Sheet, Dock, Icon, clock, go, toast, NumberInput, restText, flags } from './kit.js';
 import * as store from '../store.js';
 import * as S from '../domain/session.js';
-import { fmtLoad, fmtLoadShort, num, optionalMinutes, pairRestSec } from '../domain/planner.js';
+import { fmtLoad, fmtLoadShort, num, optionalMinutes, pairRestSec, handEntry } from '../domain/planner.js';
 import { LOAD_TYPES, PROGRESSION } from '../domain/rules.js';
 import { substitutesFor, exerciseById, equipmentNames, zoneOf, machineForExercise, sketchForExercise } from '../domain/catalog.js';
 import { MachineInfo } from './equipment.js';
 import { Sketch, sketchNote } from './sketch.js';
 import { StepPicker, loadLabel } from './weights.js';
 import { ProgressSteps } from './past.js';
+import { ExercisePicker } from './pick.js';
+import { Motion, motionNote } from './motion.js';
+import { moveFor } from '../domain/moves.js';
 import { describeChange } from '../domain/progression.js';
 import { afterSetSaved, afterWorkout, rememberWeight } from '../ai/coach.js';
 import { sourceName } from '../ai/ai.js';
@@ -33,7 +38,7 @@ function setLine(ex, st) {
   const v = st.actual || st.target;
   const load = ex.loadType === 'bodyweight' ? (v.load ? ` + ${num(v.load)} kg` : '') : (v.load == null ? '' : ` × ${fmtLoadShort(ex.loadType, v.load)}`);
   const rir = st.actual?.rir != null ? ` · ${st.actual.rir === 4 ? '4+' : st.actual.rir} left` : '';
-  return `${v.reps} reps${load}${rir}${st.status === 'pending' ? ' planned' : ''}`;
+  return `${v.reps} reps${load}${rir}${st.status === 'pending' ? (st.extra ? ' added' : ' planned') : st.extra ? ' · extra' : ''}`;
 }
 
 function SetList({ ex, nowIdx, onEdit }) {
@@ -246,15 +251,39 @@ export function Workout() {
     toast('One after the other today');
   };
 
+  // The state is read fresh: a machine named a moment ago in the picker is already in it.
   const swapTo = (cat) => {
-    const known = state.weights[cat.id];
+    const live = store.getState();
+    const known = live.weights[cat.id];
     put(S.substitute(session, {
       exerciseId: cat.id, name: cat.name, pattern: cat.pattern, loadType: cat.load,
-      equipment: equipmentNames(state.equipment, cat), zone: zoneOf(state.equipment, cat),
+      equipment: equipmentNames(live.equipment, cat), zone: zoneOf(live.equipment, cat),
       step: known?.step ?? PROGRESSION.defaultStep[cat.load], load: known ? known.value : null,
     }));
     setSheet(null);
     toast(`Swapped to ${cat.name}`);
+  };
+
+  // Station taken: an optional extra is done in the meantime, and this exercise is next after it.
+  const extraNow = (o) => {
+    cancelBeep();
+    put(S.optionalNow(session, o.key));
+    setSheet(null);
+    toast(`${o.name} first, then back to ${ex.name}`);
+  };
+
+  // Added by hand: one more set of an exercise, or another exercise altogether.
+  const oneMoreSet = (i) => {
+    const name = session.exercises[i].name;
+    put(S.addSet(session, i, Date.now(), { go: true }));
+    setSheet(null);
+    toast(`One more set of ${name}`);
+  };
+  const addPicked = (cat) => {
+    const live = store.getState();
+    put(S.addExercise(session, handEntry(cat, { plan: live.plan, profile: live.profile, equipment: live.equipment, weights: live.weights })));
+    setSheet(null);
+    toast(phase === 'optional' ? `${cat.name} added` : `${cat.name} added at the end`);
   };
 
   const mainLabel = waiting && needW ? 'Save starting weight'
@@ -269,6 +298,8 @@ export function Workout() {
   const thisLift = exerciseById(state.equipment, ex.exerciseId);
   const machine = machineForExercise(state.equipment, thisLift);
   const look = sketchForExercise(state.equipment, thisLift); // what the equipment looks like, for finding it
+  const how = moveFor(thisLift || { id: ex.exerciseId, name: ex.name, pattern: ex.pattern }); // how the exercise is done, as a drawing that moves
+  const onMachine = !!look && !['dumbbells', 'barbell', 'bench', 'pullup_bar'].includes(look.id);
   const setElapsed = phase === 'active' && session.setStartedAt ? Math.max(now, Date.now()) - session.setStartedAt : 0;
   const others = S.hasOthers(session);
 
@@ -289,7 +320,7 @@ export function Workout() {
           const status = here ? 'Now' : x.dropped ? 'Dropped' : !pending ? 'Done' : x.postponed ? 'Later' : 'To do';
           return html`<button class=${`row ${here ? 'on' : ''}`} disabled=${!pending || here}
             onClick=${() => { cancelBeep(); put(S.goToExercise(session, i)); setSheet(null); }}>
-            <span class="stack tight grow"><b>${i + 1}. ${x.name}</b><span class="sub">${d} of ${x.sets.length} sets done${x.pair && session.exercises[S.mateIdx(session, i, false)] ? ` · in turns with ${session.exercises[S.mateIdx(session, i, false)].name}` : ''}${x.optional ? ' · optional extra' : ''}${x.swappedFrom ? ` · swapped in for ${x.swappedFrom.name}` : ''}</span></span>
+            <span class="stack tight grow"><b>${i + 1}. ${x.name}</b><span class="sub">${d} of ${x.sets.length} sets done${x.pair && session.exercises[S.mateIdx(session, i, false)] ? ` · in turns with ${session.exercises[S.mateIdx(session, i, false)].name}` : ''}${x.optional ? ' · optional extra' : ''}${x.added ? ' · added by hand' : ''}${x.swappedFrom ? ` · swapped in for ${x.swappedFrom.name}` : ''}</span></span>
             <span class=${`tag ${status === 'Now' || status === 'Done' ? 'good' : ''}`}>${status}</span>
           </button>`;
         })}
@@ -299,7 +330,24 @@ export function Workout() {
           <p class="small muted">If you feel like more today, add one. It goes to the end of the workout.</p></div>
         ${offer.map((o) => html`<${OptionalRow} o=${o} eq=${state.equipment} label="Add" onUse=${() => takeOptional(o)} />`)}
       </div>`}
+      <button class="cta ghost" data-testid="overview-add" onClick=${() => setSheet('more')}>Add a set or an exercise</button>
     <//>`;
+
+  const inWorkout = session.exercises.map((x) => x.exerciseId);
+  const lastEx = S.lastSet(session); // the exercise whose set was finished last
+  const moreOf = [...new Set([phase === 'optional' ? -1 : exIdx, lastEx ? lastEx.exIdx : -1])].filter((i) => i >= 0);
+  const addSheet = sheet === 'more' && html`<${Sheet} title="Add to this workout" onClose=${() => setSheet(null)}>
+      <p class="small muted">Extra work on top of the plan. It goes on record and counts toward your week, but it is never held against the plan.</p>
+      ${moreOf.map((i) => html`<button class="cta ghost" data-testid="add-set" onClick=${() => oneMoreSet(i)}>One more set of ${session.exercises[i].name}</button>`)}
+      <button class="cta ghost" data-testid="add-exercise" onClick=${() => setSheet('pick')}>Another exercise</button>
+      ${offer.length > 0 && phase !== 'optional' && html`<div class="stack" data-testid="more-optional">
+        <p class="eyebrow">Optional extras for this session</p>
+        ${offer.map((o) => html`<${OptionalRow} o=${o} eq=${state.equipment} label="Add" onUse=${() => takeOptional(o)} />`)}
+      </div>`}
+    <//>`;
+  const pickSheet = sheet === 'pick' && html`<${ExercisePicker} title="Add an exercise" label="Add" exclude=${inWorkout}
+      intro=${phase === 'optional' ? 'It comes up now.' : 'It joins the end of this workout. Sets and reps follow your plan where it has the exercise.'}
+      onPick=${addPicked} onClose=${() => setSheet(null)} />`;
 
   // Every planned set is done and the session has optional extras: offer them, or finish.
   if (phase === 'optional') {
@@ -323,12 +371,17 @@ export function Workout() {
         <div class="stack" data-testid="optional-list">
           ${offer.map((o) => html`<${OptionalRow} o=${o} eq=${state.equipment} label="Do it" onUse=${() => takeOptional(o)} />`)}
         </div>
+        <div class="chips">
+          <button class="chip" data-testid="more" onClick=${() => setSheet('more')}>Something else: a set or an exercise</button>
+        </div>
       </main>
       <${Dock}>
         <button class="cta" data-testid="main-action" onClick=${endNow}>Finish workout</button>
       <//>
       ${endSheet}
-      ${allSheet}`;
+      ${allSheet}
+      ${addSheet}
+      ${pickSheet}`;
   }
 
   // The band at the top, which stays put while the page scrolls. During a rest it
@@ -378,14 +431,15 @@ export function Workout() {
           ${waiting && html`<p class="eyebrow">${session.rest?.swap ? 'In turns: now this one' : firstOfExercise ? (c.done + c.skipped === 0 ? 'First exercise' : 'Next exercise') : 'Next set'}</p>`}
           ${phase === 'active' && html`<p class="eyebrow">Set in progress</p>`}
           <h3 data-testid="exercise-name">${ex.name}</h3>
-          <p class="muted small">${ex.zone} · set ${setIdx + 1} of ${ex.sets.length}${ex.optional ? ' · optional extra' : ''}${ex.swappedFrom ? ` · swapped in for ${ex.swappedFrom.name}` : ''}${ex.postponed ? ' · put off earlier' : ''}</p>
+          <p class="muted small">${ex.zone} · set ${setIdx + 1} of ${ex.sets.length}${ex.optional ? ' · optional extra' : ''}${ex.added ? ' · added by hand' : ''}${ex.swappedFrom ? ` · swapped in for ${ex.swappedFrom.name}` : ''}${ex.postponed ? ' · put off earlier' : ''}</p>
           ${mate && html`<p class="small" data-testid="pair-line"><span class="tag good">superset</span> ${inTurns ? `In turns with ${mate.name}: a set here, ${restText(pairRestSec(ex, mate))} rest, a set there.` : `Was in turns with ${mate.name}, which is done. The sets left here keep their own rest.`}</p>`}
           ${waiting && session.easePct > 0 && c.done + c.skipped === 0 && html`<p class="small muted" data-testid="eased">Loads are ${session.easePct}% lighter today to ease back in. The plan keeps its numbers.</p>`}
           ${waiting && firstOfExercise && html`<p class="muted small">${ex.equipment} · ${ex.sets.length} sets · rest ${inTurns ? `${restText(pairRestSec(ex, mate))} after each set` : restText(ex.restSec)}</p>`}
         </div>
-        ${look && html`<div data-testid="sketch"><${Sketch} medium id=${look.id} loading=${look.loading} /></div>`}
+        ${how ? html`<${Motion} key=${ex.key} move=${how} name=${ex.name} play=${3} plates=${look?.loading === 'plate_loaded'} />`
+          : look && html`<div data-testid="sketch"><${Sketch} medium id=${look.id} loading=${look.loading} /></div>`}
       </div>
-      ${waiting && firstOfExercise && look && html`<p class="small muted" data-testid="sketch-note">${sketchNote(look)}</p>`}
+      ${waiting && firstOfExercise && (how || look) && html`<p class="small muted" data-testid="sketch-note">${how ? motionNote({ machine: onMachine, plates: look?.loading === 'plate_loaded' }) : sketchNote(look)}</p>`}
 
       ${waiting && !needW && html`
         <div class="metrics">
@@ -424,6 +478,7 @@ export function Workout() {
       ${waiting && html`<div class="chips">
         <button class="chip" data-testid="busy" onClick=${() => setSheet('busy')}>Machine busy? Not now</button>
         <button class="chip" onClick=${() => move(S.skipSet(session))}>Skip set</button>
+        <button class="chip" data-testid="more" onClick=${() => setSheet('more')}>Add a set or an exercise</button>
       </div>`}
       ${phase === 'active' && html`<div class="chips">
         <button class="chip accent" data-testid="start-now" onClick=${() => { put(S.restartSet(session)); toast('Clock reset: the set starts now'); }}>Start now</button>
@@ -443,19 +498,31 @@ export function Workout() {
         <p class="small muted">${ex.name} is done in turns with ${mate.name}. If you cannot keep both stations, split them: each is then done on its own, with its usual rests.</p>
       </div>`}
       <button class=${`cta ${inTurns ? 'ghost' : ''}`} data-testid="later" disabled=${!others} onClick=${() => { move(S.postponeExercise(session)); setSheet(null); toast(`${ex.name} comes back at the end`); }}>Come back to it later</button>
-      ${!others && html`<p class="small muted">This is the last exercise left, so there is nothing to do first.</p>`}
+      ${!others && html`<p class="small muted">This is the last exercise left, so there is nothing planned to do first.${offer.length ? ' An optional extra can fill the wait.' : ''}</p>`}
+      ${offer.length > 0 && html`<div class="stack" data-testid="busy-optional">
+        <div class="stack tight"><p class="eyebrow">Do an optional extra in the meantime</p>
+          <p class="small muted">It comes up now, and ${ex.name} is next after it.</p></div>
+        ${offer.map((o) => html`<${OptionalRow} o=${o} eq=${state.equipment} label="Do it now" onUse=${() => extraNow(o)} />`)}
+      </div>`}
       <div class="stack">
         <p class="small muted">Or do something else instead, for today only:</p>
         ${subs.filter((x) => x.close).length > 0 && html`<p class="eyebrow">Same movement</p>`}
         ${subs.filter((x) => x.close).map((cat) => html`<${SubRow} cat=${cat} eq=${state.equipment} onUse=${() => swapTo(cat)} />`)}
         ${subs.filter((x) => !x.close).length > 0 && html`<p class="eyebrow">Same muscles, another movement</p>`}
         ${subs.filter((x) => !x.close).slice(0, 6).map((cat) => html`<${SubRow} cat=${cat} eq=${state.equipment} onUse=${() => swapTo(cat)} />`)}
-        ${!subs.length && html`<p class="note">Nothing else on your equipment list trains these muscles. Add machines on the Equipment tab, or come back to it later.</p>`}
+        ${!subs.length && html`<p class="note small">Nothing else on your equipment list trains these muscles.</p>`}
+        <button class="cta ghost" data-testid="swap-other" onClick=${() => setSheet('swap')}>Another exercise or machine</button>
+        <p class="small muted">Any exercise your equipment allows, or a machine that is not on your list yet.</p>
       </div>
       <button class="cta danger" data-testid="drop" onClick=${() => { setSheet(null); move(S.dropExercise(session)); toast(`${ex.name} dropped for today`); }}>Drop it for today</button>
     <//>`}
 
+    ${sheet === 'swap' && html`<${ExercisePicker} title="Do something else instead" label="Use" exclude=${inWorkout} like=${ex.pattern}
+      intro=${`For today only: the plan keeps ${(ex.swappedFrom || ex).name}.`} onPick=${swapTo} onClose=${() => setSheet(null)} />`}
+
     ${allSheet}
+    ${addSheet}
+    ${pickSheet}
 
     ${editing?.actual && html`<${EditSet} ex=${ex} st=${editing} index=${sheet.edit} onClose=${() => setSheet(null)}
       onSave=${(a) => { put(S.editSet(session, exIdx, sheet.edit, a)); setSheet(null); toast('Set corrected'); }} />`}
@@ -476,7 +543,7 @@ function OptionalRow({ o, eq, label, onUse }) {
 
 function SubRow({ cat, eq, onUse }) {
   const look = sketchForExercise(eq, cat);
-  return html`<button class="row" onClick=${onUse}>
+  return html`<button class="row" data-testid="sub-row" onClick=${onUse}>
     ${look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}
     <span class="stack tight grow"><b>${cat.name}</b><span class="sub">${equipmentNames(eq, cat)}</span></span>
     <span class="accent">Use</span>

@@ -7,6 +7,7 @@
   --panel: #1a1f1a;
   --panel-2: #222922;
   --line: #343d33;
+  --pad: #4b5749;
   --ink: #f3f6ed;
   --muted: #b0bbab;
   --accent: #d0fa77;
@@ -225,6 +226,16 @@ select.input { appearance: none; }
 .sk-p { fill: var(--ink); }
 .sk-m { stroke: var(--accent); fill: none; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
 .sk-mp { fill: var(--accent); }
+/* ---------- exercises in motion: the same line style, with a figure */
+.motion { position: relative; display: block; flex: none; width: 148px; padding: 0; border: 0; background: none; border-radius: 12px; line-height: 0; cursor: pointer; }
+.motion.small { width: 104px; }
+.motion svg { display: block; width: 100%; height: auto; }
+.mv-b { stroke: var(--ink); fill: none; stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }
+.mv-b2 { stroke: var(--muted); fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
+.mv-h { fill: var(--ink); }
+.mv-p { fill: var(--pad); }
+.ghost { opacity: .26; }
+.motion-play { position: absolute; right: 3px; bottom: 3px; font-size: 9px; line-height: 1; color: var(--muted); }
 .rule { border-top: 1px solid var(--line); padding-top: 12px; }
 .rule code, code { font: inherit; font-size: 13px; color: var(--muted); }
 .cite { font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }

@@ -3,7 +3,7 @@
 // opens with no signal. A new version is fetched whole when it is installed,
 // past the browser's own cache, and the page then loads it by itself (app.js).
 // Bump VERSION whenever files change.
-const VERSION = 'seria-1.9.0';
+const VERSION = 'seria-1.10.0';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css', 'css/standalone.css',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
@@ -11,7 +11,7 @@ const SHELL = [
   'js/app.js', 'js/store.js', 'js/platform.js', 'js/cloud.js',
   'js/domain/rules.js', 'js/domain/catalog.js', 'js/domain/planner.js', 'js/domain/schedule.js', 'js/domain/session.js', 'js/domain/progression.js',
   'js/ai/ai.js', 'js/ai/errors.js', 'js/ai/prompts.js', 'js/ai/claude.js', 'js/ai/openai.js', 'js/ai/coach.js',
-  'js/ui/kit.js', 'js/ui/voice.js', 'js/ui/sketch.js', 'js/ui/plan.js', 'js/ui/coachview.js', 'js/ui/history.js', 'js/ui/equipment.js', 'js/ui/prefs.js', 'js/ui/workout.js', 'js/ui/weights.js', 'js/ui/past.js',
+  'js/ui/kit.js', 'js/ui/voice.js', 'js/ui/sketch.js', 'js/ui/plan.js', 'js/ui/coachview.js', 'js/ui/history.js', 'js/ui/equipment.js', 'js/ui/prefs.js', 'js/ui/workout.js', 'js/ui/weights.js', 'js/ui/past.js', 'js/ui/pick.js', 'js/ui/motion.js', 'js/domain/moves.js',
 ];
 // The Claude and OpenAI SDKs are big and only needed online, so they are cached when first used.
 

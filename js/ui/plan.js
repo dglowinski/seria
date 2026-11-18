@@ -9,6 +9,8 @@ import { recommend, plannedNext, timeline, queueState, dayStatus, skipDay, unski
 import { describeChange, canUndo, isApplied, EDITABLE } from '../domain/progression.js';
 import { exerciseById, machineForExercise, machineLabel, sketchForExercise } from '../domain/catalog.js';
 import { Sketch } from './sketch.js';
+import { Motion } from './motion.js';
+import { moveFor } from '../domain/moves.js';
 import { RULES_VERSION, ACTIVITIES, EFFORTS, SCHEDULE, activityGroups } from '../domain/rules.js';
 import { undoChange, redoChange, editChange, recordUpdate, reviewEquipment, startTraining, reviewToday, logActivity, reviewWaiting, reviewRunning, askAgain, canRestorePlan, restorePlan, userSays } from '../ai/coach.js';
 import { sourceName, aiReady, aiName } from '../ai/ai.js';
@@ -310,12 +312,13 @@ export function DayScreen({ dayId }) {
           const lift = exerciseById(state.equipment, ex.exerciseId);
           const m = machineForExercise(state.equipment, lift);
           const look = sketchForExercise(state.equipment, lift);
+          const move = moveFor(lift || { id: ex.exerciseId, name: ex.name, pattern: ex.pattern });
           const mate = pairMate(day.exercises, ex);
           return html`
           <li class=${`panel ${mate ? 'paired' : ''}`} style="border-radius:16px;padding:14px;gap:6px" data-testid="day-exercise" data-pair=${mate ? ex.pair : ''}>
             <div class="spread"><h4>${i + 1}. ${ex.name}</h4><span class="tag">${ex.tier}</span></div>
             ${mate && html`<p class="small" data-testid="pair-with"><span class="tag good">superset</span> In turns with ${mate.name}: ${oppositePair(ex, mate) ? 'opposite muscles' : 'different parts of the body'}. Rest ${restText(pairRestSec(ex, mate))} after each set.</p>`}
-            <div class="spread" style="align-items:flex-start"><p class="small muted grow">${ex.equipment} · ${ex.zone}</p>${look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}</div>
+            <div class="spread" style="align-items:flex-start"><p class="small muted grow">${ex.equipment} · ${ex.zone}</p>${move ? html`<${Motion} small move=${move} name=${ex.name} plates=${look?.loading === 'plate_loaded'} />` : look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}</div>
             ${m && html`<p class="small muted" data-testid="day-machine">${machineLabel(m) || m.name}${m.isolates ? ` · isolates ${m.isolates.replace(/\.$/, '').toLowerCase()}` : ''}</p>`}
             <p><b>${ex.sets} × ${ex.reps} reps</b> <span class="muted small">(range ${ex.repLo}-${ex.repHi}) · ${mate ? `rest alone ${restText(ex.restSec)}` : `rest ${restText(ex.restSec)}`}</span></p>
             <div class="spread"><p class="small grow">${ex.load ? html`<b>${fmtLoad(ex.loadType, ex.load.value)}</b> <span class="muted">· step ${num(ex.load.step)}</span>` : html`<span class="muted">Weight: ${loadMethod(ex)}</span>`}</p>
@@ -331,11 +334,13 @@ export function DayScreen({ dayId }) {
         </div>
         <ol class="stack">
           ${optional.map((ex) => {
-            const look = sketchForExercise(state.equipment, exerciseById(state.equipment, ex.exerciseId));
+            const lift = exerciseById(state.equipment, ex.exerciseId);
+            const look = sketchForExercise(state.equipment, lift);
+            const move = moveFor(lift || { id: ex.exerciseId, name: ex.name, pattern: ex.pattern });
             return html`
             <li class="panel" style="border-radius:16px;padding:14px;gap:6px;border-style:dashed" data-testid="optional-exercise">
               <div class="spread"><h4>${ex.name}</h4><span class="tag">optional</span></div>
-              <div class="spread" style="align-items:flex-start"><p class="small muted grow">${ex.equipment} · ${ex.zone}</p>${look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}</div>
+              <div class="spread" style="align-items:flex-start"><p class="small muted grow">${ex.equipment} · ${ex.zone}</p>${move ? html`<${Motion} small move=${move} name=${ex.name} plates=${look?.loading === 'plate_loaded'} />` : look && html`<${Sketch} small id=${look.id} loading=${look.loading} />`}</div>
               <p><b>${ex.sets} × ${ex.reps} reps</b> <span class="muted small">(range ${ex.repLo}-${ex.repHi}) · rest ${restText(ex.restSec)} · about ${optionalMinutes(ex)} min</span></p>
               ${ex.why && html`<p class="small" data-testid="optional-why">${ex.why}</p>`}
               <div class="spread"><p class="small grow">${ex.load ? html`<b>${fmtLoad(ex.loadType, ex.load.value)}</b> <span class="muted">· step ${num(ex.load.step)}</span>` : html`<span class="muted">Weight: ${loadMethod(ex)}</span>`}</p>

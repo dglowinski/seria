@@ -35,6 +35,8 @@ The plan is a running list, not a calendar: train this, rest a day, train that, 
 - **The coach proposes it and you can discuss it.** It is laid out a couple of weeks ahead. The main lifts come back every week so they can progress; the smaller exercises take turns, so what did not fit one week is trained the next.
 - **One button: "Train now".** On the day the next session is planned for, it just starts. On any other day it first shows what makes sense today and why (for example a session that lets yesterday's muscles rest), and how the rest of the plan follows. Starting accepts that update. You can also pick any session yourself, or skip one.
 - **It moves as you train.** After each workout the plan is updated for you: weights, reps, the order of what is left and the rest days. Nothing waits to be accepted. You get a summary in words and a list of what changed and why, and you can undo any change or correct its number ("What changed" on the Plan tab).
+- **After every workout the whole plan is thought through.** With a model connected, the review does not stop at the exercises you just did. The model is sent every session of the plan, your workouts on record, the sets a week each muscle group gets and the conversation, and is told to go through the plan session by session: does each exercise still earn its place, are the weekly sets in range, do the sessions fit the time you really take, do the order and the rest days still fit. It can change any session, add an exercise to one, or have the plan built anew (rare; it lands in the chat, with "Put the old plan back"). It is told just as plainly that changing only weights and reps is right when the plan is working, and its summary says what the look at the whole plan came to. With no model connected, the training rules move weights and reps only.
+- **Nothing a workout earned is lost.** A new plan is brought level with your workouts on record: for each exercise, its last workout says where it stands, by the same rules a review uses. So a rebuild never comes back without the rep or the weight your last workout earned, even when that workout's review had not arrived yet, and an exercise that returns to the plan after a break picks up where you left it. The same check runs when the app starts; a plan that had lost a step gets it back and says "Caught up with your last workouts" on the Plan tab.
 - **A full cycle is always on show.** A session you finish moves to the end of the list, with its numbers already updated, so you see when it comes round again.
 - **Your settings are preferences; the coach decides.** Goal, sessions a week, minutes, supersets, exercises to skip: with a model connected these go to it as what you would like, together with the conversation and your workouts. The model weighs them, draws its own conclusions and builds the training, and says so when it departs from a setting. The app takes its plan as it comes: its number of sessions a week, the supersets it chose, a session a few minutes over your time. Only two things are fixed: it can use only the exercises your gym allows, and never one you asked to avoid. Without a model the training rules follow the settings to the letter.
 - **The chat alone updates the plan.** Tell the coach what you want ("make it four days", "I like supersets", "regenerate my plan", "swap the lunges") and the plan changes at once, with no button to press. Single changes show with an Undo; a rebuilt plan keeps the old one, and "Put the old plan back" returns it. Only the very first plan waits for a tap, on the summary of what it is built on.
@@ -62,7 +64,8 @@ The rules behind this are in `js/domain/schedule.js` and in the "A plan that mov
 - **One tap per set.** "Start set", then "Finish set". The set is saved with the planned reps and the rest starts. While the set runs, or during the rest after it, −1 and +1 nudge the reps; you can also change the weight, say how many reps were left in the tank, or undo the finish.
 - **The next set starts by itself** when the rest runs out, from that moment. If you were not ready, "Start now" resets its clock and "Not doing it yet" puts it down. You can turn this off in Settings.
 - **What to aim for.** Each set says whether to stop at the target or push on: sets before the last stop with reps in reserve, the last set of an exercise may go past the target.
-- **Machine busy? Not now.** Come back to the exercise later (it moves to the end of the workout), do another one instead (same movement first, then same muscles), or drop it for today.
+- **Machine busy? Not now.** Come back to the exercise later (it moves to the end of the workout), do one of the session's optional extras in the meantime (the exercise you put aside is next after it), do another one instead (same movement first, then same muscles), or drop it for today. "Another exercise or machine" lists everything your equipment allows, with a search box. A machine that is not on your list can be named right there: it is used at once and saved with your equipment, so it is offered from then on.
+- **Add a set or an exercise.** The plan is where a workout starts, not a fence around it. "Add a set or an exercise" gives one more set of the exercise in hand (or of the one just finished), or any other exercise your equipment allows; on the last step of a workout it comes up at once. Extra work goes on record and counts toward your week, but it is never held against the plan: a short extra set does not cost you a step, and what you added and did not do leaves no trace.
 - **The whole workout at a glance.** Tap "Exercise 2 of 5" at the top to see every exercise and jump to any that still has sets to do.
 - **A missed set changes the sets to come at once,** with the reason and an Undo on screen.
 - **Feel like a bit more?** When the planned sets are done, the workout offers the session's optional extras. "Do it" brings one up as the next exercise; "Finish workout" ends without them. You can also add one earlier from the workout overview, and it waits at the end. An extra you do is saved and moves on like any other exercise; one you leave is not a miss.
@@ -80,15 +83,21 @@ With the screen on, the phone beeps and buzzes. With the screen off a web page i
 
 ## Telling it what your gym has
 
-On the Equipment tab, "Add to list" opens a box where you can name the machines or paste any text: a list, a sentence, notes from the gym's website. You can also dictate it. The text is read and the list is saved in one go, and you see what was added, what was marked as missing ("no barbell"), and what could not be placed. The connected model (Claude or OpenAI) does the reading; a built-in reader does it otherwise. You can still pick machines from the list or add your own by hand.
+On the Equipment tab, "Add to list" opens a box where you can name the machines or paste any text: a list, a sentence, notes from the gym's website. You can also dictate it. The text is read and the list is saved in one go, and you see what was added, what was marked as missing ("no barbell"), and what could not be placed. The connected model (Claude or OpenAI) does the reading; a built-in reader does it otherwise. You can still pick machines from the list or add your own by hand. A maker can be named in plain words ("abdominal from Life Fitness"). A variant named in full, such as "iso-lateral leg extension", is kept as a machine of its own next to the plain leg extension, with its own weights.
 
 ### Naming the maker
 
 Say who makes the machines, as in "these are from Technogym: leg press, chest press", and the exact machines are identified. For each one the app saves the maker, the model, how the machine works, what it isolates and how it is loaded. The coach gets this with every request, on the equipment list and on each exercise done on that machine, and you see it on the Equipment tab, in the day preview and on the workout screen.
 
+### How each exercise is done
+
+Every exercise has a drawing that moves: a stick figure doing one rep, with the equipment, in the same line style as the equipment sketches. It is seen from the side, or from the front where that shows the move better (a lateral raise, a pull-up). In a workout it plays three times when an exercise comes up and then rests. In a session's preview it stands still, the start of the move with the end of it faint behind, until you tap it. A tap plays it; another stops it. A phone set to reduce motion gets the still picture.
+
+The drawings are made by the app, not downloaded, so they work offline and inside claude.ai. Each move is a short description of where the body is during a rep; the limbs are worked out from that with fixed lengths (`js/domain/moves.js`, played by `js/ui/motion.js`). A machine of your gym's own gets the move for what it trains. They show the general way a lift goes, not coaching on your form. `node scripts/moves-gallery.mjs` draws them all to pictures.
+
 ### What the equipment looks like
 
-Every piece of equipment has a small line sketch of its general look: a leg press, a lat pulldown, a cable station and so on. You see it when an exercise comes up in a workout, next to each exercise in the session preview, on the equipment list and when swapping. The sketch follows what is saved about your machine: a plate-loaded one is drawn with plates instead of a weight stack, and a machine of your gym's own gets the drawing closest to it (the model picks it when it identifies the machine; otherwise it goes by what the machine trains).
+Every piece of equipment has a small line sketch of its general look: a leg press, a lat pulldown, a cable station and so on. You see it on the equipment list, when swapping, and when picking an exercise. The sketch follows what is saved about your machine: a plate-loaded one is drawn with plates instead of a weight stack, and a machine of your gym's own gets the drawing closest to it (the model picks it when it identifies the machine; otherwise it goes by what the machine trains).
 
 These are sketches, not photos of your exact model. Makers' photos are not shown: without a server the app cannot fetch a maker's page to find the right picture, the claude.ai page blocks outside images, and the photos belong to the makers. For a machine found on the web, "Open the page" takes you to the maker's own picture. The drawings are in `js/ui/sketch.js`.
 
@@ -163,6 +172,7 @@ js/platform.js                            what the page can do where it runs: vo
 js/cloud.js                               cloud copy when inside claude.ai
 js/domain/rules.js                        the training rules library, versioned, with sources
 js/domain/catalog.js                      equipment and exercises
+js/domain/moves.js                        how each exercise moves: the figure and the equipment through one rep
 js/domain/planner.js                      builds the plan, estimates time
 js/domain/schedule.js                     what to train today, the order and rests of what follows
 js/domain/session.js                      the workout: ready, set, rest, next, summary, and its log
@@ -174,6 +184,8 @@ js/ai/openai.js                           OpenAI through its Responses API
 js/ai/coach.js                            the conversation, with and without a model
 js/ui/*.js                                the screens
 js/ui/sketch.js                           line sketches of each kind of equipment
+js/ui/motion.js                           plays the drawing of an exercise
+js/ui/pick.js                             pick any exercise by hand, or name a machine that is not on the list
 vendor/                                   Preact + htm, the Anthropic SDK and the OpenAI SDK, built by npm run vendor
 docs/training-rules.md                    the rules as a document, generated from rules.js
 scripts/                                  local server, icon, vendor, rules-doc and single-file builders
@@ -195,5 +207,7 @@ report/                                   the build report, test results and scr
 - The claude.ai page and the stand-alone app do not share data. Move it with a backup file.
 - Cloud sync is simple: the newest main record wins, workouts are merged one by one. It is meant for one person, mostly on one device at a time.
 - With the screen off, the rest-over signal is a notification, and only in the stand-alone app. Whether the phone buzzes for it is up to the phone's notification settings, and it was not tried on a real phone. The countdown itself is always right, because it is stored as an end time.
+- The moving drawings show the general way an exercise goes. They are worked out, not filmed, and are no substitute for being shown a lift.
+- The whole-plan review after a workout needs a connected model. Its instructions and the data it is sent are tested against stand-ins; how well a real model follows them was not measured.
 - Undo works on the plan a change was made to. After the plan is rebuilt, older changes stay in the list as a record only.
 - Not medical advice. The limitation handling is deliberately cautious and says what it left out.

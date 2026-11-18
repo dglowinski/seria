@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-18T10:26:33.982Z",
+  "ranAt": "2026-11-18T13:06:02.691Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 317,
-  "passed": 317,
+  "total": 346,
+  "passed": 346,
   "failed": 0,
   "results": [
     {
@@ -199,7 +199,25 @@
     },
     {
       "part": "A built-in",
-      "name": "each exercise in the preview has a sketch of its equipment",
+      "name": "each exercise in the preview has a drawing of how it is done, standing still until tapped",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a tap plays it: the figure and the dumbbell move, the equipment stays put",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "and it really moves on screen",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "A built-in",
+      "name": "a second tap stops it",
       "ok": true,
       "detail": ""
     },
@@ -211,7 +229,7 @@
     },
     {
       "part": "A built-in",
-      "name": "a new exercise starts with a sketch of what to look for",
+      "name": "a new exercise starts with a drawing of how it is done, playing by itself",
       "ok": true,
       "detail": ""
     },
@@ -241,7 +259,7 @@
     },
     {
       "part": "A built-in",
-      "name": "the sketch stays on the training screen during the set",
+      "name": "the drawing stays on the training screen during the set",
       "ok": true,
       "detail": ""
     },
@@ -259,7 +277,7 @@
     },
     {
       "part": "A built-in",
-      "name": "the sketch stays during the rest too",
+      "name": "the drawing stays during the rest too",
       "ok": true,
       "detail": ""
     },
@@ -373,7 +391,7 @@
     },
     {
       "part": "A built-in",
-      "name": "the next exercise comes with its own sketch",
+      "name": "the next exercise comes with its own drawing",
       "ok": true,
       "detail": ""
     },
@@ -1291,7 +1309,7 @@
     },
     {
       "part": "F OpenAI API",
-      "name": "the sketch follows what was found about the machine: this one is loaded with plates",
+      "name": "the drawing follows what was found about the machine: this one is loaded with plates",
       "ok": true,
       "detail": ""
     },
@@ -1904,6 +1922,162 @@
     {
       "part": "I coach and history",
       "name": "no script errors in part I",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "\"Machine busy?\" offers the session's optional extras to do in the meantime",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "the extra comes up at once, and the exercise it pushed aside is next",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "when the extra is done, the workout is back on that exercise",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "any exercise the equipment allows can be picked, the same muscles first",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "the list can be searched",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "a machine that is not on the list starts out training the same movement",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "named on the spot, it is used now and saved with the equipment",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "\"Add a set or an exercise\" says what extra work is",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "one more set joins the exercise, marked as extra",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "another exercise joins the end of the workout, marked as added by hand",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "the overview shows it, and offers to add more",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "the review is sent the whole picture: every session of the plan, the workouts on record, the sets a week, the conversation",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "its look at the whole plan reaches another session: what was added by hand joins the plan there",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "the summary says what the look at the whole plan came to",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "the record keeps the extra work apart from the plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "when the review says the plan no longer fits, it is rebuilt at once, with the reason passed on",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "the review of that workout stays on record, and the workout is not reviewed a second time against the new plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "and the old plan can be put back",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J own way",
+      "name": "no script errors in part J",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "the abdominal machine is on the list of machines to add",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "typed in plain words, the maker is noted and the variant is kept as a machine of its own",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "set-up: the workout earned a rep on some exercise, and its review settled it",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "on the next start the plan is brought level with the workout on record, and says so",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "and only once",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "with \"reduce motion\" on, the drawing stands still until it is tapped",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "J level",
+      "name": "no script errors in the second part of J",
       "ok": true,
       "detail": ""
     }

@@ -1,10 +1,11 @@
 // Builds report/report.html from the real smoke-test results, so the numbers
 // in the report are the numbers the tests produced. Run after npm run smoke:shots.
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { RULES, SOURCES, RULES_VERSION } from '../js/domain/rules.js';
 import { EXERCISES, EQUIPMENT } from '../js/domain/catalog.js';
+import { MOVES } from '../js/domain/moves.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const smoke = JSON.parse(readFileSync(`${root}report/smoke-results.json`, 'utf8'));
@@ -25,6 +26,8 @@ try {
 }
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// The sheets of exercise drawings made by scripts/moves-gallery.mjs.
+const moveSheets = readdirSync(fileURLToPath(new URL('../report/shots/', import.meta.url))).filter((f) => /^moves-\d+\.png$/.test(f)).sort();
 const parts = [...new Set(smoke.results.map((r) => r.part))];
 const PART_TEXT = {
   'A built-in': ['No Claude', 'The built-in coach, the rule-based plan, a full workout with a reload in the middle, history, backup and restore.'],
@@ -32,6 +35,8 @@ const PART_TEXT = {
   'C in claude.ai': ['Inside claude.ai', 'A stand-in for the runtime claude.ai gives the page: cloud records, Claude, dictation. Includes moving to a fresh browser and getting everything back.'],
   'D install and offline': ['Home screen and offline', 'The install files, the icons, and starting the app with the network switched off.'],
   'E single file': ['The published file', 'The one-file build that is published on claude.ai, run end to end.'],
+  'J own way': ['A workout that goes its own way', 'A station that is taken, a machine the app did not know, a set and an exercise added by hand. Then the review: what it is sent, how it reaches other sessions, and a plan it asks to have rebuilt.'],
+  'J level': ['Nothing a workout earned is lost', 'With no model: the abdominal machine and a named maker read from plain words, and a plan that lost a step being brought level with the workouts on record.'],
   'F OpenAI API': ['OpenAI through the API', 'The real OpenAI SDK in the browser, talking to a local stand-in for api.openai.com. The request the app sends, plans, mid-workout and after-workout reviews, model choice, the machine lookup, and a wrong key.'],
 };
 const shots = [
@@ -46,7 +51,11 @@ const shots = [
   ['52-chat-short', 'A short chat', 'The coach screen shows the conversation in progress. Earlier messages are a tap away.'],
   ['53-past-day', 'How an exercise has progressed', 'Each exercise box lists its last three steps in small print: when reps were added or the weight went up. "Show all" opens the rest.'],
   ['54-past-workout', 'The same, mid-workout', 'Under the sets of the exercise in hand, out of the way.'],
-  ['06-day', 'Session preview', 'Order, equipment, sets, reps, rest, and how the time adds up.'],
+  ['06-day', 'Session preview', 'Order, equipment, sets, reps, rest, and how the time adds up. Each exercise has a drawing of how it is done; a tap plays it.'],
+  ['59-day-motion', 'Drawings for machines too', 'The start of the move, with the end of it faint behind. It stands still until tapped.'],
+  ['56-busy-own-machine', 'A machine the app did not know', 'Named from "Machine busy?", it is used at once and saved with the equipment.'],
+  ['57-add-by-hand', 'Add a set or an exercise', 'Extra work on top of the plan: on record, never held against it.'],
+  ['58-caught-up', 'Caught up with the records', 'A plan that missed what a workout earned takes that step when the app starts, and says so.'],
   ['40-day-optional', 'Optional extras', 'Each session lists up to two extras for the end, with the reason each one fits.'],
   ['44-pairs-switch', 'Supersets: one switch', 'On the Plan tab. It says what supersets save, and what they cost: harder sets, two stations.'],
   ['55-supersets-mode', 'Supersets as a mode', 'The summary before a plan is built has the switch. With it on, the plan is laid out for supersets.'],
@@ -54,9 +63,9 @@ const shots = [
   ['05-equipment', 'Equipment', 'Machines you add. Free weights, bench and bar are on by default.'],
   ['05-gym-text', 'Describe your gym', 'Name the machines or paste any text. It is read and saved, and you see what was added.'],
   ['17c-machines-identified', 'Machines by maker', 'Name the maker and the exact machines are identified. Each says whether it was found on the web or comes from memory.'],
-  ['27-workout-machine', 'The machine, mid-workout', 'A sketch of its general look, how it works and what it isolates.'],
+  ['27-workout-machine', 'The machine, mid-workout', 'A drawing of the move on it, how it works and what it isolates.'],
   ['46-weights-first', 'Weights before the workout', 'Exercises with no weight yet are offered one by one. Fill in or skip.'],
-  ['07-starting-weight', 'Starting an exercise', 'A sketch of what to look for, and, with no history yet, your first weight.'],
+  ['07-starting-weight', 'Starting an exercise', 'A drawing of the move, which plays three times by itself, and, with no history yet, your first weight.'],
   ['08-set-active', 'Set in progress', 'One button: Finish set. It saves the planned reps; −1 and +1 nudge them first.'],
   ['47-train', 'The band at the top', 'It does not scroll. While a set runs it says "Train", with the target and the set clock.'],
   ['49-push', '"Push"', 'On the last set of an exercise, which goes past its target, the band says "Push".'],
@@ -119,6 +128,16 @@ const v11 = [
   ['Changes are made, not proposed.', 'After a workout, from the chat and when equipment changes, the plan is updated without asking. "What changed" lists every change with its reason, an Undo and an Edit.'],
   ['A signal with the screen off.', 'A web page cannot vibrate behind a dark screen, so the app sends a notification when the rest ends (stand-alone app). The beep is scheduled ahead on the audio clock. Settings has a test button. Not tried on a real phone.'],
   ['The long view.', 'A plain-words outlook on the Plan tab: what this round holds, how it gets harder, what changes round to round, what happens when it stalls, and what would be added with more time. A connected model adds its own.'],
+];
+
+// Version 1.10: nothing earned is lost, the whole plan after every workout, a workout that goes its own way, and every exercise in motion.
+const v110 = [
+  ['Nothing a workout earned is lost.', 'A rebuilt plan could come back without the step your last workout had earned: the review of that workout is the model\'s, it takes a while, and when the plan was replaced before the answer came, the answer was dropped. An exercise that came back into a plan after a break started at the bottom of its range again. Now every new plan is brought level with the workouts on record: for each exercise, its last workout says where it stands, by the same rules a review uses. The same check runs when the app starts, so a plan that already lost a step gets it back, and says so on the Plan tab.'],
+  ['After every workout, the whole plan is thought through.', 'Before, the model was sent the plan and the workout and told to compare them. It could change any session, but nothing told it to look beyond the exercises just done. Now it is told to go through every session after every workout: does each exercise still earn its place, are the sets a week in range, do the sessions fit the time you really take, do the order and the rest days still fit. It gets the workouts on record, the sets a week per muscle group and the conversation to do it. It can change any session, add an exercise to one, or have the plan built anew, which lands in the chat with "Put the old plan back". It is told just as plainly that changing only weights and reps is right when the plan is working. With no model connected, the training rules still move weights and reps only.'],
+  ['"Machine busy?" does more.', 'It now offers the session\'s optional extras to do in the meantime; the exercise you put aside is next after it, also when it is the last one left. "Another exercise or machine" lists everything your equipment allows, the same muscles first, with a search box. A machine that is not on your list can be named there: it is used at once and saved with your equipment.'],
+  ['Sets and exercises can be added by hand.', '"Add a set or an exercise" is in the workout, in its overview, and on the last step. Extra work goes on record and counts toward your week, but it is never held against the plan: a short extra set does not cost you a step, and what was added and not done leaves no trace. The model is told which work was added by hand, and what it keeps seeing it can put into the plan.'],
+  ['The abdominal machine, makers, variants.', 'The catalog has an abdominal machine. "Abdominal from Life Fitness" is read as that machine with its maker, with no model connected too. A variant named in full, such as an iso-lateral leg extension, is kept as a machine of its own next to the plain one, with its own weights, so "Machine busy?" can offer it.'],
+  ['Every exercise has a drawing that moves.', `A stick figure does one rep with the equipment, in the same line style as the equipment sketches: ${Object.keys(MOVES).length} moves for the ${EXERCISES.length} exercises of the catalog and for machines of your own, by the movement they train.` + ' They are drawn by the app, not downloaded, so they work offline and in the single-file build. In a workout the drawing plays three times when an exercise comes up, then rests. In a session\'s preview it stands still, the start of the move with the end faint behind, until tapped. A phone set to reduce motion gets the still picture.'],
 ];
 
 // Version 1.9: progress as steps, and a button to rebuild.
@@ -261,6 +280,8 @@ code { font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
 .strip figure { flex: 0 0 232px; scroll-snap-align: start; display: flex; flex-direction: column; gap: 8px; }
 .strip img { width: 232px; height: auto; display: block; border-radius: 18px; border: 1px solid var(--line); background: #111411; }
 .strip figcaption { font-size: 13px; color: var(--muted); }
+.moves { display: grid; gap: 10px; }
+.moves img { width: 100%; height: auto; display: block; border-radius: 12px; border: 1px solid var(--line); }
 .strip figcaption b { display: block; color: var(--ink); font-size: 14px; }
 .pair { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); font-size: 15px; }
 .pair b { font-weight: 650; }
@@ -333,6 +354,14 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
       <div class="rowx head"><span>The design says</span><span>Status</span><span>The app does</span></div>
       ${spec.map(([a, s, b]) => `<div class="rowx"><span>${esc(a)}</span><span><span class="pill ${s === 'changed' ? 'mostly' : s}">${s === 'done' ? 'Done' : s === 'changed' ? 'Changed' : 'Mostly'}</span></span><span class="muted">${esc(b)}</span></div>`).join('\n      ')}
     </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">New in version 1.10</p>
+    <h2>Nothing earned is lost, the whole plan after every workout, and every exercise in motion</h2>
+    <div>${v110.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
+    <p class="muted" style="margin-top:14px">Every move, at the start and at the end of a rep. In the app they move.</p>
+    <div class="moves">${moveSheets.map((f) => `<img src="shots/${f}" alt="Drawings of exercise moves, start and end of each" loading="lazy">`).join('')}</div>
   </section>
 
   <section>

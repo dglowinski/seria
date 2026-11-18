@@ -25,6 +25,7 @@ export const EQUIPMENT = [
   { id: 'dip_station', name: 'Dip bars', kind: 'machine', zone: ZONES.free },
   { id: 'calf_machine', name: 'Calf raise machine', kind: 'machine', zone: ZONES.machines },
   { id: 'back_extension', name: 'Back extension bench', kind: 'machine', zone: ZONES.free },
+  { id: 'ab_machine', name: 'Abdominal machine', kind: 'machine', zone: ZONES.machines },
 ];
 
 export const PATTERNS = {
@@ -131,9 +132,10 @@ export const EXERCISES = [
   e('cable_fly', 'Cable fly', 'chest_fly', ['cable'], 'machine', 2),
   e('db_fly', 'Dumbbell fly', 'chest_fly', ['dumbbells', 'bench'], 'per_dumbbell', 3),
 
-  e('hanging_knee_raise', 'Hanging knee raise', 'core', ['pullup_bar'], 'bodyweight', 1),
-  e('cable_crunch', 'Cable crunch', 'core', ['cable'], 'machine', 2),
-  e('crunch', 'Crunch', 'core', [], 'bodyweight', 3),
+  e('ab_machine_crunch', 'Abdominal machine crunch', 'core', ['ab_machine'], 'machine', 1),
+  e('hanging_knee_raise', 'Hanging knee raise', 'core', ['pullup_bar'], 'bodyweight', 2),
+  e('cable_crunch', 'Cable crunch', 'core', ['cable'], 'machine', 3),
+  e('crunch', 'Crunch', 'core', [], 'bodyweight', 4),
 ];
 
 // Words people use for lifts, longest first, mapped to catalog ids. Used to
@@ -158,7 +160,7 @@ export const KEYWORDS = [
   [['curls', 'curl'], ['db_curl', 'bb_curl', 'cable_curl', 'hammer_curl']],
   [['lateral raises', 'lateral raise'], ['db_lateral_raise', 'cable_lateral_raise']],
   [['calf raises', 'calf raise', 'calves'], ['calf_raise_machine', 'db_calf_raise']],
-  [['crunches', 'crunch', 'abs'], ['hanging_knee_raise', 'cable_crunch', 'crunch']],
+  [['crunches', 'crunch', 'abs'], ['ab_machine_crunch', 'hanging_knee_raise', 'cable_crunch', 'crunch']],
 ];
 
 // ---------------------------------------------------------------- helpers
@@ -185,6 +187,9 @@ const PATTERN_SKETCH = {
 // For free-weight lifts, the piece that says most about where to go.
 const BASIC_ORDER = ['rack', 'barbell', 'dumbbells', 'pullup_bar', 'bench'];
 
+// Catalog equipment whose drawing goes by another name.
+const SKETCH_OF = { ab_machine: 'ab' };
+
 /** The drawing for a piece of equipment: { id, loading } or null. */
 export function sketchForEquipment(eq, id) {
   const item = equipmentList(eq).find((x) => x.id === id);
@@ -192,7 +197,8 @@ export function sketchForEquipment(eq, id) {
   const d = machineDetail(eq, id);
   const loading = d?.loading || undefined;
   if (item.kind === 'custom') return { id: SKETCH_IDS.includes(d?.sketch) ? d.sketch : (PATTERN_SKETCH[item.pattern] || 'machine'), loading };
-  return SKETCH_IDS.includes(id) ? { id, loading } : null;
+  const sk = SKETCH_OF[id] || id;
+  return SKETCH_IDS.includes(sk) ? { id: sk, loading } : null;
 }
 
 /** The drawing for the equipment an exercise is done on, or null for bodyweight work on the floor. */
@@ -321,8 +327,19 @@ const ALIASES = [
   [['dip station', 'dip bars', 'dip bar', 'dip stand', 'parallel bars'], ['dip_station']],
   [['calf raise machine', 'calf machine', 'calf raise', 'standing calf', 'seated calf'], ['calf_machine']],
   [['back extension bench', 'back extension', 'hyperextension', 'roman chair'], ['back_extension']],
+  [['abdominal crunch machine', 'abdominal crunch', 'abdominal machine', 'ab crunch machine', 'abs machine', 'ab machine', 'ab crunch', 'abdominals', 'abdominal'], ['ab_machine']],
 ];
 const ALIAS_LIST = ALIASES.flatMap(([words, ids]) => words.map((w) => ({ w, ids }))).sort((a, b) => b.w.length - a.w.length);
+const byEquipId = Object.fromEntries(EQUIPMENT.map((x) => [x.id, x]));
+/** Where a phrase stands in a text as whole words, or -1. */
+function wordAt(text, w) {
+  for (let from = 0; ;) {
+    const at = text.indexOf(w, from);
+    if (at < 0) return -1;
+    if (!/[a-z]/.test(text[at - 1] || ' ') && !/[a-z]/.test(text[at + w.length] || ' ')) return at;
+    from = at + w.length;
+  }
+}
 
 // What an unknown machine most likely trains, judged from its name. First match wins.
 const PATTERN_HINTS = [
@@ -342,11 +359,31 @@ const PATTERN_HINTS = [
   [/tricep|push.?down|\bdip/, 'triceps'],
   [/bicep|curl|preacher/, 'biceps'],
   [/chest|incline|decline|press/, 'push_h'],
-  [/\babs?\b|crunch|core|torso|rotary|oblique|leg raise/, 'core'],
+  [/\babs?\b|abdom|crunch|core|torso|rotary|oblique|leg raise/, 'core'],
 ];
 const NOT_STRENGTH = /treadmill|bike|bicycle|cycle|elliptical|cross.?trainer|rower|rowing|\berg\b|stair|stepper|sauna|pool|shower|locker|\bmats?\b|ski.?erg|spin|cardio|kettlebell|band|ball|rope|box\b/;
 const NEGATIVE = /(\b(no|not|without|missing|lacks?|broken|removed|except|dont|doesnt)\b|n't)/;
 const FILLER = /\b(we|i|my|our|the|a|an|some|have|has|got|there|is|are|gym|one|two|three|four|few|couple|of|with|it|its|they|them|that|this|those|these|new|old|also|too|lots|many|several|plus|and|or|in|at|for|to|as|well|both|just|only|then|a lot)\b/g;
+
+// Makers of gym machines, as people write them. A name found in a clause is noted as the maker of the machine named with it,
+// so "abdominal from Life Fitness" and "Hammer Strength leg press" need no colon.
+const MAKERS = [
+  'Life Fitness', 'Hammer Strength', 'Technogym', 'Matrix', 'Precor', 'Cybex', 'Nautilus', 'Panatta', 'Gym80', 'Eleiko', 'Hoist', 'Star Trac',
+  'Atlantis', 'Arsenal Strength', 'Watson', 'Pulse Fitness', 'BH Fitness', 'Body-Solid', 'Keiser', 'Gymleco', 'Freemotion', 'Rogue', 'Icarian',
+  'Paramount', 'Prime Fitness', 'Newtech', 'Impulse', 'DHZ',
+];
+const MAKER_RE = new RegExp(`(?:\\b(?:from|by|made by)\\s+)?\\b(${MAKERS.map((m) => m.toLowerCase().replace(/[-\s]+/g, '[-\\s]?')).join('|')})\\b`);
+const makerName = (hit) => MAKERS.find((m) => m.toLowerCase().replace(/[-\s]/g, '') === hit.replace(/[-\s]/g, '')) || hit;
+
+// Words that make a machine a different one from the plain kind in the catalog. A gym can have both, side by side,
+// and each has its own weights: "iso-lateral leg extension" is saved under its own name, not folded into "Leg extension".
+const VARIANT = /\b(iso[-\s]?lateral|unilateral|single[-\s](?:arm|leg)|incline|decline|converging|diverging)\b/;
+
+/** The one movement a catalog machine is for, or null when it serves several (a cable station, a rack). */
+function onlyPattern(id) {
+  const patterns = [...new Set(EXERCISES.filter((x) => x.equip.includes(id)).map((x) => x.pattern))];
+  return patterns.length === 1 ? patterns[0] : null;
+}
 
 export function guessPattern(name) {
   const n = String(name).toLowerCase();
@@ -373,9 +410,22 @@ export function parseEquipmentText(text) {
     for (const c of body.toLowerCase().split(/,|\band\b|\bplus\b|\balso\b|\bbut\b|\bas well as\b/)) clauses.push({ clause: c, vendor });
   }
   const note = (ref, vendor) => { if (vendor && !machines.some((x) => x.ref === ref)) machines.push({ ref, vendor }); };
-  for (const { clause, vendor } of clauses) {
+  for (const item of clauses) {
+    let { clause, vendor } = item;
+    // A maker named inside the clause belongs to the machine named with it.
+    const mk = clause.match(MAKER_RE);
+    if (mk) { vendor = makerName(mk[1]); clause = `${clause.slice(0, mk.index)} ${clause.slice(mk.index + mk[0].length)}`; }
     let rest = ` ${clause} `;
     if (!rest.trim()) continue;
+    // A named variant of a catalog machine is a machine of its own.
+    const variant = !NEGATIVE.test(rest) && VARIANT.test(rest) ? ALIAS_LIST.find(({ w, ids }) => ids.length === 1 && wordAt(rest, w) >= 0 && byEquipId[ids[0]]?.kind === 'machine' && onlyPattern(ids[0])) : null;
+    if (variant) {
+      const name = clause.replace(FILLER, ' ').replace(/[^a-z0-9' -]/g, ' ').replace(/\s+/g, ' ').trim();
+      const shown = name[0].toUpperCase() + name.slice(1);
+      custom.push({ name: shown, pattern: onlyPattern(variant.ids[0]) });
+      note(shown, vendor);
+      continue;
+    }
     let matched = false;
     for (const { w, ids } of ALIAS_LIST) {
       let from = 0;

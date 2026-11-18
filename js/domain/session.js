@@ -288,9 +288,16 @@ function advance(s) {
 
 export function skipSet(session, now = Date.now()) {
   const s = clone(session);
-  const { set, exIdx, setIdx } = current(s);
-  set.status = 'skipped';
+  const { ex, set, exIdx, setIdx } = current(s);
   ev(s, now, 'skip_set', exIdx, setIdx);
+  // A set added by hand that is not done after all simply goes: nothing planned was missed.
+  // If it was the only thing left, the workout is back on its last step, where it was added.
+  if (set.extra) {
+    ex.sets.splice(setIdx, 1);
+    if (!s.exercises.some((x) => x.sets.some((st) => st.status === 'pending'))) { s.draft = null; s.setStartedAt = null; s.hint = null; return wrapUp(s, now); }
+    return afterSkip(s, now);
+  }
+  set.status = 'skipped';
   return afterSkip(s, now);
 }
 
@@ -298,6 +305,7 @@ export function skipSet(session, now = Date.now()) {
 export function dropExercise(session, now = Date.now()) {
   const s = clone(session);
   const { ex } = current(s);
+  ex.sets = ex.sets.filter((st) => !(st.extra && st.status === 'pending'));
   for (const st of ex.sets) if (st.status === 'pending') st.status = 'skipped';
   ex.dropped = true;
   ev(s, now, 'drop', ex.key);
@@ -443,9 +451,12 @@ function advanceIfCursorDone(s) {
 
 export function endSession(session, now = Date.now()) {
   const s = session.status === 'active' ? clone(session) : session;
-  for (const ex of s.exercises) for (const st of ex.sets) if (st.status === 'pending') st.status = 'skipped';
-  // An optional extra that was added but never started leaves no trace: not doing it is not a miss.
-  s.exercises = s.exercises.filter((ex) => !(ex.optional && !ex.sets.some((st) => st.status === 'done')));
+  for (const ex of s.exercises) {
+    ex.sets = ex.sets.filter((st) => !(st.extra && st.status === 'pending')); // a set added by hand and not done leaves no trace
+    for (const st of ex.sets) if (st.status === 'pending') st.status = 'skipped';
+  }
+  // An optional extra or an exercise added by hand that was never started leaves no trace either: not doing it is not a miss.
+  s.exercises = s.exercises.filter((ex) => !((ex.optional || ex.added) && !ex.sets.some((st) => st.status === 'done')));
   s.status = 'done';
   s.endedAt = s.endedAt || now;
   s.phase = 'summary';
@@ -494,6 +505,94 @@ export function addOptional(session, key, now = Date.now()) {
     s.draft = null;
     s.setStartedAt = null;
   }
+  return touch(s, now);
+}
+
+/**
+ * Do one of the optional extras right now, in place of the exercise that is
+ * up: its station is taken. The extra comes up at once, and the exercise it
+ * pushed aside is next after it.
+ */
+export function optionalNow(session, key, now = Date.now()) {
+  const o = optionalLeft(session).find((x) => x.key === key);
+  if (!o || session.phase === 'active' || session.phase === 'optional') return session;
+  const s = clone(session);
+  const at = s.cursor.ex;
+  const cur = s.exercises[at];
+  // Put off, it is no longer done in turns.
+  const mate = s.exercises[mateIdx(s, at, false)] || null;
+  if (mate) { delete mate.pair; delete cur.pair; }
+  cur.postponed = (cur.postponed || 0) + 1;
+  s.exercises.splice(at, 0, sessionExercise(o, s.easePct || 0));
+  s.cursor = { ex: at, set: 0 };
+  s.draft = null;
+  s.setStartedAt = null;
+  s.hint = null;
+  if (s.rest) delete s.rest.swap;
+  if (s.phase !== 'rest') s.phase = 'ready';
+  ev(s, now, 'optional_add', o.key);
+  ev(s, now, 'later', cur.key);
+  return touch(s, now);
+}
+
+// ---------------------------------------------------------------- added by hand
+
+// With every set done the workout waits on its last step; something added there comes up at once.
+function comeUp(s, exIdx, setIdx) {
+  s.cursor = { ex: exIdx, set: setIdx };
+  s.phase = 'ready';
+  s.rest = null;
+  s.draft = null;
+  s.setStartedAt = null;
+  s.hint = null;
+}
+
+/**
+ * One more set of an exercise, added by hand. It aims for what the last set of
+ * that exercise aimed for, at the weight last lifted. It is extra work: it goes
+ * on record, but it is never held against the plan, and it is gone again if it
+ * is not done. With `go` the workout moves to that set now, unless a set is running.
+ */
+export function addSet(session, exIdx = session.cursor.ex, now = Date.now(), { go = false } = {}) {
+  if (session.status !== 'active' || !session.exercises[exIdx]) return session;
+  const s = clone(session);
+  const ex = s.exercises[exIdx];
+  const last = ex.sets[ex.sets.length - 1];
+  const lifted = [...ex.sets].reverse().find((st) => st.status === 'done' && st.actual?.load != null)?.actual.load;
+  const target = { reps: last.target.reps, load: lifted ?? last.target.load };
+  ex.sets.push({ planned: { ...target }, target, actual: null, status: 'pending', note: 'Added by hand', extra: true });
+  delete ex.dropped;
+  ev(s, now, 'set_add', ex.key);
+  const idx = ex.sets.findIndex((st) => st.status === 'pending');
+  if (s.phase === 'optional' || (go && s.phase !== 'active' && s.cursor.ex !== exIdx)) {
+    const resting = s.phase === 'rest' && session.rest;
+    comeUp(s, exIdx, idx);
+    // A rest that was running still counts, now as the rest between two sets of this exercise.
+    if (resting) {
+      const from = session.rest.startedAt;
+      s.phase = 'rest';
+      s.rest = { startedAt: from, endsAt: Math.max(from + ex.restSec * 1000, now), plannedSec: ex.restSec, betweenExercises: false };
+    }
+  }
+  return touch(s, now);
+}
+
+/**
+ * An exercise added by hand during the workout. It joins the end as an
+ * exercise of its own; with every set done it comes up at once. `entry` is a
+ * plan-style exercise: name, sets, reps, range, rest, weight.
+ */
+export function addExercise(session, entry, now = Date.now()) {
+  if (session.status !== 'active' || !entry?.exerciseId) return session;
+  if (session.exercises.some((x) => x.exerciseId === entry.exerciseId && x.sets.some((st) => st.status === 'pending'))) return session;
+  const s = clone(session);
+  let n = 1;
+  while (s.exercises.some((x) => x.key === `x${n}`)) n++;
+  const ex = sessionExercise({ ...entry, key: `x${n}`, optional: false, pair: null }, s.easePct || 0);
+  ex.added = true;
+  s.exercises.push(ex);
+  ev(s, now, 'exercise_add', ex.key);
+  if (s.phase === 'optional') comeUp(s, s.exercises.length - 1, 0);
   return touch(s, now);
 }
 
@@ -656,14 +755,18 @@ export function counts(s) {
 
 export function exerciseSummary(ex) {
   const done = ex.sets.filter((st) => st.status === 'done');
-  const skipped = ex.sets.filter((st) => st.status === 'skipped').length;
+  // Sets added by hand are extra work: listed with the rest, but not compared with the plan.
+  const own = ex.sets.filter((st) => !st.extra);
+  const extra = done.filter((st) => st.extra).length;
+  const skipped = own.filter((st) => st.status === 'skipped').length;
   const p0 = ex.sets[0].planned;
-  const sameReps = ex.sets.every((st) => st.planned.reps === p0.reps);
+  const sameReps = own.every((st) => st.planned.reps === p0.reps);
   const planLoad = p0.load != null || ex.loadType === 'bodyweight' ? ` at ${fmtLoadShort(ex.loadType, p0.load)}` : '';
-  const plan = `${ex.sets.length} × ${sameReps ? p0.reps : ex.sets.map((st) => st.planned.reps).join('/')}${planLoad}`;
+  const plan = `${own.length} × ${sameReps ? p0.reps : own.map((st) => st.planned.reps).join('/')}${planLoad}`;
   const notes = [];
   let short = 0; let over = 0; let lower = 0; let higher = 0;
   for (const st of done) {
+    if (st.extra) continue;
     short += Math.max(0, st.planned.reps - st.actual.reps);
     over += Math.max(0, st.actual.reps - st.planned.reps);
     if (st.planned.load != null && st.actual.load != null) {
@@ -686,6 +789,8 @@ export function exerciseSummary(ex) {
   if (skipped) notes.push(`${skipped} set${skipped === 1 ? '' : 's'} skipped`);
   if (ex.swappedFrom) notes.push(`Swapped in for ${ex.swappedFrom.name}`);
   if (ex.optional) notes.push('Optional extra');
+  if (ex.added) notes.push('Added by hand');
+  if (extra) notes.push(`${extra} extra set${extra === 1 ? '' : 's'}`);
   if (done.some((st) => st.actual.edited)) notes.push('Corrected by hand');
   let verdict = 'as planned';
   if (!done.length) verdict = 'skipped';
@@ -755,6 +860,8 @@ export function readLog(s) {
     else if (type === 'screen_on') text = 'Back on screen';
     else if (type === 'optional_offer') text = 'Planned sets done. Optional extras on offer';
     else if (type === 'optional_add') text = `${name(d[0])} added as an optional extra`;
+    else if (type === 'set_add') text = `${name(d[0])}: one more set added by hand`;
+    else if (type === 'exercise_add') text = `${name(d[0])} added by hand`;
     else if (type === 'end') text = 'Workout ended';
     if (text) out.push({ at: mmss(t), text });
   }

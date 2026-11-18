@@ -107,7 +107,15 @@ try {
   await page.getByTestId('weights-skip').click();
   const main = page.getByTestId('main-action');
   await main.waitFor();
-  const sketchSeen = (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch').catch(() => '')) === 'dumbbells';
+  const drawingSeen = (await page.getByTestId('motion').getAttribute('data-move').catch(() => '')) === 'bench_db' && (await page.getByTestId('motion').locator('animate').count()) > 0;
+  // A station that is taken, and work added by hand, all with the network off.
+  await page.getByTestId('busy').click();
+  const busyOk = await page.getByTestId('swap-other').isVisible() && (await page.getByTestId('busy-optional').count()) === 1;
+  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByTestId('more').click();
+  const canAdd = (await page.getByTestId('add-set').count()) >= 1 && (await page.getByTestId('add-exercise').count()) === 1;
+  await page.getByTestId('add-set').first().click();
+  const extraSets = await page.evaluate(() => { const s = JSON.parse(localStorage.getItem('seria.state.v1')); const w = s.sessions.find((x) => x.id === s.activeSessionId); return w.exercises[w.cursor.ex].sets.filter((x) => x.extra).length; });
   const words = [(await page.getByTestId('now-word').textContent()).trim()];
   for (const label of ['Start set', 'Finish set']) {
     await page.waitForFunction((l) => document.querySelector('[data-testid=main-action]')?.textContent.trim() === l, label, { timeout: 5000 });
@@ -115,7 +123,9 @@ try {
     await main.click();
   }
   check('the band at the top of the workout says what to do: "Ready", then "Train" while the set runs', words.join() === 'Ready,Train', words.join());
-  check('the workout shows a sketch of the equipment for the first exercise', false || sketchSeen);
+  check('the workout shows a drawing of how the first exercise is done, and it moves', drawingSeen);
+  check('"Machine busy?" offers an optional extra in the meantime, and any other exercise or machine', busyOk);
+  check('a set can be added by hand during the workout', canAdd && extraSets === 1, `${canAdd} ${extraSets}`);
   await page.getByTestId('rest-timer').waitFor({ timeout: 5000 });
   await page.reload();
   await page.getByTestId('rest-timer').waitFor({ timeout: 15000 });
@@ -143,11 +153,16 @@ try {
   await page.getByTestId('restore-plan').click();
   const back = await read();
   check('"Put the old plan back" undoes the rebuild', back.id === was.id && back.before === null && (await page.getByTestId('restore-plan').count()) === 0, JSON.stringify(back));
-  check('the release is version 1.9.0, and the coach is sent the workouts on record and where the cycle stands', await page.evaluate(async () => {
+  check('the release is version 1.10.0, and the coach is sent the workouts on record and where the cycle stands', await page.evaluate(async () => {
     const [v, p, s] = await Promise.all(['js/ui/prefs.js', 'js/ai/prompts.js', 'js/domain/schedule.js'].map((f) => fetch(f).then((r) => r.text())));
-    return v.includes("APP_VERSION = '1.9.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
+    return v.includes("APP_VERSION = '1.10.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
       && p.includes('where_the_cycle_stands') && p.includes('never swap one for variety alone') && s.includes('export function cycleNext')
       && p.includes('you are the coach: you decide what the training is') && p.includes('superset_with_next');
+  }));
+  check('the release has what 1.10 added: catch-up with the records, the whole plan after every workout, the abdominal machine, a move for every exercise', await page.evaluate(async () => {
+    const [g, p, c, m] = await Promise.all(['js/domain/progression.js', 'js/ai/prompts.js', 'js/domain/catalog.js', 'js/domain/moves.js'].map((f) => fetch(f).then((r) => r.text())));
+    return g.includes('export function catchUp') && p.includes('Second, the whole plan.') && p.includes('weekly_sets_in_the_plan') && c.includes("id: 'ab_machine'") && c.includes('Life Fitness')
+      && m.includes('export const MOVES') && m.includes('export function moveFor');
   }));
   await context.setOffline(false);
   // Back online: the offline worker's own file is not kept in the offline copy, so it is read from the network.
@@ -156,12 +171,18 @@ try {
     return a.includes("addEventListener('controllerchange'") && w.includes("cache: 'reload'") && w.includes("cache: 'no-cache'");
   }));
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Plan' }).click();
-  check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.9.0');
+  check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.10.0');
   // Progress in the exercise box: nothing while the target has not moved, then a step once the weight goes up.
   await page.getByTestId('plan-session').filter({ hasText: 'Upper body A' }).first().click();
   await page.getByTestId('start-day').waitFor({ timeout: 8000 });
   const box = page.getByTestId('day-exercise').first();
   const quiet = (await box.getByTestId('past').count()) === 0;
+  // Every exercise in the preview has its drawing: still until tapped, then it plays.
+  const pics = await page.getByTestId('day-exercise').count() === await page.locator('[data-testid=day-exercise] [data-testid=motion]').count();
+  const still = (await box.getByTestId('motion').getAttribute('data-on')) === '0';
+  await box.getByTestId('motion').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid=day-exercise] [data-testid=motion]')?.getAttribute('data-on') === '1', null, { timeout: 3000 }).catch(() => {});
+  check('every exercise in the session preview has a drawing of how it is done: still until tapped, then it plays', pics && still && (await box.getByTestId('motion').getAttribute('data-on')) === '1' && (await box.getByTestId('motion').locator('animate').count()) > 0);
   await box.getByTestId('edit-weight').click();
   await page.fill('#weight-value', '22');
   await page.getByTestId('weight-save').click();

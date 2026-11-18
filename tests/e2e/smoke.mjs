@@ -26,6 +26,7 @@ import { startMockAnthropic } from './mock-anthropic.mjs';
 import { startMockOpenAI } from './mock-openai.mjs';
 import { canned } from './canned.mjs';
 import { RULES_VERSION } from '../../js/domain/rules.js';
+import { exerciseSummary } from '../../js/domain/session.js';
 
 const SHOTS = process.argv.includes('--shots');
 const ONLY = (process.argv.find((x) => x.startsWith('--only=')) || '').slice(7); // one part by its letter, for a quick run
@@ -62,6 +63,8 @@ async function until(fn, ms = 3000) {
   }
 }
 const secs = (t) => { const [m, s] = t.trim().split(':').map(Number); return m * 60 + s; };
+/** The notes of a stored workout's exercises, in one line. */
+const S_summary = (session) => session.exercises.map((ex) => exerciseSummary(ex).notes.join(', ')).join(' | ');
 
 const app = await startServer(4311);
 const api = await startMockAnthropic(4312);
@@ -71,7 +74,7 @@ const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const phone = { ...devices['Pixel 7'] };
 
 async function newPage(opts = {}) {
-  const context = await browser.newContext({ ...phone, acceptDownloads: true, ...opts.context });
+  const context = await browser.newContext({ ...phone, acceptDownloads: true, reducedMotion: 'no-preference', ...opts.context });
   const page = await context.newPage();
   lastPage = page;
   const errors = [];
@@ -345,15 +348,30 @@ await guarded(async () => {
   const dayText = await page.locator('main').textContent();
   check('day preview: order, equipment, sets, reps, rest, how to pick the weight, time parts',
     /1\. Dumbbell bench press/.test(dayText) && /Dumbbells, Bench/.test(dayText) && /\d × \d+ reps/.test(dayText) && /rest 3:00 min/.test(dayText) && /You pick it in the first session/.test(dayText) && /warm-up 8, sets \d+, rests \d+, moving between stations \d+/.test(dayText), dayText.slice(0, 300));
-  check('each exercise in the preview has a sketch of its equipment', (await page.locator('main > ol svg.sketch').count()) === 4 && (await page.locator('main svg.sketch').first().getAttribute('data-sketch')) === 'dumbbells'
-    && (await page.locator('main svg.sketch').nth(1).getAttribute('data-sketch')) === 'barbell' && (await page.locator('main svg.sketch').first().getAttribute('aria-hidden')) === 'true');
+  // Every exercise has a drawing of how it is done. In a list it stands still, with the end of the move faint behind, until it is tapped.
+  const drawings = page.locator('main > ol [data-testid=motion]');
+  check('each exercise in the preview has a drawing of how it is done, standing still until tapped', (await drawings.count()) === 4 && (await drawings.first().getAttribute('data-move')) === 'bench_db'
+    && (await drawings.first().getAttribute('data-on')) === '0' && (await drawings.first().locator('animate').count()) === 0 && (await drawings.first().locator('.ghost').count()) > 0
+    && /^Play how Dumbbell bench press is done$/.test(await drawings.first().getAttribute('aria-label')));
+  await drawings.first().click();
+  check('a tap plays it: the figure and the dumbbell move, the equipment stays put', await until(async () => (await drawings.first().getAttribute('data-on')) === '1')
+    && (await drawings.first().locator('path.mv-b animate[attributeName=d]').count()) >= 1 && (await drawings.first().locator('circle.sk-mp animate').count()) === 2
+    && (await drawings.first().locator('.ghost').count()) === 0 && (await drawings.nth(1).getAttribute('data-on')) === '0');
+  const moved = await page.evaluate(async () => {
+    const hand = document.querySelector('main > ol [data-testid=motion] circle.sk-mp');
+    const y0 = hand.cy.animVal.value; await new Promise((r) => setTimeout(r, 900)); return Math.abs(hand.cy.animVal.value - y0);
+  });
+  check('and it really moves on screen', moved > 3, `moved ${moved}`);
+  await drawings.first().click();
+  check('a second tap stops it', await until(async () => (await drawings.first().getAttribute('data-on')) === '0'));
   await shot(page, '06-day');
 
   // --- workout: starting weight, set, result, rest
   await startWith(page, 'start-day');
   await main(page).waitFor();
   check('workout has its own screen without the tab bar', (await page.getByRole('navigation', { name: 'Main' }).count()) === 0);
-  check('a new exercise starts with a sketch of what to look for', (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch')) === 'dumbbells' && /General look of a dumbbell\. Yours may differ/.test(await page.getByTestId('sketch-note').textContent()));
+  check('a new exercise starts with a drawing of how it is done, playing by itself', (await page.getByTestId('motion').getAttribute('data-move')) === 'bench_db' && await until(async () => (await page.getByTestId('motion').getAttribute('data-on')) === '1' && (await page.getByTestId('motion').locator('animate').count()) > 0)
+    && /^How the move goes\. Tap the drawing to play it again\.$/.test(await page.getByTestId('sketch-note').textContent()), `${await page.getByTestId('motion').getAttribute('data-move')} on=${await page.getByTestId('motion').getAttribute('data-on')} ${await page.getByTestId('sketch-note').textContent()}`);
   check('no history: asks for a starting weight first', (await main(page).textContent()).trim() === 'Save starting weight' && await page.getByText('Choose your starting weight').isVisible());
   await shot(page, '07-starting-weight');
   await page.fill('#start-weight', '20'); await sleep(120);
@@ -364,7 +382,7 @@ await guarded(async () => {
   check('before the set: what to aim for, in words', new RegExp(`Stop at ${target}`).test(await page.getByTestId('effort').textContent()) && /last set is the one to push/.test(await page.getByTestId('effort').textContent()), await page.getByTestId('effort').textContent());
   await tap(page);
   check('"Start set" shows the active set', (await phase(page)) === 'active' && (await main(page).textContent()).trim() === 'Finish set' && Number(await page.getByTestId('draft-reps').textContent()) === target);
-  check('the sketch stays on the training screen during the set', await page.getByTestId('sketch').locator('svg[data-sketch=dumbbells]').isVisible());
+  check('the drawing stays on the training screen during the set', await page.getByTestId('motion').locator('svg').isVisible() && (await page.getByTestId('motion').getAttribute('data-move')) === 'bench_db');
   await page.getByRole('button', { name: '1 rep fewer' }).click();
   check('reps can be nudged by one while the set runs', await until(async () => Number(await page.getByTestId('draft-reps').textContent()) === target - 1));
   await shot(page, '08-set-active');
@@ -372,7 +390,7 @@ await guarded(async () => {
   await tap(page);
   st = await state(page);
   check('one tap on "Finish set" saves the set and starts the rest', (await phase(page)) === 'rest' && Date.now() - t0 < 1500 && st.sessions[0].exercises[0].sets[0].actual.reps === target - 1 && st.sessions[0].exercises[0].sets[0].actual.load === 20);
-  check('the sketch stays during the rest too', await page.getByTestId('sketch').locator('svg[data-sketch=dumbbells]').isVisible() && (await page.getByTestId('sketch-note').count()) === 0);
+  check('the drawing stays during the rest too', await page.getByTestId('motion').locator('svg').isVisible() && (await page.getByTestId('sketch-note').count()) === 0);
   const restSec = st.sessions[0].exercises[0].restSec;
   const shown = secs(await page.getByTestId('rest-timer').textContent());
   check('countdown starts from the planned rest', shown <= restSec && shown >= restSec - 3, `${shown} vs ${restSec}`);
@@ -445,14 +463,14 @@ await guarded(async () => {
 
   // --- finish exercise 1, next exercise, busy machine, later, overview, skip, drop
   await runWorkout(page, { stop: async () => (await state(page)).sessions[0].cursor.ex === 1 });
-  check('the next exercise comes with its own sketch', (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch')) === 'barbell' && /General look of a barbell/.test(await page.getByTestId('sketch-note').textContent()));
+  check('the next exercise comes with its own drawing', (await page.getByTestId('motion').getAttribute('data-move')) === 'row_bar' && /How the move goes/.test(await page.getByTestId('sketch-note').textContent()), await page.getByTestId('motion').getAttribute('data-move'));
   check('after the last set the screen shows the next exercise', (await page.locator('.eyebrow').first().textContent()) === 'Next exercise' && (await page.getByTestId('exercise-name').textContent()) !== 'Dumbbell bench press' && (await page.getByTestId('progress').textContent()).includes('Exercise 2 of'));
   const before = await page.getByTestId('exercise-name').textContent();
   await page.getByTestId('busy').click();
   const sheetText = await page.locator('.sheet').textContent();
   check('"Machine busy? Not now" offers to come back later, another exercise, or dropping it', /Come back to it later/.test(sheetText) && /Same movement/.test(sheetText) && /Drop it for today/.test(sheetText), sheetText.slice(0, 300));
   await shot(page, '11-swap');
-  await page.locator('.sheet button.row').first().click();
+  await page.getByTestId('sub-row').first().click();
   const swapped = await page.getByTestId('exercise-name').textContent();
   check('a busy station can be swapped for another exercise on available equipment', swapped !== before && (await page.locator('main').textContent()).includes(`swapped in for ${before}`), `${before} -> ${swapped}`);
   await page.getByTestId('busy').click();
@@ -1178,8 +1196,8 @@ await guarded(async () => {
   await main(page).waitFor();
   const about = page.getByTestId('machine-info');
   await about.locator('summary').click();
-  check('the sketch follows what was found about the machine: this one is loaded with plates', (await page.getByTestId('sketch').locator('svg').getAttribute('data-sketch')) === 'leg_press'
-    && /General look of a leg press, loaded with plates/.test(await page.getByTestId('sketch-note').textContent()));
+  check('the drawing follows what was found about the machine: this one is loaded with plates', (await page.getByTestId('motion').getAttribute('data-move')) === 'leg_press'
+    && /^How the move goes, on a machine loaded with plates\. Your machine may differ in detail\./.test(await page.getByTestId('sketch-note').textContent()), await page.getByTestId('sketch-note').textContent());
   check('the workout screen explains the machine you are on', (await page.getByTestId('exercise-name').textContent()) === 'Leg press' && /How it works: From the maker's page/.test(await about.textContent()) && /Loaded with: plates you load/.test(await about.textContent()));
   await shot(page, '27-workout-machine');
   await page.getByRole('button', { name: 'End workout' }).click();
@@ -1721,6 +1739,209 @@ await guarded(async () => {
   check('the model chose the supersets itself, and they are used as chosen, even one the app\'s own rule would not make', st.plan.days.every((d) => d.exercises[0].pair && d.exercises[0].pair === d.exercises[1].pair && d.exercises.slice(2).every((x) => !x.pair))
     && st.plan.days[1].exercises[0].pattern === 'squat' && st.plan.days[1].exercises[1].pattern === 'hinge', JSON.stringify(st.plan.days.map((d) => d.exercises.map((x) => `${x.pattern}:${x.pair || '-'}`))));
   check('no script errors in part I', errors.length === 0, errors.join(' | '));
+  await context.close();
+});
+
+// =====================================================================  J
+// A workout that goes its own way: a station that is taken, work added by hand, a
+// machine the app did not know. Then what follows from it: nothing a workout
+// earned is lost, and after every workout the whole plan is thought through.
+part = 'J own way';
+await guarded(async () => {
+  const { context, page, errors } = await newPage();
+  const from = api.state.requests.length;
+  const sent = (mode) => api.state.requests.slice(from).map((x) => { try { return JSON.parse(x.body.messages[0].content); } catch { return {}; } }).filter((x) => x.mode === mode);
+  const live = async () => { const st = await state(page); return st.sessions.find((x) => x.id === st.activeSessionId); };
+  await page.goto(`${BASE}#prefs`);
+  await page.fill('#api-key', 'sk-ant-test-key');
+  await page.locator('details summary').click();
+  await page.fill('#base-url', api.url);
+  await tab(page, 'Coach').click();
+  await say(page, 'Strength, a year in, three days a week, 50 minutes.');
+  await page.getByTestId('assumptions').waitFor();
+  await page.getByTestId('build-plan').click();
+  await page.getByTestId('open-plan').click();
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor();
+
+  // --- the station is taken: an optional extra in the meantime
+  await startWith(page, 'train-now');
+  await main(page).waitFor();
+  const firstName = (await page.getByTestId('exercise-name').textContent()).trim();
+  await page.getByTestId('busy').click();
+  const meantime = page.getByTestId('busy-optional');
+  check('"Machine busy?" offers the session\'s optional extras to do in the meantime', await meantime.isVisible() && /Hammer curl/.test(await meantime.textContent()) && /is next after it/.test(await meantime.textContent()), await page.locator('.sheet').textContent());
+  await meantime.getByTestId('optional-row').first().click();
+  let w = await live();
+  check('the extra comes up at once, and the exercise it pushed aside is next', (await page.getByTestId('exercise-name').textContent()).trim() === 'Hammer curl' && w.exercises[0].optional === true
+    && w.exercises[1].name === firstName && w.exercises[1].postponed === 1 && (await phase(page)) === 'ready', JSON.stringify(w.exercises.slice(0, 2).map((x) => x.name)));
+  await runWorkout(page, { stop: async () => { const x = await live(); return x.exercises[x.cursor.ex].name === firstName; } });
+  check('when the extra is done, the workout is back on that exercise', (await page.getByTestId('exercise-name').textContent()).trim() === firstName && /put off earlier/.test(await page.locator('main').textContent()));
+
+  // --- a machine the app did not know: named on the spot, used now, and kept
+  await page.getByTestId('busy').click();
+  await page.getByTestId('swap-other').click();
+  const picker = page.locator('.sheet');
+  check('any exercise the equipment allows can be picked, the same muscles first', /Do something else instead/.test(await picker.textContent()) && (await page.getByTestId('pick-row').count()) > 20
+    && (await picker.locator('.eyebrow').first().textContent()) === 'Chest' && !(await page.getByTestId('pick-row').allTextContents()).some((x) => x.startsWith(firstName)), await picker.locator('.eyebrow').allTextContents());
+  await page.fill('#pick-search', 'fly');
+  check('the list can be searched', await until(async () => (await page.getByTestId('pick-row').count()) >= 1 && (await page.getByTestId('pick-row').allTextContents()).every((x) => /fly/i.test(x))), (await page.getByTestId('pick-row').allTextContents()).join(' | '));
+  await page.fill('#pick-own-name', 'Iso-lateral chest press');
+  check('a machine that is not on the list starts out training the same movement', (await page.inputValue('#pick-own-pattern')) === 'push_h');
+  await page.getByTestId('pick-own-add').click();
+  await until(async () => (await page.getByTestId('exercise-name').textContent()).trim() === 'Iso-lateral chest press');
+  let st = await state(page);
+  w = await live();
+  const own = st.equipment.custom.find((c) => c.name === 'Iso-lateral chest press');
+  check('named on the spot, it is used now and saved with the equipment', !!own && own.pattern === 'push_h' && w.exercises[w.cursor.ex].exerciseId === `ex_${own.id}` && w.exercises[w.cursor.ex].swappedFrom.name === firstName
+    && (await page.getByTestId('motion').getAttribute('data-move')) === 'chest_press', JSON.stringify(st.equipment.custom));
+  await shot(page, '56-busy-own-machine');
+
+  // --- one more set, and another exercise, by hand
+  await runWorkout(page, { stop: async () => { const x = await live(); return x.exercises[x.cursor.ex].sets[0].status === 'done'; } });
+  const setsWas = (await live()).exercises[(await live()).cursor.ex].sets.length;
+  await page.getByTestId('more').click();
+  check('"Add a set or an exercise" says what extra work is', /never held against the plan/.test(await page.locator('.sheet').textContent()) && (await page.getByTestId('add-set').first().textContent()).trim() === 'One more set of Iso-lateral chest press');
+  await shot(page, '57-add-by-hand');
+  await page.getByTestId('add-set').first().click();
+  w = await live();
+  const mine = w.exercises[w.cursor.ex];
+  check('one more set joins the exercise, marked as extra', mine.sets.length === setsWas + 1 && mine.sets[setsWas].extra === true && mine.sets[setsWas].status === 'pending'
+    && /added/.test(await page.locator('.sets .set').last().textContent()), await page.locator('.sets').textContent());
+  await page.getByTestId('more').click();
+  await page.getByTestId('add-exercise').click();
+  await page.fill('#pick-search', 'crunch');
+  await page.getByTestId('pick-row').filter({ hasText: /^Crunch/ }).click();
+  w = await live();
+  check('another exercise joins the end of the workout, marked as added by hand', w.exercises[w.exercises.length - 1].exerciseId === 'crunch' && w.exercises[w.exercises.length - 1].added === true);
+  await page.getByTestId('progress').click();
+  check('the overview shows it, and offers to add more', /Crunch/.test(await page.getByTestId('overview').textContent()) && /added by hand/.test(await page.getByTestId('overview').textContent()) && await page.getByTestId('overview-add').isVisible());
+  await page.getByRole('button', { name: 'Close' }).click();
+
+  // --- after the workout: the whole plan
+  const lower = (await state(page)).plan.days[1];
+  await runWorkout(page);
+  if (await until(() => page.getByRole('button', { name: 'Finish and save' }).isVisible(), 1500)) await page.getByRole('button', { name: 'Finish and save' }).click();
+  await page.getByRole('heading', { name: 'Workout saved' }).waitFor();
+  await until(async () => (await state(page)).proposals.some((p) => p.mode === 'post_session' && !p.checking), 8000);
+  st = await state(page);
+  const done1 = st.sessions[0];
+  const review = sent('after_session').slice(-1)[0];
+  check('the review is sent the whole picture: every session of the plan, the workouts on record, the sets a week, the conversation',
+    review.current_plan.sessions.length === 3 && review.recent_workouts.length === 1 && review.weekly_sets_in_the_plan.by_muscle_group.Chest > 0 && Array.isArray(review.conversation)
+    && review.session.exercises.some((x) => x.added_by_hand) && review.session.exercises.some((x) => x.sets.some((y) => y.added_by_hand)), JSON.stringify(Object.keys(review)));
+  const lowerNow = st.plan.days[1];
+  check('its look at the whole plan reaches another session: what was added by hand joins the plan there', lowerNow.exercises.length === lower.exercises.length + 1 && lowerNow.exercises[1].exerciseId === 'crunch'
+    && lowerNow.exercises[1].sets === 2 && lowerNow.exercises[0].exerciseId === lower.exercises[0].exerciseId, JSON.stringify(lowerNow.exercises.map((x) => x.exerciseId)));
+  const summary = await page.locator('main').textContent();
+  check('the summary says what the look at the whole plan came to', /I went through the whole plan/.test(summary) && done1.settled === true, summary.slice(0, 300));
+  const extraLine = S_summary(done1);
+  check('the record keeps the extra work apart from the plan', extraLine.includes('1 extra set') && extraLine.includes('Added by hand'), extraLine);
+  await page.getByTestId('to-plan').click();
+
+  // --- the review can ask for the plan to be built anew
+  await daysPass(page, 3);
+  const planWas = (await state(page)).plan.id;
+  await startWith(page, 'train-now');
+  // Off the planned day the app says what it picked first; the workout starts from there.
+  if (await until(() => page.getByTestId('today-start').isVisible(), 1500)) await startWith(page, 'today-start');
+  await main(page).waitFor();
+  await page.getByTestId('more').click();
+  await page.getByTestId('add-exercise').click();
+  await page.fill('#pick-search', 'nordic');
+  await page.getByTestId('pick-row').first().click();
+  await page.getByTestId('progress').click();
+  await page.getByTestId('overview').getByRole('button', { name: /Nordic hamstring curl/ }).click();
+  await runWorkout(page, { stop: async () => { const x = await live(); return x.exercises.some((e) => e.added && e.sets[0].status === 'done'); } });
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Finish and save' }).click();
+  await page.getByRole('heading', { name: 'Workout saved' }).waitFor();
+  await until(async () => (await state(page)).plan.id !== planWas, 10000);
+  st = await state(page);
+  const build = sent('new_plan').slice(-1)[0];
+  check('when the review says the plan no longer fits, it is rebuilt at once, with the reason passed on', st.plan.id !== planWas && /built anew around it/.test(build.rebuild_reason || '')
+    && st.chat.some((m) => /^After your last workout I looked at the whole plan again and decided to rebuild it\./.test(m.text)) && st.planBefore?.plan.id === planWas, JSON.stringify([st.plan.id, build.rebuild_reason]));
+  check('the review of that workout stays on record, and the workout is not reviewed a second time against the new plan',
+    st.proposals.filter((p) => p.mode === 'post_session').length === 1 && st.proposals[0].sessionId === st.sessions[st.sessions.length - 1].id && sent('after_session').length === 2, JSON.stringify(st.proposals.map((p) => [p.mode, p.sessionId])));
+  await tab(page, 'Coach').click();
+  check('and the old plan can be put back', await until(() => page.getByTestId('restore-plan').isVisible(), 3000), JSON.stringify([(await state(page)).chat.slice(-3).map((m) => [m.kind, m.replaced, m.text.slice(0, 40)]), (await state(page)).sessions.map((x) => x.planId), (await state(page)).plan.id]));
+  check('no script errors in part J', errors.length === 0, errors.join(' | '));
+  await context.close();
+});
+
+// A second, short run with no model: the abdominal machine, and a plan that is brought level with the records.
+part = 'J level';
+await guarded(async () => {
+  const { context, page, errors } = await newPage();
+  await page.goto(BASE);
+  await tab(page, 'Equipment').click();
+  await page.getByTestId('add-machine').click();
+  check('the abdominal machine is on the list of machines to add', await page.locator('.sheet').getByRole('button', { name: /^Abdominal machine/ }).isVisible());
+  await page.fill('#gym-text', 'Abdominal from Life Fitness. A leg extension and an iso-lateral leg extension from Hammer Strength.');
+  await page.getByTestId('read-gym').click();
+  await page.getByTestId('gym-result').waitFor();
+  let st = await state(page);
+  const iso = st.equipment.custom.find((c) => /iso-lateral leg extension/i.test(c.name));
+  check('typed in plain words, the maker is noted and the variant is kept as a machine of its own', st.equipment.items.ab_machine === true && st.equipment.details.ab_machine.vendor === 'Life Fitness'
+    && st.equipment.items.leg_extension === true && !!iso && iso.pattern === 'knee_ext' && st.equipment.details[iso.id].vendor === 'Hammer Strength', await page.getByTestId('gym-result').textContent());
+  await page.getByRole('button', { name: 'Done' }).click();
+  await tab(page, 'Coach').click();
+  await say(page, "I want to build strength. I've trained for a year. I can come three times a week for 50 minutes.");
+  await page.getByText(/movements you want to skip/).waitFor();
+  await say(page, 'No, nothing.');
+  await page.getByTestId('assumptions').waitFor();
+  await page.getByTestId('build-plan').click();
+  await page.getByTestId('open-plan').click();
+  await page.getByRole('heading', { name: 'Your plan' }).waitFor();
+  await startWith(page, 'train-now');
+  await main(page).waitFor();
+  await runWorkout(page);
+  if (await until(() => page.getByRole('button', { name: 'Finish and save' }).isVisible(), 1500)) await page.getByRole('button', { name: 'Finish and save' }).click();
+  await page.getByRole('heading', { name: 'Workout saved' }).waitFor();
+  await page.getByTestId('to-plan').click();
+  st = await state(page);
+  const earned = st.proposals[0].changes.filter((c) => c.status === 'applied' && c.field === 'reps');
+  const name = earned[0]?.exerciseName;
+  const entry = (plan) => plan.days.flatMap((d) => d.exercises).find((x) => x.name === name);
+  const want = entry(st.plan).reps;
+  check('set-up: the workout earned a rep on some exercise, and its review settled it', earned.length > 0 && st.sessions[0].settled === true, JSON.stringify(st.proposals[0].changes.map((c) => [c.exerciseName, c.field, c.status])));
+  // The step is lost, the way a rebuild used to lose it: the reps are back at the bottom and no review is on record.
+  await page.evaluate((who) => {
+    const s = JSON.parse(localStorage.getItem('seria.state.v1'));
+    for (const d of s.plan.days) for (const ex of d.exercises) if (ex.name === who) ex.reps = ex.repLo;
+    s.proposals = []; s.plan.lastUpdate = null;
+    for (const x of s.sessions) delete x.settled;
+    localStorage.setItem('seria.state.v1', JSON.stringify(s));
+  }, name);
+  await page.reload();
+  await page.getByTestId('train-now').waitFor();
+  await until(async () => (await state(page)).plan.lastUpdate?.text, 3000);
+  st = await state(page);
+  check('on the next start the plan is brought level with the workout on record, and says so', entry(st.plan).reps === want && /^Caught up with your last workouts: /.test(st.plan.lastUpdate.text)
+    && st.plan.lastUpdate.text.includes(`${name} ${want} reps`) && st.sessions[0].settled === true && /Caught up with your last workouts/.test(await page.getByTestId('last-update').textContent()), JSON.stringify(st.plan.lastUpdate));
+  await shot(page, '58-caught-up');
+  const v = st.plan.version;
+  await page.reload();
+  await page.getByTestId('train-now').waitFor();
+  await sleep(300);
+  check('and only once', (await state(page)).plan.version === v);
+  // the session preview: the animated drawing for the plan's own machines
+  await openSession(page, st.plan.days[1].title);
+  await shot(page, '59-day-motion');
+  // A phone set to reduce motion: the drawing does not start by itself in a workout, and still plays on a tap.
+  const calm = await newPage({ context: { reducedMotion: 'reduce', storageState: await context.storageState() } });
+  await calm.page.goto(BASE);
+  await calm.page.getByTestId('train-now').waitFor();
+  await startWith(calm.page, 'train-now');
+  if (await until(() => calm.page.getByTestId('today-start').isVisible(), 1500)) await startWith(calm.page, 'today-start');
+  await main(calm.page).waitFor();
+  const pic = calm.page.getByTestId('motion');
+  await sleep(400);
+  const stoodStill = (await pic.getAttribute('data-on')) === '0' && (await pic.locator('animate').count()) === 0 && (await pic.locator('.ghost').count()) > 0;
+  await pic.click();
+  check('with "reduce motion" on, the drawing stands still until it is tapped', stoodStill && await until(async () => (await pic.getAttribute('data-on')) === '1'));
+  await calm.context.close();
+  lastPage = page;
+  check('no script errors in the second part of J', errors.length === 0, errors.join(' | '));
   await context.close();
 });
 
