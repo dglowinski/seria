@@ -1,9 +1,9 @@
 {
   "url": "https://dglowinski.github.io/seria/",
-  "ranAt": "2026-11-17T14:41:55.854Z",
+  "ranAt": "2026-11-18T09:09:45.131Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 21,
-  "passed": 21,
+  "total": 24,
+  "passed": 24,
   "results": [
     {
       "name": "the address answers over HTTPS",
@@ -102,6 +102,21 @@
     },
     {
       "name": "the new screens are in the release: weights, activities, the long view, optional extras, pairs, the model thinking",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "asking the coach for a new plan builds one, says which session is next, and keeps the old plan",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "\"Put the old plan back\" undoes the rebuild",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the release is version 1.4.0, and the coach is sent the workouts on record",
       "ok": true,
       "detail": ""
     },
