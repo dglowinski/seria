@@ -8,8 +8,9 @@ import { providerSays, ROOM } from '../js/ai/errors.js';
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT, LOOKUP_SYSTEM, interviewRequest, newPlanRequest, sessionRequest, equipmentRequest, lookupRequest, parseLookup, trainNowRequest, nextRunRequest, activityRequest } from '../js/ai/prompts.js';
 import { recommend, completeDay, queueState } from '../js/domain/schedule.js';
 import { askAgain, reviewRunning, setWeight } from '../js/ai/coach.js';
-import { userSays, buildPlan, canRestorePlan, restorePlan } from '../js/ai/coach.js';
-import { continueFrom } from '../js/domain/schedule.js';
+import { userSays, buildPlan, canRestorePlan, restorePlan, recentCount } from '../js/ai/coach.js';
+import { continueFrom, cycleNext } from '../js/domain/schedule.js';
+import { knownWeights, fillLoads } from '../js/domain/planner.js';
 import { emptyProfile, generatePlan, missingFields, units } from '../js/domain/planner.js';
 import { emptyEquipment, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail, machineForExercise, machineLabel, isAvailable, isListed, EQUIPMENT, allExercises, SKETCH_IDS, sketchForExercise, sketchForEquipment, EXERCISES } from '../js/domain/catalog.js';
 import { SKETCHES } from '../js/ui/sketch.js';
@@ -672,11 +673,18 @@ test('the coach is told where the training stands: the chat and a new plan both 
   // A rebuild: the plan it replaces, the records and the words that asked for it all go along.
   const b = JSON.parse(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights: st.weights, plan: st.plan, sessions: st.sessions, chat: [{ role: 'user', text: 'Please regenerate my plan' }, { role: 'coach', kind: 'notice', text: 'a notice' }], now }));
   assert.equal(b.mode, 'new_plan'); assert.equal(b.recent_workouts[0].title, 'Upper body A'); assert.ok(b.recent_workouts[0].exercises.length > 2);
-  assert.deepEqual(b.plan_being_replaced.list.done, ['d1']); assert.equal(b.next_session_of_that_plan.session_id, 'd2');
+  assert.deepEqual(b.plan_being_replaced.list.done, ['d1']);
+  // Where the cycle stands is said outright: what was trained last, what follows it, what has waited longest.
+  const w = b.where_the_cycle_stands;
+  assert.equal(w.last_workout.title, 'Upper body A'); assert.equal(w.last_workout.days_ago, 1); assert.ok(w.last_workout.trained.includes('Chest'));
+  assert.equal(w.next_in_the_cycle.title, 'Lower body A'); assert.ok(w.next_in_the_cycle.trains.includes('Quads'));
+  assert.ok(w.muscle_groups_rested_longest_first.indexOf('Quads') < w.muscle_groups_rested_longest_first.indexOf('Chest'));
+  assert.deepEqual(w.workouts_newest_first, [{ title: 'Upper body A', days_ago: 1 }]);
   assert.deepEqual(b.conversation, [{ from: 'user', text: 'Please regenerate my plan' }]);
   // A first plan has nothing to carry on from, and the request shows that plainly.
   const c = JSON.parse(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights: {} }));
-  assert.equal(c.plan_being_replaced, null); assert.deepEqual(c.recent_workouts, []); assert.equal(c.workouts_on_record, 0);
+  assert.equal(c.plan_being_replaced, null); assert.deepEqual(c.recent_workouts, []); assert.equal(c.workouts_on_record, 0); assert.equal(c.where_the_cycle_stands, null);
+  assert.ok(/Start the plan where the cycle stands/.test(SYSTEM_PROMPT) && /never swap one for variety alone/.test(SYSTEM_PROMPT));
   assert.ok(/carry on from the records/.test(SYSTEM_PROMPT) && /set rebuild_plan to true/.test(SYSTEM_PROMPT) && /never say you cannot see the history/.test(SYSTEM_PROMPT));
   assert.equal(OUTPUT_SCHEMA.properties.rebuild_plan.type, 'boolean');
   assert.equal(tidy({ rebuild_plan: true }).rebuild_plan, true); assert.equal(tidy({ rebuild_plan: 'yes' }).rebuild_plan, false);
@@ -747,4 +755,72 @@ test('rebuild: the new plan starts after the last workout, keeps reps and weight
   st = store.getState();
   assert.equal(st.planBefore, null); assert.ok(!st.chat.slice(-1)[0].replaced); assert.match(st.chat.slice(-1)[0].text, /^Here is my proposal: the next 6 sessions/);
   assert.equal(st.plan.lastUpdate, undefined);
+});
+
+const eveningAgo = (days) => { const d = new Date(); d.setDate(d.getDate() - days); d.setHours(18, 0, 0, 0); return d.getTime(); };
+
+test('where the cycle stands is read from all the recent workouts, not only the last one', () => {
+  settledApp();
+  const a = train('d1', () => null, eveningAgo(3)); // Upper body A
+  const b = train('d2', () => null, eveningAgo(1)); // Lower body A
+  const st = store.getState();
+  const fresh = generatePlan(st.profile, st.equipment, st.weights);
+  const title = (i) => fresh.days[i]?.title;
+  // Upper A and lower A are done, in that order: the cycle goes on with the full-body session, not back to the top.
+  assert.equal(title(cycleNext(fresh, [a, b])), 'Full body A');
+  assert.equal(queueState(continueFrom(fresh, [a, b])).queue[0].title, 'Full body A');
+  // A model that opens with upper A again: its muscles have waited longest, so its order may stand...
+  assert.equal(continueFrom(fresh, [a, b], Date.now(), { gentle: true }), fresh);
+  // ...but not when it opens with the session trained last.
+  const lowerFirst = { ...fresh, days: [fresh.days[1], fresh.days[0], ...fresh.days.slice(2)], queue: undefined };
+  assert.notEqual(queueState(continueFrom(lowerFirst, [a, b], Date.now(), { gentle: true })).queue[0].title, 'Lower body A');
+  // A few test sets today do not hide yesterday's real workout.
+  const tiny = { ...a, id: 'tiny', startedAt: Date.now() - 3600e3, exercises: a.exercises.map((ex, i) => ({ ...ex, sets: ex.sets.map((x, j) => (i === 0 && j === 0 ? x : { ...x, status: 'skipped', actual: null })) })) };
+  const upperYesterday = { ...a, startedAt: eveningAgo(1) };
+  assert.equal(title(cycleNext(fresh, [upperYesterday, tiny])), 'Lower body A');
+  // Half a session still counts as that session trained.
+  const half = { ...upperYesterday, exercises: upperYesterday.exercises.map((ex, i) => (i < 2 ? ex : { ...ex, sets: ex.sets.map((x) => ({ ...x, status: 'skipped', actual: null })) })) };
+  assert.equal(title(cycleNext(fresh, [half])), 'Lower body A');
+  assert.equal(cycleNext(fresh, []), -1); assert.equal(cycleNext(fresh, [a], Date.now() + 20 * 864e5), -1);
+});
+
+test('weights: what the records show is never lost, on load or in a new plan, and a truly new exercise is named', async () => {
+  settledApp();
+  const s = train('d1', () => null, eveningAgo(1));
+  let st = store.getState();
+  const lifted = s.exercises.filter((x) => x.loadType !== 'bodyweight').map((x) => x.exerciseId);
+  assert.ok(lifted.length >= 3);
+  // Saved data whose list of weights has holes, and whose plan lost them: loading puts both right from the workouts.
+  const holed = JSON.parse(JSON.stringify(st));
+  holed.weights = {};
+  for (const d of holed.plan.days) for (const ex of d.exercises) if (ex.loadType !== 'bodyweight') ex.load = null;
+  const back = hydrate(holed);
+  assert.ok(lifted.every((id) => back.weights[id].value === 20 && back.weights[id].by === 'records'), JSON.stringify(back.weights));
+  assert.ok(back.plan.days[0].exercises.filter((x) => lifted.includes(x.exerciseId)).every((x) => x.load.value === 20));
+  // The saved list wins over the records, and the plan over old workouts.
+  const k = knownWeights({ [lifted[0]]: { value: 30, step: 2 } }, [s], { days: [{ exercises: [{ exerciseId: lifted[1], loadType: 'dumbbell', load: { value: 24, step: 2 } }] }] });
+  assert.equal(k[lifted[0]].value, 30); assert.equal(k[lifted[1]].value, 24); assert.equal(k[lifted[2]].value, 20);
+  assert.equal(fillLoads(st.plan, st.weights), st.plan, 'nothing missing, nothing touched');
+  // A rebuild from data with holes still comes back with every weight the workouts show.
+  store.replaceState(holed);
+  await buildPlan();
+  st = store.getState();
+  const entries = st.plan.days.flatMap((d) => d.exercises);
+  assert.ok(entries.filter((x) => lifted.includes(x.exerciseId)).every((x) => x.load?.value === 20), 'weights from the workouts are in the new plan');
+  const blank = [...new Set(entries.filter((x) => !x.load && x.loadType !== 'bodyweight').map((x) => x.name))];
+  assert.ok(blank.length > 0, 'exercises never done have no weight');
+  const said = st.chat.slice(-1)[0].text;
+  assert.match(said, /new to you, so (it has|they have) no weight yet: /);
+  for (const name of blank) assert.ok(said.includes(name), name);
+  assert.ok(/never swap one for variety alone/.test(SYSTEM_PROMPT) && /so its weight in known_loads carries over/.test(SYSTEM_PROMPT));
+});
+
+test('coach screen: only the conversation in progress shows, back to the last long pause', () => {
+  const t = Date.now();
+  const msg = (minAgo) => ({ at: t - minAgo * 60000, text: 'x' });
+  assert.equal(recentCount([]), 0);
+  assert.equal(recentCount([msg(1)]), 1);
+  assert.equal(recentCount(Array.from({ length: 30 }, (_, i) => msg(30 - i))), 4, 'four at most');
+  assert.equal(recentCount([msg(600), msg(599), msg(3), msg(2), msg(1)]), 3, 'yesterday stays out');
+  assert.equal(recentCount([msg(600), msg(599), msg(1)]), 2, 'a lone new message keeps the one before it in view');
 });

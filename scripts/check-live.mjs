@@ -144,10 +144,17 @@ try {
   await page.getByTestId('restore-plan').click();
   const back = await read();
   check('"Put the old plan back" undoes the rebuild', back.id === was.id && back.before === null && (await page.getByTestId('restore-plan').count()) === 0, JSON.stringify(back));
-  check('the release is version 1.4.0, and the coach is sent the workouts on record', await page.evaluate(async () => {
+  check('the release is version 1.5.0, and the coach is sent the workouts on record and where the cycle stands', await page.evaluate(async () => {
     const [v, p, s] = await Promise.all(['js/ui/prefs.js', 'js/ai/prompts.js', 'js/domain/schedule.js'].map((f) => fetch(f).then((r) => r.text())));
-    return v.includes("APP_VERSION = '1.4.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan') && s.includes('export function continueFrom');
+    return v.includes("APP_VERSION = '1.5.0'") && p.includes('plan_being_replaced') && p.includes('recent_workouts: done.slice') && p.includes('rebuild_plan')
+      && p.includes('where_the_cycle_stands') && p.includes('never swap one for variety alone') && s.includes('export function cycleNext');
   }));
+  check('a new release loads by itself, and is fetched past the browser cache', await page.evaluate(async () => {
+    const [a, w] = await Promise.all(['js/app.js', 'sw.js'].map((f) => fetch(f).then((r) => r.text())));
+    return a.includes("addEventListener('controllerchange'") && w.includes("cache: 'reload'") && w.includes("cache: 'no-cache'");
+  }));
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Plan' }).click();
+  check('the plan screen shows the version that is running', (await page.getByTestId('app-version').textContent().catch(() => '')).trim() === 'Seria 1.5.0');
   await context.setOffline(false);
   check('no script errors', errors.length === 0, errors.join(' | '));
 } catch (e) {

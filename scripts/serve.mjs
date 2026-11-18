@@ -12,6 +12,10 @@ const TYPES = {
   '.png': 'image/png', '.svg': 'image/svg+xml', '.md': 'text/markdown; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
 };
 
+// Tests can pretend a new release came out: the offline worker is then served under another version name.
+let swVersion = null;
+export const setSwVersion = (name) => { swVersion = name; };
+
 export function startServer(port = PORT) {
   return new Promise((ready) => {
     const server = createServer(handle).listen(port, '127.0.0.1', () => ready(server));
@@ -24,7 +28,8 @@ async function handle(req, res) {
     let file = normalize(join(ROOT, path));
     if (file !== ROOT && !file.startsWith(ROOT + sep)) { res.writeHead(403).end('Forbidden'); return; }
     if ((await stat(file)).isDirectory()) file = join(file, 'index.html');
-    const body = await readFile(file);
+    let body = await readFile(file);
+    if (swVersion && path === '/sw.js') body = Buffer.from(String(body).replace(/const VERSION = '[^']*';/, `const VERSION = '${swVersion}';`));
     res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream', 'cache-control': 'no-store' }).end(body);
   } catch {
     res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');

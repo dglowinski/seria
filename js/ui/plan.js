@@ -13,6 +13,7 @@ import { RULES_VERSION, ACTIVITIES, EFFORTS, SCHEDULE, activityGroups } from '..
 import { undoChange, redoChange, editChange, recordUpdate, reviewEquipment, startTraining, reviewToday, logActivity, reviewWaiting, reviewRunning, askAgain, canRestorePlan, restorePlan } from '../ai/coach.js';
 import { sourceName, aiReady, aiName } from '../ai/ai.js';
 import { primeAudio } from '../platform.js';
+import { APP_VERSION } from './prefs.js';
 import { WeightSheet, WeightsFirst } from './weights.js';
 
 /**
@@ -253,6 +254,7 @@ export function PlanScreen() {
       </details>
       <p class="muted small">Built ${plan.source === 'rules' ? 'from the training rules' : `by ${sourceName(plan.source)}`} · rules v${plan.rulesVersion || RULES_VERSION} · plan v${plan.version}.
         ${' '}<a class="link" href="#coach">Change it with the coach</a></p>
+      <p class="muted small" data-testid="app-version">Seria ${APP_VERSION}</p>
     </main>
     <${Dock} aboveTabs>
       <button class="cta" data-testid="train-now" onClick=${trainNow}>${active ? 'Resume workout' : 'Train now'}</button>

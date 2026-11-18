@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-11-18T09:08:46.363Z",
+  "ranAt": "2026-11-18T09:32:11.846Z",
   "browser": "Google Chrome (headless), Pixel 7 profile",
-  "total": 292,
-  "passed": 292,
+  "total": 300,
+  "passed": 300,
   "failed": 0,
   "results": [
     {
@@ -1165,6 +1165,30 @@
     },
     {
       "part": "D install and offline",
+      "name": "a new release is fetched in the background and does not reload the app under a workout",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "it loads by itself once the workout is over, and says so",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "with nothing in progress a new release loads at once: no second refresh needed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
+      "name": "the plan screen shows which version is running",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "D install and offline",
       "name": "no script errors in part D",
       "ok": true,
       "detail": ""
@@ -1699,6 +1723,12 @@
     },
     {
       "part": "I coach and history",
+      "name": "and is told outright where the cycle stands: what was trained last, what follows it, what has waited longest",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
       "name": "the coach says what it is about to do, from the records",
       "ok": true,
       "detail": ""
@@ -1748,6 +1778,24 @@
     {
       "part": "I coach and history",
       "name": "a plan the model sends in the chat itself becomes the plan, with no second request",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "the coach screen shows only the last few messages; the rest are a tap away",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "\"Show earlier messages\" brings them back, above the ones on screen",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "part": "I coach and history",
+      "name": "\"Clear chat\" empties the chat and leaves the plan alone",
       "ok": true,
       "detail": ""
     },

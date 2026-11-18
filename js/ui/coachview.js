@@ -1,14 +1,19 @@
 // Coach tab: a chat that fills in the profile, shows its assumptions before
 // building a plan, and takes typed or spoken answers. Speech lands in the text
 // field first so it can be fixed before sending.
+//
+// The screen shows the conversation in progress, not the whole history: the
+// last few messages, back to the last long pause. Earlier ones are a tap away.
 
 import { html, useState, useEffect, useRef, useStore, useSignal, Dock, Icon, go, toast } from './kit.js';
 import * as store from '../store.js';
 import { buildAssumptions, missingFields } from '../domain/planner.js';
-import { userSays, buildPlan, isBusy, onBusy, GREETING, canRestorePlan, restorePlan } from '../ai/coach.js';
+import { userSays, buildPlan, isBusy, onBusy, GREETING, canRestorePlan, restorePlan, recentCount } from '../ai/coach.js';
 import { aiStatus, sourceName } from '../ai/ai.js';
 import { useVoiceInput } from './voice.js';
 import { ChangeCard } from './plan.js';
+
+const STEP = 10; // "show earlier" brings back this many at a time
 
 function Assumptions({ live }) {
   const state = store.getState();
@@ -27,6 +32,9 @@ export function CoachScreen() {
   const state = useStore();
   useSignal(onBusy);
   const [text, setText] = useState('');
+  const [more, setMore] = useState(0); // earlier messages brought back by hand
+  const [clearing, setClearing] = useState(false);
+  const keep = useRef(null); // distance from the bottom to hold while earlier messages are added above
   const box = useRef(null);
   const busy = isBusy();
   const status = aiStatus();
@@ -34,6 +42,8 @@ export function CoachScreen() {
 
   // Scroll the page itself, so the newest message clears the composer docked at the bottom.
   useEffect(() => { window.scrollTo(0, document.documentElement.scrollHeight); }, [state.chat.length, busy]);
+  // Earlier messages appear above the ones on screen, which stay where they are.
+  useEffect(() => { if (keep.current != null) { window.scrollTo(0, document.documentElement.scrollHeight - keep.current); keep.current = null; } }, [more]);
   useEffect(() => { const el = box.current; if (el) { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight + 2, 160)}px`; } }, [text]);
 
   const send = (t) => {
@@ -41,15 +51,23 @@ export function CoachScreen() {
     if (!msg || busy) return;
     stopVoice();
     setText('');
+    setMore(0); // back to the conversation in progress
+    setClearing(false);
     userSays(msg);
   };
+  const earlier = () => { keep.current = document.documentElement.scrollHeight - window.scrollY; setMore(more + STEP); };
+  const clear = () => { store.set({ chat: [] }); setMore(0); setClearing(false); toast('Chat cleared. Your plan and workouts are untouched'); };
 
-  const chat = state.chat;
-  const lastAssumptions = [...chat].reverse().find((m) => m.kind === 'assumptions')?.id;
+  const all = state.chat;
+  const shown = Math.min(all.length, recentCount(all) + more);
+  const hidden = all.length - shown;
+  const chat = all.slice(all.length - shown);
+  const lastAssumptions = [...all].reverse().find((m) => m.kind === 'assumptions')?.id;
+  const lastPlan = [...all].reverse().find((m) => m.kind === 'plan')?.id;
   // A rebuild can be taken back from the message that announced it, until a workout is done on the new plan.
-  const undoAt = canRestorePlan(state) ? [...chat].reverse().find((m) => m.kind === 'plan')?.id : null;
-  const lastCoach = [...chat].reverse().find((m) => m.role === 'coach' && m.kind !== 'notice');
-  const chips = !busy && chat[chat.length - 1]?.role === 'coach' ? (lastCoach?.chips || []) : [];
+  const undoAt = canRestorePlan(state) ? [...all].reverse().find((m) => m.kind === 'plan')?.id : null;
+  const lastCoach = [...all].reverse().find((m) => m.role === 'coach' && m.kind !== 'notice');
+  const chips = !busy && all[all.length - 1]?.role === 'coach' ? (lastCoach?.chips || []) : [];
 
   return html`
     <main class="main with-tabs" style="padding-bottom:calc(var(--tabs-h) + 150px + env(safe-area-inset-bottom, 0px))">
@@ -61,12 +79,19 @@ export function CoachScreen() {
         <span class="small muted" data-testid="ai-status">${status.label}</span>
         <span class="small accent">${status.kind === 'none' ? 'Connect an AI' : 'Change'}</span>
       </button>
+      ${all.length > 2 && html`<div class="chips" data-testid="chat-tools">
+        ${hidden > 0 && html`<button class="chip" data-testid="chat-earlier" onClick=${earlier}>Show earlier messages (${hidden})</button>`}
+        ${!clearing && html`<button class="chip" data-testid="chat-clear" onClick=${() => setClearing(true)}>Clear chat</button>`}
+        ${clearing && html`<span class="small muted">Clear the whole chat? Your plan, workouts and weights stay.</span>
+          <button class="chip accent" data-testid="chat-clear-yes" onClick=${clear}>Clear it</button>
+          <button class="chip" onClick=${() => setClearing(false)}>Keep it</button>`}
+      </div>`}
       <div class="chat" aria-live="polite">
-        <p class="bubble" data-role="coach">${GREETING}</p>
+        ${!all.length && html`<p class="bubble" data-role="coach">${GREETING}</p>`}
         ${chat.map((m) => html`
           ${m.text && html`<p class=${`bubble ${m.role === 'user' ? 'reply' : ''} ${m.kind === 'notice' ? 'notice' : ''}`} data-role=${m.role}>${m.text}${m.via && m.via !== 'rules' ? html`<span class="via">${sourceName(m.via)}</span>` : ''}</p>`}
-          ${m.kind === 'assumptions' && html`<${Assumptions} live=${m.id === lastAssumptions} />`}
-          ${m.kind === 'plan' && html`<button class="cta card" data-testid="open-plan" onClick=${() => go('plan')}>Open my plan</button>`}
+          ${m.kind === 'assumptions' && m.id === lastAssumptions && html`<${Assumptions} live />`}
+          ${m.kind === 'plan' && m.id === lastPlan && html`<button class="cta card" data-testid="open-plan" onClick=${() => go('plan')}>Open my plan</button>`}
           ${m.kind === 'plan' && m.replaced && m.id === undoAt && html`<button class="cta ghost card" data-testid="restore-plan" disabled=${busy} onClick=${() => { if (restorePlan()) toast('The old plan is back'); }}>Put the old plan back</button>`}
           ${m.kind === 'proposal' && (state.proposals.find((p) => p.id === m.proposalId)?.changes || []).map((c) => html`<${ChangeCard} key=${c.id} p=${{ id: m.proposalId }} c=${c} />`)}
         `)}

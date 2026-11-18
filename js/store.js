@@ -5,7 +5,7 @@
 // Device settings (API key, sound...) live under a second key and are never
 // exported or synced.
 
-import { emptyProfile, upgradePlan, fillOptional, fillPairs } from './domain/planner.js';
+import { emptyProfile, upgradePlan, fillOptional, fillPairs, knownWeights, fillLoads } from './domain/planner.js';
 import { emptyEquipment } from './domain/catalog.js';
 
 const KEY = 'seria.state.v1';
@@ -73,6 +73,8 @@ export function hydrate(raw) {
   s.plan = upgradePlan(s.plan); // plans saved before cycles existed keep their sessions and gain a cycle
   if (!s.weights || typeof s.weights !== 'object') s.weights = {};
   if (!s.planBefore?.plan?.days) s.planBefore = null;
+  // Weights the workouts on record show but the saved list lacks are put back, and the plan gets them.
+  try { s.weights = knownWeights(s.weights, s.sessions, s.plan); if (s.plan) s.plan = fillLoads(s.plan, s.weights); } catch { /* the data stays as saved */ }
   // A plan saved before optional extras existed gets them here, picked by the rules; one that has them keeps them.
   if (s.plan) { try { s.plan = fillPairs(fillOptional(s.plan, s.profile, s.equipment, s.weights), s.profile); } catch { /* the plan stays as saved */ } }
   s.schema = SCHEMA;

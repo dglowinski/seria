@@ -1,7 +1,7 @@
 // App shell: top bar, the current screen, the tab bar, and start-up.
 
 import { render } from '../vendor/preact-htm.js';
-import { html, useEffect, useStore, useRoute, useSignal, Icon, Toast, go, back, parseHash } from './ui/kit.js';
+import { html, useEffect, useStore, useRoute, useSignal, Icon, Toast, go, back, parseHash, toast } from './ui/kit.js';
 import * as store from './store.js';
 import { initRuntime, askPersistence, inViewer } from './platform.js';
 import { startCloud, cloud, onCloud } from './cloud.js';
@@ -9,10 +9,10 @@ import { PlanScreen, DayScreen, ReviewScreen } from './ui/plan.js';
 import { CoachScreen } from './ui/coachview.js';
 import { HistoryScreen, SessionScreen } from './ui/history.js';
 import { EquipmentScreen } from './ui/equipment.js';
-import { PrefsScreen, RulesScreen } from './ui/prefs.js';
+import { PrefsScreen, RulesScreen, APP_VERSION } from './ui/prefs.js';
 import { Workout } from './ui/workout.js';
 import { WeightsScreen } from './ui/weights.js';
-import { retryPending, reviewEquipment } from './ai/coach.js';
+import { retryPending, reviewEquipment, isBusy, reviewRunning } from './ai/coach.js';
 
 const TABS = [['plan', 'Plan'], ['coach', 'Coach'], ['history', 'History'], ['equipment', 'Equipment']];
 const TAB_OF = { plan: 'plan', day: 'plan', review: 'plan', weights: 'plan', coach: 'coach', history: 'history', session: 'history', equipment: 'equipment' };
@@ -84,13 +84,45 @@ function App() {
     <${Toast} />`;
 }
 
+const UPDATED = 'seria.updated';
+
+/**
+ * Offline support, and new versions. The offline copy answers first, so a new
+ * release used to show only on the second start after it: one refresh still
+ * ran the old code. Now the page loads the new version by itself as soon as it
+ * is ready. It waits while a workout is on, the coach is answering, or
+ * something is being typed, and then loads at the next quiet moment.
+ */
+function startOffline() {
+  const sw = navigator.serviceWorker;
+  const had = !!sw.controller; // none on the very first visit: that is an install, not an update
+  let ready = false;
+  const typing = () => { const el = document.activeElement; return !!el && /^(INPUT|TEXTAREA)$/.test(el.tagName) && !!el.value; };
+  const load = () => {
+    if (!ready || store.activeSession() || isBusy() || reviewRunning() || typing()) return;
+    ready = false;
+    try { sessionStorage.setItem(UPDATED, '1'); } catch { /* the note is only a courtesy */ }
+    location.reload();
+  };
+  sw.addEventListener('controllerchange', () => { if (had) { ready = true; load(); } });
+  window.addEventListener('hashchange', load);
+  // Coming back to the app is a good moment to look for a new version, and to load one that waited.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    load();
+    sw.getRegistration().then((reg) => reg?.update()).catch(() => {});
+  });
+  sw.register('./sw.js').catch(() => {});
+}
+
 const boot = () => {
   render(html`<${App} />`, document.getElementById('app'));
   initRuntime().then(startCloud);
   askPersistence();
   // Offline support, only where a service worker can run and is wanted.
   const wantSw = !inViewer && 'serviceWorker' in navigator && (location.protocol === 'https:' || new URLSearchParams(location.search).has('sw'));
-  if (wantSw) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if (wantSw) startOffline();
+  try { if (sessionStorage.getItem(UPDATED)) { sessionStorage.removeItem(UPDATED); setTimeout(() => toast(`Updated to Seria ${APP_VERSION}`), 400); } } catch { /* no note then */ }
 };
 
 // Inside claude.ai the viewer may hand over a newer version of the page; state is in storage, so just start.

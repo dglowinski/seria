@@ -43,6 +43,7 @@ const shots = [
   ['33-next-run', 'The next run', 'When the list is done, the coach plans what comes next from your results.'],
   ['50-rebuild-chat', 'Ask for a new plan', 'It is built at once, from your workouts too. It starts after the last one, and the old plan can be put back.'],
   ['51-rebuild-plan', 'A rebuild, on the plan', 'The plan says it was rebuilt, by whom, and which session is next.'],
+  ['52-chat-short', 'A short chat', 'The coach screen shows the conversation in progress. Earlier messages are a tap away.'],
   ['06-day', 'Session preview', 'Order, equipment, sets, reps, rest, and how the time adds up.'],
   ['40-day-optional', 'Optional extras', 'Each session lists up to two extras for the end, with the reason each one fits.'],
   ['44-pairs-switch', 'Pairs: one switch', 'On the Plan tab. It says what pairing saves, and what it costs: harder sets, two stations.'],
@@ -115,6 +116,14 @@ const v11 = [
   ['Changes are made, not proposed.', 'After a workout, from the chat and when equipment changes, the plan is updated without asking. "What changed" lists every change with its reason, an Undo and an Edit.'],
   ['A signal with the screen off.', 'A web page cannot vibrate behind a dark screen, so the app sends a notification when the rest ends (stand-alone app). The beep is scheduled ahead on the audio clock. Settings has a test button. Not tried on a real phone.'],
   ['The long view.', 'A plain-words outlook on the Plan tab: what this round holds, how it gets harder, what changes round to round, what happens when it stalls, and what would be added with more time. A connected model adds its own.'],
+];
+
+// Version 1.5: a new plan that starts in the right place, with its weights; a short chat; updates that arrive.
+const v15 = [
+  ['Why 1.4 seemed to change nothing.', 'The app starts from its offline copy and fetches a new release in the background, so one refresh after a release still ran the old code. The app now reloads once by itself when the new version is ready (never under a workout, an answer or typed text), fetches releases past the browser\'s own cache, and shows the version it is running at the bottom of the Plan tab.'],
+  ['A new plan starts where the cycle stands.', 'The app works out which session comes next from the workouts on record: the one after the session trained last, skipping any that would repeat it. The model is told this outright (what was trained last, what follows it, which muscle groups have waited longest) and instructed to open with that. The app then checks the answer and turns the list if it still opens with a repeat.'],
+  ['Weights are not lost in a new plan.', 'Weights are gathered from the saved list, the plan and the last load lifted in any recorded workout, and all of them go into a new plan. Holes in saved data are repaired when the app loads. The model is told to keep the exercises you are doing and not to swap one for variety, since a new exercise starts with no weight. One that really is new is named in the coach\'s message.'],
+  ['The coach screen stays short.', 'It shows the conversation in progress: the last four messages at most, back to the last long pause, with one "Open my plan" button and one summary card. "Show earlier messages" brings back the rest above them; "Clear chat" empties it and leaves the plan and the workouts alone.'],
 ];
 
 // Version 1.4: the coach and the workouts on record.
@@ -293,6 +302,12 @@ ol.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; 
       <div class="rowx head"><span>The design says</span><span>Status</span><span>The app does</span></div>
       ${spec.map(([a, s, b]) => `<div class="rowx"><span>${esc(a)}</span><span><span class="pill ${s === 'changed' ? 'mostly' : s}">${s === 'done' ? 'Done' : s === 'changed' ? 'Changed' : 'Mostly'}</span></span><span class="muted">${esc(b)}</span></div>`).join('\n      ')}
     </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">New in version 1.5</p>
+    <h2>A new plan that starts in the right place, a short chat, updates that arrive</h2>
+    <div>${v15.map(([a, b]) => `<div class="pair"><b>${esc(a)}</b><span class="muted">${esc(b)}</span></div>`).join('')}</div>
   </section>
 
   <section>

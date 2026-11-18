@@ -24,6 +24,8 @@ Open <https://dglowinski.github.io/seria/> in Chrome on the phone. Then ⋮ menu
 - keeps data in the phone's browser. Use Settings, "Save a backup file" now and then,
 - uses Claude or OpenAI with your own API key, pasted in Settings. Without a key the built-in coach and the training rules do the job.
 
+**New versions load by themselves.** The app starts from its offline copy, fetches a new release in the background, and then reloads once to run it, unless a workout is on, the coach is answering or you are typing; then it waits for the next quiet moment. The version that is running is shown at the bottom of the Plan tab and in Settings.
+
 It is served by GitHub Pages from this repository. Every push to `main` runs the unit tests and then publishes the app files (`.github/workflows/pages.yml`). Tests, scripts and the report are not published. The folder has no build step, so any other static HTTPS host works too.
 
 ## How the plan works
@@ -35,7 +37,8 @@ The plan is a running list, not a calendar: train this, rest a day, train that, 
 - **It moves as you train.** After each workout the plan is updated for you: weights, reps, the order of what is left and the rest days. Nothing waits to be accepted. You get a summary in words and a list of what changed and why, and you can undo any change or correct its number ("What changed" on the Plan tab).
 - **A full cycle is always on show.** A session you finish moves to the end of the list, with its numbers already updated, so you see when it comes round again.
 - **The coach knows what you have done.** With a model connected, every message in the chat goes out with today's date, your last workouts set by set, how long each muscle group has rested, and what the plan has next. So you can ask about your training, and what it changes is judged against your records.
-- **A new plan carries on, it does not start over.** Ask the coach for a new plan and it is built at once, from your workouts as well as your profile. It starts with a session whose muscles your last workout left alone, not with the one you just did, and it keeps your weights and the reps you have reached. The plan screen says that it was rebuilt and what is next. "Put the old plan back" undoes the rebuild until you train on the new plan.
+- **A new plan carries on, it does not start over.** Ask the coach for a new plan and it is built at once, from your workouts as well as your profile. It starts where the cycle stands: with the session that follows the one you trained last, never with that one again and never with one that trains the same muscles. The model is told this outright, and the app checks its answer and turns the list if needed. The new plan keeps the exercises you are doing, every weight on record and the reps you have reached; an exercise that really is new is named, so a missing weight is never a surprise. The plan screen says that it was rebuilt and what is next. "Put the old plan back" undoes the rebuild until you train on the new plan.
+- **The coach screen stays short.** It shows the conversation in progress: the last few messages, back to the last long pause. "Show earlier messages" brings back the rest, and "Clear chat" empties it without touching the plan or the workouts.
 - **When the list runs out, the next run is planned.** The connected model plans it from your results so far. Without a model the same run starts again, with its exercises taking turns.
 - **After ten days away,** the first session back is 10% lighter. The plan keeps its numbers.
 
@@ -45,7 +48,7 @@ The plan is a running list, not a calendar: train this, rest a day, train that, 
 
 - **Pairs, to save time.** Off unless you switch it on, with "Pair exercises to save time" on the Plan tab. Two neighbouring exercises that use different muscles are then done in turns: a set of one, a short rest, a set of the other. One rests while the other works, so the session is shorter for the same sets (the switch says by how much). Opposite muscles pair first: a press with a row, biceps with triceps, leg extension with leg curl. Squats, hip hinges and the main lifts of a strength plan are never paired. The research behind it (same strength and muscle gains in less time, but the sets feel harder) is cited in rules PAR-1 and PAR-2. You need both stations free; in the workout, "Machine busy?" splits a pair for the day.
 
-The rules behind this are in `js/domain/schedule.js` and in the "A plan that moves" and "Training on any day" parts of `docs/training-rules.md`. Where a rebuilt plan starts is decided by `continueFrom()` in `js/domain/schedule.js`. Pairs are made by `pairUp()` in `js/domain/planner.js`. The optional extras are picked by `fillOptional()` in `js/domain/planner.js` (rule OPT-1); a plan saved before they existed gets them the next time the app starts.
+The rules behind this are in `js/domain/schedule.js` and in the "A plan that moves" and "Training on any day" parts of `docs/training-rules.md`. Where a rebuilt plan starts is decided by `cycleNext()` and `continueFrom()` in `js/domain/schedule.js`. Weights are gathered by `knownWeights()` in `js/domain/planner.js`: the saved list first, then the plan, then the last load lifted in a recorded workout. Pairs are made by `pairUp()` in `js/domain/planner.js`. The optional extras are picked by `fillOptional()` in `js/domain/planner.js` (rule OPT-1); a plan saved before they existed gets them the next time the app starts.
 
 ## A workout, tap by tap
 

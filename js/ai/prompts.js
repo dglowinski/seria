@@ -5,8 +5,8 @@
 import { rulesAsText, RULES_VERSION, GOALS, levelFor, ACTIVITIES, activityGroups } from '../domain/rules.js';
 import { allExercises, canDo, equipmentList, isAvailable, isListed, PATTERNS, EQUIPMENT, LOADING, machineDetail, machineForExercise } from '../domain/catalog.js';
 import { WEEKDAYS, clampMinutes, sessionsPerWeek, cycleWeeks, dayOptional, pairMate, pairRestSec } from '../domain/planner.js';
-import { queueState, recommend, plannedNext, timeline, doneGroups, daysBetween } from '../domain/schedule.js';
-import { GROUP_OF, SKETCH_IDS } from '../domain/catalog.js';
+import { queueState, recommend, plannedNext, timeline, doneGroups, dayGroups, daysBetween, cycleNext } from '../domain/schedule.js';
+import { GROUP_OF, SKETCH_IDS, MAIN_GROUPS } from '../domain/catalog.js';
 
 export const SYSTEM_PROMPT = `You are the training coach inside Seria, a gym training app. You build and update one person's resistance-training plan. The plan is a running list, not a calendar: train this, rest so many days, train that. The user works through it on whatever days they can, and it is updated after every workout from what was recorded. Each request names a mode: "interview", "new_plan", "train_now", "in_session", "after_session", "activity", "next_run" or "equipment".
 
@@ -15,7 +15,7 @@ Each request gives you what the app has on record: goal and experience, training
 Modes
 - interview: read the conversation and the user's latest message. You also get today's date, the recent workouts exercise by exercise, the hours since each muscle group was trained, other activities, and the session the app has next: use them to answer questions about the training and to judge what the user asks for, and never say you cannot see the history when it is there. Return the full profile as you now understand it, keeping earlier values unless the user changed them. If something a plan needs is missing (goal, experience, sessions per week, minutes per session), ask one or two specific questions in "questions" and set ready_for_plan to false. Ask once about movements to skip, limitations and favourite exercises if the user has not said. When nothing is missing, set ready_for_plan to true; the app then shows the assumptions and the user confirms. If a plan exists and the user asks to change it, return the change in "changes" instead of a new plan; say in "message" what you changed. If a plan exists and the user asks for a new one (regenerate it, rebuild it, plan it again, start over), set rebuild_plan to true and say in "message", in one sentence, what the new plan will take into account; the app then builds it at once in new_plan mode, with this conversation and the records. When the user only changes something the plan is built on (goal, sessions per week, minutes), return it in the profile and leave rebuild_plan false; the app shows the new assumptions and the user confirms. Nothing else changes the plan, so never say it was changed or rebuilt unless you returned changes or set rebuild_plan. Leave "plan" null in this mode.
 - new_plan: build the plan in "plan": the sessions to do, in order, sessions_per_week of them for each of weeks_ahead weeks, each with its week number and rest_days_after, the days of rest before the next one (rests in one week add up to 7 minus the sessions that week). Use only exercise ids from available_exercises. Keep each session within the minutes per session, using the time model in the rules. Give the matching session of every week the same main lifts so they can progress, and let the secondary and accessory exercises take turns, so what did not fit one week is trained the next. Order each session as the rules say. Titles name the body parts, with no weekday and no letter. Give every session its optional_exercises as described under Optional extras. Fill "outlook" as described under The long view. If a plan truly cannot be built because information is missing, return questions and set plan to null.
-  When recent_workouts has entries, the user is already training and this plan takes the place of plan_being_replaced: carry on from the records, do not start over. Put first the session that should come next after the last workouts by the recovery rules, never one that trains again what the last workout trained when another session can go first. Read the results as in next_run: keep the main lifts that are progressing, change what has stalled or was skipped again and again. The conversation shows why the user asked for a new plan; build what they asked for. Then say in "message", in one or two sentences, what is different from the plan before and why the first session is the one it is.
+  When recent_workouts has entries, the user is already training and this plan takes the place of plan_being_replaced: carry on from the records, do not start over. Start the plan where the cycle stands, which where_the_cycle_stands says outright: last_workout is what was trained last, next_in_the_cycle is the session of the old plan that comes next by the records, and muscle_groups_rested_longest_first lists what has waited longest. The first session of the new plan is the counterpart of next_in_the_cycle, a session for the same parts of the body; when the split changes, or next_in_the_cycle is null, it is a session built on the muscle groups that have rested longest. It is never a session like last_workout while another kind of session exists: after an upper-body workout the plan opens with the lower-body session. The other sessions follow in their usual order from there, so the one most like last_workout comes last in its week. Keep the exercises the user is already doing: for each movement use the exercise from plan_being_replaced or recent_workouts when it is still available and still fits, so its weight in known_loads carries over. Bring in a different exercise only for a reason the records or the conversation give (it stalled, it was skipped again and again, its equipment is gone, the user asked); an exercise with no known load starts from nothing, so never swap one for variety alone. The conversation shows why the user asked for a new plan; build what they asked for. Then say in "message", in one or two sentences, what is different from the plan before and why the first session is the one it is.
 - next_run: the user has finished the sessions on the list. Plan the next run in "plan", in the same form as new_plan, from what the records show: keep what is progressing, change what has stalled or was skipped again and again, and keep the main lifts unless the results say otherwise. Say in "message", in one or two sentences, what changes and why, and fill "outlook" again for the round ahead.
 - train_now: the user wants to train today, and today is not the day the plan had for the next session. You get the list with what is done, skipped and still to do, the recent workouts with dates and sets done per muscle group, the hours since each muscle group was trained, how many days early or late today is, and the pick the app's own rules made. Decide what makes sense today and fill "schedule": first_session_id is the session to do now, from those still to do (stay with the app's pick unless the records give a reason not to); reason is one or two short sentences for the user; order lists the other sessions still to do in the order they should now follow; rest_days gives the days of rest after each of them, starting with today's, in that same order; ease_percent is how much lighter today's loads should be (0 to 20, usually 0; about 10 after ten days or more away). Follow the recovery rules in the library. If the content of later sessions should change because of this, add those as "changes"; otherwise leave changes empty.
 - in_session: the user is in the middle of a workout. Compare the sets done so far with their targets and take reps in reserve into account when given. Return changes only for sets and exercises that are not done yet, using fields "load", "reps" or "rest". Changes listed under already_applied were made by the app's own rules a moment ago: return a change for the same exercise and field only when you would set a different value; yours then replaces it.
@@ -256,6 +256,27 @@ function trainingOut(sessions, now, n = 8) {
   };
 }
 
+/**
+ * Where the cycle stands, said outright for a plan that is about to be built:
+ * what was trained last, which session of the old plan follows it by the
+ * records, and which muscle groups have waited longest.
+ */
+function cycleOut(plan, sessions, now) {
+  const done = (sessions || []).filter((x) => gym(x) && x.startedAt <= now && Object.keys(doneGroups(x)).length).sort((a, b) => b.startedAt - a.startedAt);
+  if (!done.length) return null;
+  const hours = {};
+  for (const x of done) for (const name of Object.keys(doneGroups(x))) if (!(name in hours)) hours[name] = (now - x.startedAt) / 3600e3;
+  const i = plan ? cycleNext(plan, sessions, now) : -1;
+  const next = i >= 0 ? plan.days[i] : null;
+  return {
+    last_workout: { title: done[0].title, days_ago: daysBetween(done[0].startedAt, now), trained: Object.keys(doneGroups(done[0])) },
+    workouts_newest_first: done.slice(0, 6).map((x) => ({ title: x.title, days_ago: daysBetween(x.startedAt, now) })),
+    next_in_the_cycle: next ? { title: next.title, trains: Object.keys(dayGroups(next)) } : null,
+    // Never trained comes first, then the longest wait.
+    muscle_groups_rested_longest_first: [...MAIN_GROUPS].sort((a, b) => (hours[b] ?? Infinity) - (hours[a] ?? Infinity)),
+  };
+}
+
 /** What the app has next on the list, and when. */
 function nextOut(plan, sessions, now) {
   const next = plan ? plannedNext(plan, sessions || [], now) : null;
@@ -289,8 +310,8 @@ export function newPlanRequest({ profile, equipment, weights, plan = null, sessi
     available_exercises: exercisesOut(equipment),
     known_loads: loadsOut(weights),
     ...trainingOut(sessions, now),
+    where_the_cycle_stands: cycleOut(plan, sessions, now),
     plan_being_replaced: planOut(plan),
-    next_session_of_that_plan: nextOut(plan, sessions, now),
     conversation: conversationOut(chat, 8),
   });
 }

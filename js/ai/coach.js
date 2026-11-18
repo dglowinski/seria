@@ -11,7 +11,7 @@ import { recommend, plannedNext, lastTrained, continueFrom, daysBetween, setOrde
 import { KEYWORDS, allExercises, canDo, parseEquipmentText, applyEquipmentRead, applyMachineLookup, machineDetail } from '../domain/catalog.js';
 import {
   WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_NAMES, missingFields, generatePlan, normalizePlan, refreshPlan, fmtMonths,
-  trainingDays, clampMinutes, setPlanLoad, fillOptional, fitPlan, allEntries,
+  trainingDays, clampMinutes, setPlanLoad, fillOptional, fitPlan, allEntries, knownWeights,
 } from '../domain/planner.js';
 import { inSessionHint, postSessionChanges, equipmentChanges, applyPlanChange, undoPlanChange, withValue, fromAiChanges, ruleSummary, isApplied } from '../domain/progression.js';
 import { applyHint, withoutHint, startSession, newActivity } from '../domain/session.js';
@@ -233,6 +233,24 @@ export const isBusy = () => busy;
 export const onBusy = (fn) => { busyListeners.add(fn); return () => busyListeners.delete(fn); };
 const setBusy = (v) => { busy = v; for (const fn of busyListeners) fn(v); };
 
+const PAUSE = 60 * 60 * 1000; // a pause this long starts a new conversation
+const RECENT = 4; // at most this many messages show without asking
+
+/**
+ * How many of the newest messages make up the conversation in progress: back
+ * to the last long pause, four at most. The coach screen shows these; the rest
+ * of the history stays a tap away.
+ */
+export function recentCount(chat) {
+  let n = 0;
+  for (let i = chat.length - 1; i >= 0 && n < RECENT; i--) {
+    n++;
+    if (i > 0 && chat[i].at - chat[i - 1].at > PAUSE) break;
+  }
+  // A lone new message keeps the one it answers in view.
+  return Math.max(n, Math.min(2, chat.length));
+}
+
 const lastAsked = (chat) => [...chat].reverse().find((m) => m.role === 'coach' && m.kind !== 'notice')?.asks || null;
 
 // Words that ask for a new plan. For the built-in coach; a connected model reads this itself.
@@ -333,7 +351,10 @@ function planLine(plan, { sessions = [], now = Date.now(), old = null, said = ''
     : first.title === last.title ? `${first.title} is next.`
       : `It carries on from your last workout (${last.title}, ${agoWords(last.startedAt, now)}): ${first.title} is next.`;
   const lead = said || (byModel ? 'Your new plan is ready.' : 'Your plan is rebuilt from the training rules, with your weights and the reps you have reached.');
-  return { chat: `${lead} It covers ${size}. ${from} Tell me what to change, or put the old plan back.`, note: `${lead} ${from}` };
+  // Every weight on record is in the plan. What is still blank is an exercise never done before, and is named.
+  const blank = [...new Set(plan.days.flatMap((d) => d.exercises).filter((ex) => !ex.load && ex.loadType !== 'bodyweight').map((ex) => ex.name))];
+  const fresh = !blank.length ? '' : ` ${blank.length === 1 ? 'One exercise is' : `${blank.length} exercises are`} new to you, so ${blank.length === 1 ? 'it has' : 'they have'} no weight yet: ${blank.join(', ')}.`;
+  return { chat: `${lead} It covers ${size}. ${from}${fresh} Tell me what to change, or put the old plan back.`, note: `${lead} ${from}${fresh}` };
 }
 
 /** Rep targets already earned carry over to the same exercise in a new plan, inside its new range. */
@@ -354,6 +375,8 @@ export async function buildPlan({ ready = null } = {}) {
   if (busy) return;
   const st = store.getState();
   if (missingFields(st.profile).length) return;
+  // Every weight on record, so the new plan never comes back without one the app has seen.
+  const weights = knownWeights(st.weights, st.sessions, st.plan);
   let plan = null;
   let via;
   let said = '';
@@ -362,11 +385,11 @@ export async function buildPlan({ ready = null } = {}) {
     const name = aiName();
     setBusy(true);
     try {
-      const out = ready || await ask(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights: st.weights, plan: st.plan, sessions: st.sessions, chat: st.chat }));
+      const out = ready || await ask(newPlanRequest({ profile: st.profile, equipment: st.equipment, weights, plan: st.plan, sessions: st.sessions, chat: st.chat }));
       if (out.plan) {
-        const res = normalizePlan(out.plan, st.profile, st.equipment, st.weights);
+        const res = normalizePlan(out.plan, st.profile, st.equipment, weights);
         fitPlan(res.plan, st.profile);
-        plan = fillOptional(refreshPlan({ ...res.plan, source: src, outlook: out.outlook ? { text: out.outlook, by: src } : null }), st.profile, st.equipment, st.weights);
+        plan = fillOptional(refreshPlan({ ...res.plan, source: src, outlook: out.outlook ? { text: out.outlook, by: src } : null }), st.profile, st.equipment, weights);
         via = src;
         said = st.plan ? out.message : '';
         // The model was told what was trained last. If its plan still opens with that, the list is turned so it does not.
@@ -389,7 +412,7 @@ export async function buildPlan({ ready = null } = {}) {
     store.say('coach', 'A workout is in progress, so I left the plan as it is. Ask me again when the workout is done.', { kind: 'notice' });
     return;
   }
-  if (!plan) plan = continueFrom(generatePlan(now.profile, now.equipment, now.weights), now.sessions);
+  if (!plan) plan = continueFrom(generatePlan(now.profile, now.equipment, weights), now.sessions);
   const old = now.plan;
   if (old) {
     keepReps(plan, old);
@@ -400,7 +423,7 @@ export async function buildPlan({ ready = null } = {}) {
   if (old) plan.lastUpdate = { at: Date.now(), by: via || 'rules', text: line.note };
   // The list of updates belongs to the old plan, so it goes with it.
   store.set({
-    plan, proposals: [],
+    plan, proposals: [], weights: { ...weights, ...now.weights },
     planBefore: old ? { plan: old, proposals: now.proposals.slice(-12), at: Date.now() } : null,
     profile: { ...now.profile, askedExtras: true },
   });
@@ -497,7 +520,7 @@ export function planNextRun() {
     .then((out) => {
       const now = store.getState();
       if (!out.plan || !now.plan || now.plan.id !== planId || !runFinished(now.plan) || store.activeSession(now)) return;
-      const res = normalizePlan(out.plan, now.profile, now.equipment, now.weights);
+      const res = normalizePlan(out.plan, now.profile, now.equipment, knownWeights(now.weights, now.sessions, now.plan));
       fitPlan(res.plan, now.profile);
       keepReps(res.plan, now.plan);
       const next = refreshPlan({ ...res.plan, source: src, version: (now.plan.version || 1) + 1, outlook: out.outlook ? { text: out.outlook, by: src } : now.plan.outlook || null });

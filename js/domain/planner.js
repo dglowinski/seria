@@ -691,6 +691,38 @@ export function setPlanLoad(plan, exerciseId, load) {
   return next;
 }
 
+/**
+ * Every weight the records hold, by exercise. The saved list comes first. What
+ * it lacks is filled in from the plan as it stands, then from the last load
+ * really lifted in a recorded workout. So a plan built later never asks again
+ * for a weight the app has seen.
+ */
+export function knownWeights(weights = {}, sessions = [], plan = null) {
+  const out = { ...weights };
+  const add = (id, type, value, step, at) => {
+    if (out[id] || type === 'bodyweight' || !(value > 0)) return;
+    out[id] = { value, step: step ?? PROGRESSION.defaultStep[type] ?? 2.5, type, at, by: 'records' };
+  };
+  for (const d of plan?.days || []) for (const ex of allEntries(d)) if (ex.load) add(ex.exerciseId, ex.loadType, ex.load.value, ex.load.step, plan.createdAt || 0);
+  const past = (sessions || []).filter((s) => s.kind !== 'activity' && Array.isArray(s.exercises)).sort((a, b) => b.startedAt - a.startedAt);
+  for (const s of past) {
+    for (const ex of s.exercises) {
+      const last = [...ex.sets].reverse().find((st) => st.status === 'done' && st.actual?.load != null);
+      if (last) add(ex.exerciseId, ex.loadType, last.actual.load, ex.step, s.endedAt || s.startedAt);
+    }
+  }
+  return out;
+}
+
+/** Give every plan entry that has no weight the one on record. Returns the same plan when nothing was missing. */
+export function fillLoads(plan, weights = {}) {
+  const blank = (ex) => !ex.load && ex.loadType !== 'bodyweight' && weights[ex.exerciseId];
+  if (!plan?.days.some((d) => allEntries(d).some(blank))) return plan;
+  const next = clone(plan);
+  for (const d of next.days) for (const ex of allEntries(d)) if (blank(ex)) ex.load = { value: weights[ex.exerciseId].value, step: weights[ex.exerciseId].step };
+  return next;
+}
+
 /** Exercises in the plan whose equipment is no longer available. */
 export function brokenExercises(plan, equipment) {
   const all = allExercises(equipment);

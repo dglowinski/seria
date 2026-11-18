@@ -1,6 +1,6 @@
 {
   "name": "seria",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "description": "Seria - a gym training web app: weekly plan, guided sets, history, Claude coach.",

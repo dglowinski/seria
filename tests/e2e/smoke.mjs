@@ -21,7 +21,7 @@ import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startServer } from '../../scripts/serve.mjs';
+import { startServer, setSwVersion } from '../../scripts/serve.mjs';
 import { startMockAnthropic } from './mock-anthropic.mjs';
 import { startMockOpenAI } from './mock-openai.mjs';
 import { canned } from './canned.mjs';
@@ -1077,6 +1077,32 @@ await guarded(async () => {
   await page.getByRole('button', { name: 'Discard workout' }).click();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check('no sideways scroll at phone width', overflow <= 0, overflow);
+
+  // A new release while the app is open: it loads by itself, but never under a workout.
+  await context.setOffline(false);
+  await page.reload();
+  await page.getByTestId('train-now').waitFor({ timeout: 8000 });
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  const release = async (name) => {
+    await page.evaluate(() => { window.__same = true; });
+    setSwVersion(name);
+    await page.evaluate(() => navigator.serviceWorker.getRegistration().then((r) => r.update()));
+  };
+  const reloaded = (ms) => until(() => page.evaluate(() => window.__same !== true && !!document.querySelector('[data-testid=train-now]')), ms);
+  await startWith(page, 'train-now');
+  await main(page).waitFor();
+  await release('seria-test-2');
+  await page.waitForFunction(async () => (await caches.keys()).includes('seria-test-2'), null, { timeout: 8000 });
+  await sleep(700);
+  check('a new release is fetched in the background and does not reload the app under a workout', (await page.evaluate(() => window.__same === true)) && page.url().includes('#workout'));
+  await page.getByRole('button', { name: 'End workout' }).click();
+  await page.getByRole('button', { name: 'Discard workout' }).click();
+  check('it loads by itself once the workout is over, and says so', (await reloaded(8000)) && await until(async () => /Updated to Seria \d/.test(await page.locator('.toast').textContent().catch(() => '')), 3000));
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await release('seria-test-3');
+  check('with nothing in progress a new release loads at once: no second refresh needed', (await reloaded(10000)) && await page.evaluate(async () => (await caches.keys()).join() === 'seria-test-3'), await page.evaluate(async () => (await caches.keys()).join()).catch(() => ''));
+  check('the plan screen shows which version is running', /^Seria \d+\.\d+\.\d+$/.test((await page.getByTestId('app-version').textContent()).trim()));
+  setSwVersion(null);
   check('no script errors in part D', errors.filter((e) => !/ERR_INTERNET_DISCONNECTED/.test(e)).length === 0, errors.join(' | '));
   await context.close();
 });
@@ -1546,6 +1572,9 @@ await guarded(async () => {
   const build = sent('new_plan').slice(-1)[0];
   check('asking for a new plan builds one at once, and Claude gets the records, the old plan and the request', sent('new_plan').length === 2 && build.recent_workouts[0].title === 'Upper body' && build.plan_being_replaced.list.done.join() === 'd1'
     && build.conversation.some((m) => m.from === 'user' && m.text === 'Please regenerate my plan.'), JSON.stringify([sent('new_plan').length, build.conversation]));
+  const stands = build.where_the_cycle_stands;
+  check('and is told outright where the cycle stands: what was trained last, what follows it, what has waited longest', stands.last_workout.title === 'Upper body' && stands.last_workout.days_ago === 3 && stands.next_in_the_cycle.title === 'Lower body'
+    && stands.muscle_groups_rested_longest_first.indexOf('Quads') < stands.muscle_groups_rested_longest_first.indexOf('Chest'), JSON.stringify(stands));
   st = await state(page);
   const texts = st.chat.map((m) => m.text);
   check('the coach says what it is about to do, from the records', texts.includes('I will build a new plan from your results, starting after Upper body.'), texts.slice(-3).join(' | '));
@@ -1556,7 +1585,7 @@ await guarded(async () => {
   check('weights from the workout stay in the new plan', st.plan.days[0].exercises[0].load.value === old.days[0].exercises[0].load.value && st.plan.days[0].exercises[0].load.value > 0, JSON.stringify(st.plan.days[0].exercises[0].load));
   await shot(page, '50-rebuild-chat');
 
-  await page.getByTestId('open-plan').last().click();
+  await page.getByTestId('open-plan').click();
   await page.getByTestId('timeline').waitFor();
   const note = await page.getByTestId('last-update').textContent();
   check('the plan screen shows the rebuild: who, when, and what is next', /Updated .* by Claude/.test(note) && /Lower body is next/.test(note) && /Lower body/.test(await page.getByTestId('plan-session').first().textContent())
@@ -1578,6 +1607,21 @@ await guarded(async () => {
   st = await state(page);
   check('a plan the model sends in the chat itself becomes the plan, with no second request', st.plan.days.map((d) => d.title).join() === 'Push,Pull,Legs' && sent('new_plan').length === asked && st.planBefore.plan.id === old.id
     && st.chat.slice(-2)[0].text === 'Here is a fresh plan: push, pull and legs.' && /^Your new plan is ready\./.test(st.chat.slice(-1)[0].text), JSON.stringify([st.plan.days.map((d) => d.title), st.chat.slice(-2).map((m) => m.text)]));
+
+  // the coach screen shows the conversation in progress, not the whole history
+  st = await state(page);
+  const total = st.chat.length;
+  const onScreen = () => page.locator('.chat .bubble').count();
+  check('the coach screen shows only the last few messages; the rest are a tap away', total > 4 && (await onScreen()) === 4 && (await page.getByTestId('chat-earlier').textContent()).trim() === `Show earlier messages (${total - 4})`
+    && (await page.getByTestId('open-plan').count()) === 1
+    && (await page.getByText('Tell me about your goal').count()) === 0, `${total} messages, ${await onScreen()} on screen`);
+  await shot(page, '52-chat-short');
+  await page.getByTestId('chat-earlier').click();
+  check('"Show earlier messages" brings them back, above the ones on screen', await until(async () => (await onScreen()) === total) && (await page.getByTestId('chat-earlier').count()) === 0);
+  await page.getByTestId('chat-clear').click();
+  await page.getByTestId('chat-clear-yes').click();
+  st = await state(page);
+  check('"Clear chat" empties the chat and leaves the plan alone', st.chat.length === 0 && st.plan.days.length === 3 && st.sessions.length === 1 && (await page.getByText('Tell me about your goal').count()) === 1, JSON.stringify([st.chat.length, st.plan.days.length]));
   check('no script errors in part I', errors.length === 0, errors.join(' | '));
   await context.close();
 });

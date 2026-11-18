@@ -1,8 +1,9 @@
 // Offline support. The app shell is cached on install; later requests are
 // answered from the cache at once and refreshed in the background, so the app
-// opens with no signal and picks up a new version on the next start.
+// opens with no signal. A new version is fetched whole when it is installed,
+// past the browser's own cache, and the page then loads it by itself (app.js).
 // Bump VERSION whenever files change.
-const VERSION = 'seria-1.4.0';
+const VERSION = 'seria-1.5.0';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css', 'css/standalone.css',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
@@ -15,7 +16,8 @@ const SHELL = [
 // The Claude and OpenAI SDKs are big and only needed online, so they are cached when first used.
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  // 'reload' goes past the browser's cache: a copy fetched minutes before a release must not end up in the new version.
+  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(SHELL.map((url) => new Request(url, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
@@ -30,7 +32,8 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET' || url.origin !== self.location.origin) return; // API calls go straight to the network
   event.respondWith(caches.open(VERSION).then(async (cache) => {
     const cached = await cache.match(req, { ignoreSearch: req.mode === 'navigate' });
-    const fresh = fetch(req).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; }).catch(() => null);
+    // 'no-cache' asks the server each time, so an older copy the browser still holds cannot replace a newer one here.
+    const fresh = fetch(req.url, { cache: 'no-cache' }).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; }).catch(() => null);
     return cached || (await fresh) || (req.mode === 'navigate' ? cache.match('index.html') : Response.error());
   }));
 });
